@@ -2,10 +2,13 @@ name: swing_stock
 
 on:
   push:
-    branches:
-      - master
+    branches: [ master ]
   schedule:
-    - cron: "0 15 * * *"  # প্রতিদিন স্থানীয় সময় বিকাল 3টায় রান করবে
+    - cron: "0 15 * * *"
+
+# পারমিশন স্পষ্টভাবে ডিক্লেয়ার করুন
+permissions:
+  contents: write  # কমিট এবং পুশ করার অনুমতি দেয়
 
 jobs:
   analyze_stocks:
@@ -14,6 +17,8 @@ jobs:
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # সম্পূর্ণ git হিস্ট্রি ফেচ করে
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -21,23 +26,19 @@ jobs:
         python-version: '3.10'
 
     - name: Install dependencies
-      run: |
-        
-        pip install -r requirements.txt
+      run: pip install -r requirements.txt
 
     - name: Run Python script
       env:
         MONGO_URI: ${{ secrets.MONGO_URI }}
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: |
-        python main.py
+      run: python main.py
 
-    - name: Commit and push CSV files
+    - name: Commit and push changes
       run: |
-        git config --global user.email "ahashanahmed@yahoo.com"
-        git config --global user.name "Ahashanahmed2"
-        git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
         git add ./csv
-        git commit -m "Automated: Update stock data $(date +'%Y-%m-%d %H:%M')"
+        git commit -m "Auto-update: Stock data $(date +'%Y-%m-%d %H:%M')" || echo "No changes to commit"
         git push origin master
