@@ -1,0 +1,2 @@
+symbol,date,open,close,high,low,volume,value,trades,change,marketCap,collectedAt,upper,middle,lower,rsi
+ACMEPL,2025-05-21,12.0,12.0,12.1,11.8,625507,7.477,395,0.2,1593.0,2025-05-21 11:50:06.266,12.129150262212917,11.6,11.070849737787082,
