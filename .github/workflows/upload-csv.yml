@@ -1,0 +1,43 @@
+name: swing_stock
+
+on:
+  push:
+    branches:
+      - master
+  schedule:
+    - cron: "0 15 * * *"  # প্রতিদিন স্থানীয় সময় বিকাল 3টায় রান করবে
+
+jobs:
+  analyze_stocks:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        
+        pip install -r requirements.txt
+
+    - name: Run Python script
+      env:
+        MONGO_URI: ${{ secrets.MONGO_URI }}
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        python main.py
+
+    - name: Commit and push CSV files
+      run: |
+        git config --global user.email "ahashanahmed@yahoo.com"
+        git config --global user.name "Ahashanahmed2"
+        git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
+        git add ./csv
+        git commit -m "Automated: Update stock data $(date +'%Y-%m-%d %H:%M')"
+        git push origin master
