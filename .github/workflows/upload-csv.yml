@@ -4,7 +4,7 @@ on:
   push:
     branches: [ master ]
   schedule:
-    - cron: "0 15 * * *"
+    - cron: "0 13 * * *"
 
 # পারমিশন স্পষ্টভাবে ডিক্লেয়ার করুন
 permissions:
