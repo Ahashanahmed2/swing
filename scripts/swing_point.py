@@ -1,12 +1,7 @@
-#scripts/swing_point.py
 import pandas as pd
 from ta.volatility import BollingerBands
-from ta.momentum import RSIIndicator
-
-
+# from ta.momentum import RSIIndicator  # Uncomment if needed later
 import numpy as np
-
-
 
 def identify_swing_points(df):
     # Bollinger Bands calculate
@@ -15,38 +10,42 @@ def identify_swing_points(df):
     df['middle'] = bb.bollinger_mavg()
     df['lower'] = bb.bollinger_lband()
 
-
-    rsi = RSIIndicator(close=df['close'], window=14)
-    df['rsi'] = rsi.rsi()
-
-
     swing_lows = []
     swing_highs = []
 
-    # Loop through data to find swing lows
-    for i in range(2, len(df) - 2):
+    # Loop through data to find swing points
+    for i in range(2, len(df) - 4):
         candle = df.iloc[i]
         prev_candle = df.iloc[i - 1]
-        next_candle = df.iloc[i + 1]
-        next2_candle = df.iloc[i + 2]
 
-        # Swing Low condition
+        # --- Swing Low Condition ---
         if (
             candle['low'] < prev_candle['low'] and
-            candle['low'] <= candle['lower'] and
-            candle['close'] < candle['middle'] and
-            next_candle['close'] > candle['high'] and
-            next_candle['high'] < next2_candle['close']
+            candle['close'] < candle['middle']
         ):
-            swing_lows.append((df.index[i],df.index[i+2]))
-        #__SH condition__
-        if(  candle['high'] > prev_candle['high'] and
-             candle['close'] > candle['middle'] and
-             next_candle['close'] < candle['low'] and 
-             next2_candle['close'] < next_candle['close']):
+            for j in range(1, 4):
+                current = df.iloc[i + j]
+                prev = df.iloc[i + j - 1]
 
-             swing_highs.append((df.index[i],df.index[i+2]))
+                if (current['close'] > prev['high'] and
+                    df.iloc[i + 2]['close'] > current['high']):
+                    swing_lows.append((df.index[i], df.index[i + j + 1]))
+                    print(f"swing_lows: {swing_lows}")
+                    break
 
-    
+        # --- Swing High Condition ---
+        if (
+            candle['high'] > prev_candle['high'] and
+            candle['close'] > candle['middle']
+        ):
+            for j in range(1, 4):
+                current = df.iloc[i + j]
+                prev = df.iloc[i + j - 1]
+
+                if (current['close'] < prev['low'] and
+                    df.iloc[i + 2]['close'] < current['low']):
+                    swing_highs.append((df.index[i], df.index[i + j + 1]))
+                    print(f"swing_highs: {swing_highs}")
+                    break
 
     return swing_lows, swing_highs
