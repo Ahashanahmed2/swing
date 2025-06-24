@@ -1,71 +1,72 @@
 import pandas as pd
 from collections import defaultdict
-#swing_High_List
-swing_high_candles = defaultdict(list)
-swing_high_confirms = defaultdict(list)
-
-
-#Swing_Low_List
-swing_low_candles = defaultdict(list)
-import glob
-swing_Low_confirms=defaultdict(list)
-from swing_point import identify_swing_points
 import os
+from swing_point import identify_swing_points
 
-#path:./swing_low_csv
-os.makedirs('./csv/swing/swing_low/low_candle/',exist_ok=True)
-os.makedirs('./csv/swing/swing_low/low_confirm/',exist_ok=True)
+# Output paths
+low_candle_path = './csv/swing/swing_low/low_candle/'
+low_confirm_path = './csv/swing/swing_low/low_confirm/'
+high_candle_path = './csv/swing/swing_high/high_candle/'
+high_confirm_path = './csv/swing/swing_high/high_confirm/'
 
-#path:./swing_high_csv/
-os.makedirs('./csv/swing/swing_high/high_candle/',exist_ok=True)
-os.makedirs('./csv/swing/swing_high/high_confirm/',exist_ok=True)
+# Create directories if they don't exist
+for path in [low_candle_path, low_confirm_path, high_candle_path, high_confirm_path]:
+    os.makedirs(path, exist_ok=True)
 
-
-
+# Read master CSV
 mongodb_data = pd.read_csv('./csv/mongodb.csv')
-symbol_group= mongodb_data.groupby('symbol')
-for symbol,df in symbol_group:
+symbol_group = mongodb_data.groupby('symbol')
 
-  swing_lows, swing_highs= identify_swing_points(df)
+# Main processing loop
+for symbol, df in symbol_group:
+    swing_lows, swing_highs = identify_swing_points(df)
 
-#Swing_High 
-  if len(swing_highs)>0:
-    for index_rows_,index_rows__ in swing_highs:
-        swing_highs_candle_data=df.loc[index_rows_]
-        swing_highs_confirm_data=df.loc[index_rows__]
+    # ---- Swing Highs ----
+    if swing_highs:
+        high_candle_rows = [df.loc[candle_idx] for candle_idx, _ in swing_highs]
+        high_confirm_rows = [df.loc[confirm_idx] for _, confirm_idx in swing_highs]
 
-       
+        new_high_candle_df = pd.DataFrame(high_candle_rows)
+        new_high_confirm_df = pd.DataFrame(high_confirm_rows)
 
-            # প্রতিটি symbol এর জন্য লিস্টে অ্যাড করা
-        swing_high_candles[symbol].append(swing_highs_candle_data)
-        swing_high_confirms[symbol].append(swing_highs_confirm_data)
-        
+        candle_file = f'{high_candle_path}{symbol}.csv'
+        confirm_file = f'{high_confirm_path}{symbol}.csv'
 
-    for symbol in swing_high_candles:
-      pd.DataFrame(swing_high_candles[symbol]).to_csv(f'./csv/swing/swing_high/high_candle/{symbol}.csv', index=False)
-      pd.DataFrame(swing_high_confirms[symbol]).to_csv(f'./csv/swing/swing_high/high_confirm/{symbol}.csv', index=False)
+        if os.path.exists(candle_file):
+            existing = pd.read_csv(candle_file)
+            combined = pd.concat([existing, new_high_candle_df]).drop_duplicates().reset_index(drop=True)
+        else:
+            combined = new_high_candle_df
+        combined.to_csv(candle_file, index=False)
 
-#Swing_Low
-  if len(swing_lows)>0:
-    for index_row_,index_rows__ in swing_lows:
-        swing_lows_candle_data=df.loc[index_row_]
-        swing_lows_confirms_data=df.loc[index_rows__]
+        if os.path.exists(confirm_file):
+            existing = pd.read_csv(confirm_file)
+            combined = pd.concat([existing, new_high_confirm_df]).drop_duplicates().reset_index(drop=True)
+        else:
+            combined = new_high_confirm_df
+        combined.to_csv(confirm_file, index=False)
 
-        # প্রতিটি symbol এর জন্য লিস্টে অ্যাড করা
-        swing_low_candles[symbol].append(swing_lows_candle_data)
-        swing_Low_confirms[symbol].append(swing_lows_confirms_data)
+    # ---- Swing Lows ----
+    if swing_lows:
+        low_candle_rows = [df.loc[candle_idx] for candle_idx, _ in swing_lows]
+        low_confirm_rows = [df.loc[confirm_idx] for _, confirm_idx in swing_lows]
 
+        new_low_candle_df = pd.DataFrame(low_candle_rows)
+        new_low_confirm_df = pd.DataFrame(low_confirm_rows)
 
-    for symbol in swing_low_candles:
-        pd.DataFrame(swing_low_candles[symbol]).to_csv(f'./csv/swing/swing_low/low_candle/{symbol}.csv',index=False)
-        pd.DataFrame(swing_Low_confirms[symbol]).to_csv(f'./csv/swing/swing_low/low_confirm/{symbol}.csv',index=False)
- 
- 
-  
+        candle_file = f'{low_candle_path}{symbol}.csv'
+        confirm_file = f'{low_confirm_path}{symbol}.csv'
 
+        if os.path.exists(candle_file):
+            existing = pd.read_csv(candle_file)
+            combined = pd.concat([existing, new_low_candle_df]).drop_duplicates().reset_index(drop=True)
+        else:
+            combined = new_low_candle_df
+        combined.to_csv(candle_file, index=False)
 
-
-
-
-
-    
+        if os.path.exists(confirm_file):
+            existing = pd.read_csv(confirm_file)
+            combined = pd.concat([existing, new_low_confirm_df]).drop_duplicates().reset_index(drop=True)
+        else:
+            combined = new_low_confirm_df
+        combined.to_csv(confirm_file, index=False)
