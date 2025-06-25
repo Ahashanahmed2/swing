@@ -5,6 +5,8 @@ on:
     branches: [ master ]
   schedule:
     - cron: "0 13 * * *"
+  workflow_dispatch:  # ম্যানুয়ালি চালাতে পারবে
+
 
 # পারমিশন স্পষ্টভাবে ডিক্লেয়ার করুন
 permissions:
