@@ -1,8 +1,8 @@
 import pandas as pd
 import glob
 import os
+import requests  # Added missing import
 from datetime import datetime
-import requests
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -17,7 +17,12 @@ def send_telegram_message(message):
         'text': message,
         'parse_mode': 'HTML'
     }
-    return response.json()
+    try:
+        response = requests.post(url, json=payload)  # Defined response
+        return response.json()
+    except Exception as e:
+        print(f"Telegram message sending failed: {str(e)}")
+        return None
 
 def rsiDivergence():
     # ডিরেক্টরি তৈরি
@@ -52,11 +57,15 @@ def rsiDivergence():
                         'date': current['date'],
                         'close': current['close'],
                         'rsi': current['rsi'],
+                        'prev_close': previous['close'],
+                        'prev_rsi': previous['rsi'],
                         'change': f"{(current['close']-previous['close'])/previous['close']*100:.2f}%"
                     })
         
         except Exception as e:
-            print(f"Error processing {file}: {str(e)}")
+            error_msg = f"Error processing {os.path.basename(file)}: {str(e)}"
+            print(error_msg)
+            send_telegram_message(f"⚠️ {error_msg}")
     
     if rsi_divergences:
         # HTML ফরম্যাটে মেসেজ তৈরি
@@ -66,18 +75,21 @@ def rsiDivergence():
         for item in rsi_divergences:
             message += (
                 f"<b>📌 {item['symbol']}</b>\n"
-                f"🔹 ক্লোজ: {item['close']}\n"
-                f"🔹 RSI: {item['rsi']}\n"
+                f"🔹 বর্তমান ক্লোজ: {item['close']} (পূর্ববর্তী: {item['prev_close']})\n"
+                f"🔹 বর্তমান RSI: {item['rsi']:.2f} (পূর্ববর্তী: {item['prev_rsi']:.2f})\n"
                 f"🔹 পরিবর্তন: {item['change']}\n\n"
             )
         
         # CSV হিসেবে সেভ
         df = pd.DataFrame(rsi_divergences)
-        df.to_csv(f'./csv/swing/rsi_divergences/{today}_divergences.csv', index=False)
+        output_file = f'./csv/swing/rsi_divergences/{today}_divergences.csv'
+        df.to_csv(output_file, index=False)
         
         # টেলিগ্রামে পাঠান
         send_telegram_message(message)
-    
+        send_telegram_message(f"📁 সম্পূর্ণ রিপোর্ট CSV হিসেবে সেভ করা হয়েছে: {output_file}")
+    else:
+        send_telegram_message(f"ℹ️ আজকে ({today}) কোনো RSI ডাইভারজেন্স পাওয়া যায়নি।")
 
 # ফাংশন কল
 rsiDivergence()
