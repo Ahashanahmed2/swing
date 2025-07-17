@@ -1,0 +1,13 @@
+pandas
+pymongo
+ta
+dotenv
+requests
+#torch==2.3.0+cpu -f https://download.pytorch.org/whl/torch_stable.html
+stable-baselines3
+shimmy>=2.0
+smtplib
+email.message
+fpdf
+huggingface_hub
+
