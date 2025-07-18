@@ -1,7 +1,12 @@
-/csv
-/output
-.git
-/venv
 __pycache__/
 *.pyc
+venv/
 .env
+*.env
+scripts/.env
+.ipynb_checkpoints/
+*.pkl
+*.pt
+*.h5
+*.csv
+*.zip
