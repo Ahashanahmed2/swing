@@ -5,10 +5,10 @@ import ta
 import os
 import sys
 from dotenv import load_dotenv
-#from hf_uploader import download_from_hf_or_run_script
+from hf_uploader import download_from_hf_or_run_script
 
 
-#download_from_hf_or_run_script()
+download_from_hf_or_run_script()
 # 📁 CSV ফাইল path
 csv_path = './csv/mongodb.csv'
 os.makedirs(os.path.dirname(csv_path), exist_ok=True)
