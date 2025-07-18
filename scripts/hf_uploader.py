@@ -47,8 +47,8 @@ def download_from_hf_or_run_script(repo_id: str = REPO_ID, local_dir: str = "./c
         hf_login(token)
         temp_path = snapshot_download(
             repo_id=repo_id,
-            repo_type="model"
-            token=token
+            repo_type="model",
+            token=token,
         )
         hf_csv_path = os.path.join(temp_path, "csv")
         if os.path.exists(hf_csv_path):
