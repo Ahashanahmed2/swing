@@ -6,6 +6,6 @@ requests
 #torch==2.3.0+cpu -f https://download.pytorch.org/whl/torch_stable.html
 stable-baselines3
 shimmy>=2.0
-fpdf>=2.7.0
+--upgrade fpdf
 huggingface_hub
 
