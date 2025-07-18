@@ -1,6 +1,5 @@
 from huggingface_hub import login, upload_folder, snapshot_download, HfApi
 import os
-import subprocess
 from dotenv import load_dotenv
 import sys
 load_dotenv()
@@ -35,33 +34,39 @@ def upload_to_hf(folder_path: str = "./csv", repo_id: str = REPO_ID, token: str 
 
 def download_from_hf_or_run_script(repo_id: str = REPO_ID, local_dir: str = "./csv", token: str = HF_TOKEN):
     create_repo_if_not_exists()
-    # Step 1: লোকাল csv ফোল্ডার আছে কিনা চেক
+    
+    # লোকাল csv ফোল্ডার চেক
     if is_valide_diractory(local_dir):
-     return print("✅ লোকাল './csv' ফোল্ডার আগে থেকেই আছে। কিছু ডাউনলোড লাগবে না।")
-   
+        print("✅ লোকাল './csv' ফোল্ডার আগে থেকেই আছে। কিছু ডাউনলোড লাগবে না।")
+        return
 
     print("🔍 লোকাল './csv' ফোল্ডার নেই, HF থেকে ডাউনলোড চেষ্টা করছি...")
 
-    # Step 2: HF থেকে ডাউনলোড
     try:
         hf_login(token)
         temp_path = snapshot_download(
             repo_id=repo_id,
             repo_type="model",
-            token=token,
+            token=token
         )
-        hf_csv_path = os.path.join(temp_path, "csv")
-        if os.path.exists(hf_csv_path):
-            print("📥 HF-এ csv পাওয়া গেছে, লোকাল ./csv-এ কপি করছি...")
-            import shutil
-            shutil.copytree(hf_csv_path, local_dir)
-            print("✅ ডাউনলোড ও কপি সম্পন্ন হয়েছে।")
-        else:
-            raise FileNotFoundError("❌ HF-এ 'csv' ফোল্ডার পাওয়া যায়নি।")
+
+        import shutil
+        os.makedirs(local_dir, exist_ok=True)
+
+        # temp_path এর মধ্যে থাকা সব .csv ফাইল ./csv ফোল্ডারে কপি করো
+        for file_name in os.listdir(temp_path):
+            if file_name.endswith(".csv"):
+                full_src = os.path.join(temp_path, file_name)
+                full_dst = os.path.join(local_dir, file_name)
+                shutil.copy(full_src, full_dst)
+
+        print("✅ HF থেকে .csv ফাইলগুলো ./csv ফোল্ডারে কপি করা হয়েছে।")
 
     except Exception as e:
         print(f"⚠️ HF থেকে ডাউনলোড ব্যর্থ: {e}")
-        
+        print("📉 MongoDB থেকে রিড করে লোকালি সেভ করার চেষ্টা করা হবে...")
+       
+
      
 
 # ⏯️ চালাতে চাইলে
