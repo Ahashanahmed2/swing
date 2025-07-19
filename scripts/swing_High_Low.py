@@ -2,10 +2,10 @@ import pandas as pd
 from collections import defaultdict
 import os
 from swing_point import identify_swing_points  # ধরে নেওয়া হয়েছে এটি ঠিকমতো কাজ করে
-#from hf_uploader import download_from_hf_or_run_script
+from hf_uploader import download_from_hf_or_run_script
 
 
-#download_from_hf_or_run_script()
+download_from_hf_or_run_script()
 # Output paths
 low_candle_path = './csv/swing/swing_low/low_candle/'
 low_confirm_path = './csv/swing/swing_low/low_confirm/'
