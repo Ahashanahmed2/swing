@@ -4,12 +4,12 @@ import requests
 from datetime import datetime
 from dotenv import load_dotenv
 
+# 🔐 লোড করুন .env থেকে Telegram Token ও Chat ID
 load_dotenv()
-
-# টেলিগ্রাম কনফিগারেশন
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_TOKEN_TRADE")
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID_TRADE')
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID_TRADE")
 
+# 🔗 Telegram মেসেজ পাঠানোর ফাংশন
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
@@ -24,85 +24,57 @@ def send_telegram_message(message):
         print(f"Telegram message sending failed: {str(e)}")
         return None
 
-def rsiDivergenceFromUpToDown():
-    os.makedirs('./csv/swing/rsi_divergences/', exist_ok=True)
-
+# 🔍 RSI Divergence চেক এবং রিপোর্ট পাঠানো
+def check_rsi_divergence_and_send():
     try:
-        # 📥 ফাইল লোড
-        df = pd.read_csv('./csv/swing/up_to_down.csv')
+        # 📥 CSV লোড করুন
+        df = pd.read_csv('./csv/swing/down_to_up.csv')
+
+        # ডেটা প্রস্তুত করুন
         df['date'] = pd.to_datetime(df['date'])
-        df['orderblock_date'] = pd.to_datetime(df['orderblock_date'])
-        df['orderblock_low'] = pd.to_numeric(df['orderblock_low'], errors='coerce')
+        df = df.sort_values(by=['symbol', 'date'])
 
-        # 📥 RSI তুলতে mongodb.csv থেকে
-        df_mongo = pd.read_csv('./csv/mongodb.csv', usecols=['symbol', 'date', 'rsi'])
-        df_mongo['date'] = pd.to_datetime(df_mongo['date'])
-        df_mongo['rsi'] = pd.to_numeric(df_mongo['rsi'], errors='coerce')
+        results = []
 
-        # 🔗 Merge RSI from orderblock_date
-        df = df.merge(
-            df_mongo.rename(columns={'date': 'orderblock_date', 'rsi': 'rsi_ob_date'}),
-            on=['symbol', 'orderblock_date'],
-            how='left'
-        )
+        for symbol, group in df.groupby('symbol'):
+            group = group.reset_index(drop=True)
+            if len(group) < 2:
+                continue
 
-        missing_rsi_count = df['rsi_ob_date'].isna().sum()
-        print(f"ℹ️ RSI not found for {missing_rsi_count} rows based on orderblock_date.")
+            last_row = group.iloc[-1]
+            prev_row = group.iloc[-2]
 
-        # 🔍 Sort & prepare for analysis
-        df = df.sort_values(by=['symbol', 'date']).reset_index(drop=True)
-        divergences = []
-
-        for symbol in df['symbol'].unique():
-            symbol_df = df[df['symbol'] == symbol].sort_values(by='date').reset_index(drop=True)
-
-            for i in range(1, len(symbol_df)):
-                current = symbol_df.iloc[i]
-                previous = symbol_df.iloc[i - 1]
-
-                # 📊 Divergence check using OB Low and orderblock_date RSI
-                if (
-                    pd.notna(previous['orderblock_low']) and pd.notna(current['orderblock_low']) and
-                    pd.notna(previous['rsi_ob_date']) and pd.notna(current['rsi_ob_date']) and
-                    current['orderblock_low'] < previous['orderblock_low'] and
-                    current['rsi_ob_date'] > previous['rsi_ob_date']
-                ):
-                    divergences.append({
-                        'symbol': symbol,
-                        'prev_date': previous['orderblock_date'].strftime('%Y-%m-%d'),
-                        'curr_date': current['orderblock_date'].strftime('%Y-%m-%d'),
-                        'prev_ob_low': previous['orderblock_low'],
-                        'curr_ob_low': current['orderblock_low'],
-                        'prev_rsi': previous['rsi_ob_date'],
-                        'curr_rsi': current['rsi_ob_date']
-                    })
+            # ✅ শর্ত: orderblock_low কম, RSI বেশি
+            if (last_row['orderblock_low'] < prev_row['orderblock_low']) and (last_row['rsi'] > prev_row['rsi']):
+                results.append(last_row)
 
         today = datetime.now().strftime('%Y-%m-%d')
 
-        # 📤 রিপোর্ট তৈরি ও পাঠানো
-        if divergences:
-            message = f"<b>📈 RSI Bullish Divergence (Orderblock Based) - {today}</b>\n\n"
-            for item in divergences:
+        # ✅ রেজাল্ট থাকলে CSV সেভ এবং Telegram-এ পাঠান
+        if results:
+            output_df = pd.DataFrame(results)
+            output_path = './csv/swing/rsi_divergences/rsi_divergences.csv'
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            output_df.to_csv(output_path, index=False)
+
+            # 📨 টেলিগ্রাম মেসেজ তৈরি
+            message = f"<b>📉 RSI Bearish Divergence (Swing OB Based) - {today}</b>\n\n"
+            for row in output_df.itertuples():
                 message += (
-                    f"<b>📌 {item['symbol']}</b>\n"
-                    f"🔹 আগের OB Date: {item['prev_date']}, OB Low: {item['prev_ob_low']}, RSI: {item['prev_rsi']:.2f}\n"
-                    f"🔹 বর্তমান OB Date: {item['curr_date']}, OB Low: {item['curr_ob_low']}, RSI: {item['curr_rsi']:.2f}\n\n"
+                    f"<b>📌 {row.symbol}</b>\n"
+                    f"📅 তারিখ: {row.date.strftime('%Y-%m-%d')}\n"
+                    f"🔻 OB Low: {row.orderblock_low}, RSI: {row.rsi:.2f}\n\n"
                 )
 
-            # ✅ Save to CSV
-            output_df = pd.DataFrame(divergences)
-            output_file = f'./csv/swing/rsi_divergences.csv'
-            output_df.to_csv(output_file, index=False)
-
             send_telegram_message(message)
-            send_telegram_message(f"✅ রিপোর্ট সেভ হয়েছে: {output_file}")
+            send_telegram_message(f"✅ রিপোর্ট সেভ হয়েছে: {output_path}")
         else:
-            send_telegram_message(f"ℹ️ {today} তারিখে কোনো RSI divergence (orderblock ভিত্তিক) পাওয়া যায়নি।")
+            send_telegram_message(f"ℹ️ {today} তারিখে কোনো RSI divergence পাওয়া যায়নি।")
 
     except Exception as e:
-        error_msg = f"❌ ডেটা প্রসেসিংয়ে সমস্যা: {str(e)}"
+        error_msg = f"❌ প্রসেসিং中 ত্রুটি: {str(e)}"
         print(error_msg)
         send_telegram_message(error_msg)
 
-# ▶️ Run the function
-rsiDivergenceFromUpToDown()
+# ▶️ ফাংশন চালান
+check_rsi_divergence_and_send()
