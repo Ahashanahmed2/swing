@@ -50,6 +50,7 @@ for symbol in symbols:
                 high = candle_row['low']
                 low = confirm_row['low']
                 fib_382 = low + (high - low) * 0.382
+
                 fib_50 = (high + low) / 2
                 fib_618 = low + (high - low) * 0.618
 
@@ -63,11 +64,11 @@ for symbol in symbols:
                 uptrend_rows.append({
                     'symbol': symbol,
                     'date': confirm_row['date'],
-                    'low': high,
                     'high': low,
                     'orderblock_date': candle_row['date'],
                     'orderblock_low': candle_row['low'],
                     'orderblock_high': candle_row['high'],
+                    'orderblock_volume': candle_row['volume'],
                     'fvg_low': candle_row['high'],
                     'fvg_high': confirm_row['low'],
                     'fib_38.2%': round(fib_382,2),
@@ -130,10 +131,10 @@ for symbol in symbols:
                     'symbol': symbol,
                     'date': confirm_row['date'],
                     'low': high,
-                    'high': low,
                     'orderblock_date': candle_row['date'],
-                    'orderblock_low': candle_row['low'],
                     'orderblock_high': candle_row['high'],
+                    'orderblock_low': candle_row['low'],
+                    'orderblock_volume': candle_row['volume'],
                     'fvg_low': candle_row['low'],
                     'fvg_high': confirm_row['high'],
                     'fib_38.2%': round(fib_382,2),
