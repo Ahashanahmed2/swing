@@ -1,46 +1,56 @@
-import pandas as pd
-from ta.momentum import RSIIndicator
-import numpy as np
+def identify_swing_points(df, use_rsi=False, rsi_threshold_low=30, rsi_threshold_high=70):
+    from ta.momentum import RSIIndicator
 
-def identify_swing_points(df):
-    # RSI Indicator calculate
-    rsi_indicator = RSIIndicator(close=df['close'], window=14, fillna=True)
-    df['rsi'] = rsi_indicator.rsi()
+    if use_rsi:
+        rsi_indicator = RSIIndicator(close=df['close'], window=14, fillna=True)
+        df['rsi'] = rsi_indicator.rsi()
 
     swing_lows = []
     swing_highs = []
 
-    # Loop through data to find swing points
-    for i in range(2, len(df) - 6):
-        candle = df.iloc[i]
-        prev_candle = df.iloc[i - 1]
+    for i in range(1, len(df) - 7):
+        current = df.iloc[i]
+        prev = df.iloc[i - 1]
+        next1 = df.iloc[i + 1]
 
-        # --- Swing Low Condition ---
-        if (
-            candle['low'] < prev_candle['low']
-        ):
-            for j in range(1, 6):
-                current = df.iloc[i + j]
-                prev = df.iloc[i + j - 1]
-
-                if (current['close'] > prev['high'] and
-                    df.iloc[i + 2]['close'] > current['high']):
-                    swing_lows.append((df.index[i], df.index[i + j + 1]))
-                    print(f"swing_lows: {swing_lows}")
+        # === ✅ Swing Low Logic ===
+        if current['low'] < prev['low'] and current['low'] < next1['low']:
+            condition_pairs = [
+                (i,     i + 2, i + 1),
+                (i + 1, i + 3, i + 2),
+                (i + 2, i + 4, i + 3),
+                (i + 3, i + 5, i + 4),
+                (i + 4, i + 6, i + 5),
+            ]
+            for high_idx, low_idx, close_compare_idx in condition_pairs:
+                if low_idx >= len(df):
+                    break
+                if (
+                    df.iloc[high_idx]['high'] < df.iloc[low_idx]['low'] and
+                    df.iloc[low_idx]['close'] > df.iloc[close_compare_idx]['high']
+                ):
+                    if not use_rsi or df['rsi'].iloc[i] < rsi_threshold_low:
+                        swing_lows.append((i, low_idx))
                     break
 
-        # --- Swing High Condition ---
-        if (
-            candle['high'] > prev_candle['high']
-        ):
-            for j in range(1, 4):
-                current = df.iloc[i + j]
-                prev = df.iloc[i + j - 1]
-
-                if (current['close'] < prev['low'] and
-                    df.iloc[i + 2]['close'] < current['low']):
-                    swing_highs.append((df.index[i], df.index[i + j + 1]))
-                    print(f"swing_highs: {swing_highs}")
+        # === 🔼 Swing High Logic ===
+        if current['high'] > prev['high'] and current['high'] > next1['high']:
+            condition_pairs = [
+                (i,     i + 2, i + 1),
+                (i + 1, i + 3, i + 2),
+                (i + 2, i + 4, i + 3),
+                (i + 3, i + 5, i + 4),
+                (i + 4, i + 6, i + 5),
+            ]
+            for low_idx, high_idx, close_compare_idx in condition_pairs:
+                if high_idx >= len(df):
+                    break
+                if (
+                    df.iloc[low_idx]['low'] > df.iloc[high_idx]['high'] and
+                    df.iloc[high_idx]['close'] < df.iloc[close_compare_idx]['low']
+                ):
+                    if not use_rsi or df['rsi'].iloc[i] > rsi_threshold_high:
+                        swing_highs.append((i, high_idx))
                     break
 
     return swing_lows, swing_highs
