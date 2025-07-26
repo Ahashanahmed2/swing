@@ -9,18 +9,19 @@ import subprocess
 import os
 
 scripts = [
-    #'scripts/mongodb.py',
+    'scripts/mongodb.py',
     'scripts/swing_High_Low.py',
     'scripts/swing_point.py',
     'scripts/imbalance.py',
     'scripts/main_rsu_divergence.py',
-    'scripts/rsi_diversence.py',
     'scripts/uptrand_downtrand.py',
     'scripts/trands.py',
+    'scripts/rsi_crose_above_30.py',
+    'scripts/rsi_diversence.py',
     'scripts/backtest_and_retrain.py',
     'scripts/signals.py',
     'scripts/error_analysis.py',
-    #'scripts/loss_logging_callback.py',
+    'scripts/loss_logging_callback.py',
     'scripts/generate_signal.py',
     'scripts/sort_signals.py',
     'scripts/filter_trends.py',

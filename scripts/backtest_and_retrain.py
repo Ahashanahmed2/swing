@@ -61,6 +61,13 @@ swing_low_candle = pd.concat([pd.read_csv('./csv/swing/swing_low/low_candle/' + 
                               for f in os.listdir('./csv/swing/swing_low/low_candle') if f.endswith('.csv')])
 swing_low_confirm = pd.concat([pd.read_csv('./csv/swing/swing_low/low_confirm/' + f)
                                for f in os.listdir('./csv/swing/swing_low/low_confirm') if f.endswith('.csv')])
+rsi_divergences = pd.read_csv("./csv/swing/rsi_divergences/rsi_divergences.csv")
+import os
+import pandas as pd
+
+filtered_output_path = './csv/filtered_output.csv'
+filtered_output = pd.read_csv(filtered_output_path) if os.path.exists(filtered_output_path) and not pd.read_csv(filtered_output_path).empty else pd.DataFrame()
+
 down_to_up = pd.read_csv("./csv/swing/down_to_up.csv")
 up_to_down = pd.read_csv("./csv/swing/up_to_down.csv")
 
@@ -74,6 +81,8 @@ env = TradeEnv(
     swing_high_confirm,
     swing_low_candle,
     swing_low_confirm,
+    rsi_divergences,
+    filtered_output,
     down_to_up,
     up_to_down
 )

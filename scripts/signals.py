@@ -27,16 +27,18 @@ def load_all_csv_from_folder(folder):
     return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
 
 main_df = pd.read_csv('./csv/mongodb.csv')
+filtered_df = pd.read_csv('./csv/swing/filtered_low_rsi_candles.csv')
 imbalance_high = load_all_csv_from_folder('./csv/swing/imbalanceZone/down_to_up')
 imbalance_low = load_all_csv_from_folder('./csv/swing/imbalanceZone/up_to_down')
 swing_high_candle = load_all_csv_from_folder('./csv/swing/swing_high/high_candle')
 swing_high_confirm = load_all_csv_from_folder('./csv/swing/swing_high/high_confirm')
 swing_low_candle = load_all_csv_from_folder('./csv/swing/swing_low/low_candle')
 swing_low_confirm = load_all_csv_from_folder('./csv/swing/swing_low/low_confirm')
+rsi_divergence = pd.read_csv("./csv/swing/rsi_divergences/rsi_divergences.csv")
+filtered_output_path = './csv/filtered_output.csv'
+filtered_output = pd.read_csv(filtered_output_path) if os.path.exists(filtered_output_path) and not pd.read_csv(filtered_output_path).empty else pd.DataFrame()
 down_to_up =pd.read_csv("./csv/swing/down_to_up.csv")
 up_to_down = pd.read_csv("./csv/swing/up_to_down.csv")
-rsi_divergence = pd.DataFrame()
-
 # ---------- 🧠 Load Model ----------
 model_path = "./csv/dqn_retrained.zip"
 if not os.path.exists(model_path):
@@ -47,6 +49,7 @@ model = DQN.load(model_path)
 # ---------- 🌍 Create Environment ----------
 env = TradeEnv(
     main_df=main_df,
+    filtered_df=filtered_df,
     imbalance_high_df=imbalance_high,
     imbalance_low_df=imbalance_low,
     swing_high_candle_df=swing_high_candle,
@@ -54,6 +57,7 @@ env = TradeEnv(
     swing_low_candle_df=swing_low_candle,
     swing_low_confirm_df=swing_low_confirm,
     rsi_divergence_df=rsi_divergence,
+    filtered_output=filtered_output,
     down_to_up_df=down_to_up,
     up_to_down_df=up_to_down
 )

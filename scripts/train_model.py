@@ -49,6 +49,9 @@ swing_high_candle = load_all_csv_from_folder('./csv/swing/swing_high/high_candle
 swing_high_confirm = load_all_csv_from_folder('./csv/swing/swing_high/high_confirm')
 swing_low_candle = load_all_csv_from_folder('./csv/swing/swing_low/low_candle')
 swing_low_confirm = load_all_csv_from_folder('./csv/swing/swing_low/low_confirm')
+rsi_divergences = pd.read_csv("./csv/swing/rsi_divergences/rsi_divergences.csv")
+filtered_output_path = './csv/filtered_output.csv'
+filtered_output = pd.read_csv(filtered_output_path) if os.path.exists(filtered_output_path) and not pd.read_csv(filtered_output_path).empty else pd.DataFrame()
 down_to_up = pd.read_csv("./csv/swing/down_to_up.csv")
 up_to_down = pd.read_csv("./csv/swing/up_to_down.csv")
 # rsi_divergence = load_all_csv_from_folder('/home/ahsan/Music/swing/csv/swing/rsi_divergences')  # ঐচ্ছিক
@@ -64,6 +67,8 @@ try:
     swing_high_confirm,
     swing_low_candle,
     swing_low_confirm,
+    rsi_divergences,
+    filtered_output,
     down_to_up,
     up_to_down
 

@@ -1,7 +1,11 @@
 from huggingface_hub import login, upload_folder, snapshot_download, HfApi
 import os
+<<<<<<< HEAD
+=======
+
+>>>>>>> 02b7957 (last update 26-07-2025)
 from dotenv import load_dotenv
-import sys
+
 load_dotenv()
 
 HF_TOKEN = os.getenv("hf_token")
@@ -47,7 +51,11 @@ def download_from_hf_or_run_script(repo_id: str = REPO_ID, local_dir: str = "./c
         temp_path = snapshot_download(
             repo_id=repo_id,
             repo_type="model",
+<<<<<<< HEAD
             token=token
+=======
+            token=token,
+>>>>>>> 02b7957 (last update 26-07-2025)
         )
 
         import shutil
@@ -65,9 +73,14 @@ def download_from_hf_or_run_script(repo_id: str = REPO_ID, local_dir: str = "./c
     except Exception as e:
         print(f"⚠️ HF থেকে ডাউনলোড ব্যর্থ: {e}")
         print("📉 MongoDB থেকে রিড করে লোকালি সেভ করার চেষ্টা করা হবে...")
+<<<<<<< HEAD
        
 
      
+=======
+        
+
+>>>>>>> 02b7957 (last update 26-07-2025)
 
 # ⏯️ চালাতে চাইলে
 if __name__ == "__main__":
