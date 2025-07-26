@@ -10,13 +10,11 @@ from hf_uploader import download_from_hf_or_run_script
 # Step 1: Download CSV from HF if needed
 if download_from_hf_or_run_script():
     print(f"HF data download success")
-
-<<<<<<< HEAD
 download_from_hf_or_run_script()
 # 📁 CSV ফাইল path
-=======
+
 # Step 2: CSV Load
->>>>>>> 02b7957 (last update 26-07-2025)
+
 csv_path = './csv/mongodb.csv'
 os.makedirs(os.path.dirname(csv_path), exist_ok=True)
 

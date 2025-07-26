@@ -27,12 +27,11 @@ def send_telegram_message(message):
 # 🔍 RSI Divergence চেক এবং রিপোর্ট পাঠানো
 def check_rsi_divergence_and_send():
     try:
-<<<<<<< HEAD
         # 📥 CSV লোড করুন
         df = pd.read_csv('./csv/swing/down_to_up.csv')
 
         # ডেটা প্রস্তুত করুন
-=======
+
         # 📥 দুইটি CSV লোড করে source কলাম যোগ করুন
         df1 = pd.read_csv('./csv/swing/down_to_up.csv')
         df1['source'] = 'down_to_up'
@@ -44,14 +43,14 @@ def check_rsi_divergence_and_send():
         df = pd.concat([df1, df2], ignore_index=True)
 
         # ডেটা প্রস্তুত
->>>>>>> 02b7957 (last update 26-07-2025)
+
         df['date'] = pd.to_datetime(df['date'])
         df = df.sort_values(by=['symbol', 'date'])
 
         results = []
 
         for symbol, group in df.groupby('symbol'):
-<<<<<<< HEAD
+
             group = group.reset_index(drop=True)
             if len(group) < 2:
                 continue
@@ -62,7 +61,7 @@ def check_rsi_divergence_and_send():
             # ✅ শর্ত: orderblock_low কম, RSI বেশি
             if (last_row['orderblock_low'] < prev_row['orderblock_low']) and (last_row['rsi'] > prev_row['rsi']):
                 results.append(last_row)
-=======
+
             group = group.sort_values(by='date').reset_index(drop=True)
             if len(group) < 2:
                 continue
@@ -74,17 +73,16 @@ def check_rsi_divergence_and_send():
                 if (last_row.orderblock_low < prev_row.orderblock_low) and (last_row.rsi > prev_row.rsi):
                     results.append(last_row)
                     break  # যেকোনো একটায় মিললে যথেষ্ট
->>>>>>> 02b7957 (last update 26-07-2025)
+
 
         today = datetime.now().strftime('%Y-%m-%d')
 
         # ✅ রেজাল্ট থাকলে CSV সেভ এবং Telegram-এ পাঠান
         if results:
             output_df = pd.DataFrame(results)
-<<<<<<< HEAD
-=======
+
             output_df = output_df.sort_values(by='date', ascending=False)
->>>>>>> 02b7957 (last update 26-07-2025)
+
             output_path = './csv/swing/rsi_divergences/rsi_divergences.csv'
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             output_df.to_csv(output_path, index=False)
@@ -93,11 +91,8 @@ def check_rsi_divergence_and_send():
             message = f"<b>📉 RSI Bearish Divergence (Swing OB Based) - {today}</b>\n\n"
             for row in output_df.itertuples():
                 message += (
-<<<<<<< HEAD
                     f"<b>📌 {row.symbol}</b>\n"
-=======
                     f"<b>📌 {row.symbol}</b> ({row.source})\n"
->>>>>>> 02b7957 (last update 26-07-2025)
                     f"📅 তারিখ: {row.date.strftime('%Y-%m-%d')}\n"
                     f"🔻 OB Low: {row.orderblock_low}, RSI: {row.rsi:.2f}\n\n"
                 )
