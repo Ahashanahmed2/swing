@@ -9,4 +9,5 @@ scripts/.env
 *.pt
 *.h5
 *.csv
-*.zip
+
+/output/

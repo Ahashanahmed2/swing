@@ -62,9 +62,6 @@ swing_low_candle = pd.concat([pd.read_csv('./csv/swing/swing_low/low_candle/' + 
 swing_low_confirm = pd.concat([pd.read_csv('./csv/swing/swing_low/low_confirm/' + f)
                                for f in os.listdir('./csv/swing/swing_low/low_confirm') if f.endswith('.csv')])
 rsi_divergences = pd.read_csv("./csv/swing/rsi_divergences/rsi_divergences.csv")
-import os
-import pandas as pd
-
 filtered_output_path = './csv/filtered_output.csv'
 filtered_output = pd.read_csv(filtered_output_path) if os.path.exists(filtered_output_path) and not pd.read_csv(filtered_output_path).empty else pd.DataFrame()
 

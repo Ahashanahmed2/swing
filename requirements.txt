@@ -8,4 +8,5 @@ stable-baselines3
 shimmy>=2.0
 fpdf2>=2.7.0
 huggingface_hub
+shutil
 

@@ -93,7 +93,7 @@ class TradeEnv(gym.Env):
             price = self._safe_float(r.get('close'))
             symbol = r.get('symbol', '')
             matched = 0
-
+            date = r.get('date')  # ✅ Fix: Define date from current row
             rsi_div = 0.0
             if not self.rsi_divergence_df.empty:
                 try:
