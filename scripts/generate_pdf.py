@@ -1,5 +1,6 @@
 from hf_uploader import upload_to_hf
 import pandas as pd
+from fpdf.enums import XPos, YPos
 from fpdf import FPDF
 import os
 from datetime import datetime, timedelta
@@ -27,7 +28,8 @@ class PDF(FPDF):
         formatted_time = now_plus_8.strftime("%d/%m/%Y %I:%M %p")
         self.set_font("NotoSans",'B', 14)
         if self.title_text:
-            self.cell(0, 10, self.title_text, 0, 1, "C") # Display the title
+            self.cell(0, 10, self.title_text, 0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
+
             self.cell(0, 5, formatted_time, 0, 1, "C")
         self.set_font("NotoSans","", 10)
         self.ln(5)
