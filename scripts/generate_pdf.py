@@ -30,14 +30,14 @@ class PDF(FPDF):
         if self.title_text:
             self.cell(0, 10, self.title_text, 0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
 
-            self.cell(0, 5, formatted_time, 0, 1, "C")
+            self.cell(0, 5, formatted_time, 0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
         self.set_font("NotoSans","", 10)
         self.ln(5)
         
     def footer(self):
         self.set_y(-15)
         self.set_font("NotoSans", "I", 8)
-        self.cell(0, 10, f"Page {self.page_no()}", 0, 0, "C")
+        f"Page {self.page_no()}", 0, new_x=XPos.RIGHT, new_y=YPos.TOP, align="C")
 
     def add_table(self, data):
         if data.empty:
