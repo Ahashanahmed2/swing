@@ -141,4 +141,4 @@ if __name__ == "__main__":
                 print(f"\n📄 রিপোর্ট তৈরি হচ্ছে: {csv_file}")
                 generate_pdf_report(full_csv_path, output_pdf_path)
 
-upload_to_hf()
+#upload_to_hf()
