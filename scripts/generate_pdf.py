@@ -133,12 +133,13 @@ if __name__ == "__main__":
             print("⚠️ কোনো CSV ফাইল পাওয়া যায়নি এই ডিরেক্টরিতে।")
         else:
             for csv_file in csv_files:
-                print(f"full_csv_path:{full_csv_path} \n output_pdf_path:{output_pdf_path}")
+                
                 full_csv_path = os.path.join(folder_path, csv_file)
                 output_pdf_name = os.path.splitext(csv_file)[0] + ".pdf"
                 output_pdf_path = os.path.join(output_pdf_dir, output_pdf_name)
                 print(f"full_csv_path:{full_csv_path} \n output_pdf_path:{output_pdf_path}")
                 print(f"\n📄 রিপোর্ট তৈরি হচ্ছে: {csv_file}")
+                print(f"full_csv_path:{full_csv_path} \n output_pdf_path:{output_pdf_path}")
                 generate_pdf_report(full_csv_path, output_pdf_path)
 
 #upload_to_hf()
