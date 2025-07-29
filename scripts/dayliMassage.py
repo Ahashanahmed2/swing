@@ -50,6 +50,7 @@ message = "<b>📁 PDF Reports Sent:</b>\n\n"
 if os.path.exists(PDF_FOLDER):
     pdf_files = [f for f in os.listdir(PDF_FOLDER) if f.endswith('.pdf')]
     if pdf_files:
+        print(f"pdf_folder:{PDF_FOLDER},\n pdf_file:{pdf_files}")
         for pdf_file in pdf_files:
             pdf_path = os.path.abspath(os.path.join(PDF_FOLDER, pdf_file))
             send_telegram_pdf(pdf_path)
