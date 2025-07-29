@@ -45,7 +45,7 @@ jobs:
     - name: Run Python script
       if: ${{ success() }}
       env:
-        MONGO_URI: ${{ secrets.MONGO_URI }}
+        MONGO_URL: ${{ secrets.MONGO_URI }}
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         EMAIL_USER: ${{ secrets.EMAIL_USER }}
