@@ -5,8 +5,8 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_TOKEN_TRADE")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID_TRADE")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 PDF_FOLDER = os.path.join(os.environ["GITHUB_WORKSPACE"], "output/ai_signal/pdfs")
 
