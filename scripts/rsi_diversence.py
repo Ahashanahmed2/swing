@@ -6,9 +6,8 @@ from dotenv import load_dotenv
 
 # 🔐 Load Telegram credentials
 load_dotenv()
-
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_TOKEN_TRADE")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID_TRADE")
 
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -42,40 +41,36 @@ def check_rsi_divergence_and_send():
             if len(group) < 2:
                 continue
 
-            last_idx = len(group) - 1
-            last_row = group.iloc[last_idx]
+            for i in range(len(group) - 1):
+                for j in range(i + 1, len(group)):
+                    row1 = group.iloc[i]
+                    row2 = group.iloc[j]
 
-            # 👉 Loop from second last to top
-            for i in range(last_idx - 1, -1, -1):
-                prev_row = group.iloc[i]
+                    # RSI divergence condition
+                    if row2.orderblock_low < row1.orderblock_low and row2.rsi > row1.rsi:
+                        start_date = row1.date
+                        end_date = row2.date
+                        start_price = row1.orderblock_low
+                        end_price = row2.orderblock_low
 
-                if (last_row.orderblock_low < prev_row.orderblock_low) and (last_row.rsi > prev_row.rsi):
-                    # 🔍 Trendline check
-                    start_date = prev_row.date
-                    end_date = last_row.date
-                    start_price = prev_row.orderblock_low
-                    end_price = last_row.orderblock_low
+                        days_diff = (end_date - start_date).days
+                        if days_diff == 0:
+                            continue
 
-                    days_diff = (end_date - start_date).days
-                    if days_diff == 0:
-                        continue
+                        slope = (end_price - start_price) / days_diff
 
-                    slope = (end_price - start_price) / days_diff
+                        symbol_mongo = mongo_df[(mongo_df['symbol'] == symbol) & 
+                                                (mongo_df['date'] >= start_date) & 
+                                                (mongo_df['date'] <= end_date)].copy()
+                        if symbol_mongo.empty:
+                            continue
 
-                    symbol_mongo = mongo_df[(mongo_df['symbol'] == symbol) & 
-                                            (mongo_df['date'] >= start_date) & 
-                                            (mongo_df['date'] <= end_date)].copy()
-                    if symbol_mongo.empty:
-                        continue
+                        symbol_mongo['trendline'] = symbol_mongo['date'].apply(
+                            lambda d: start_price + slope * (d - start_date).days
+                        )
 
-                    symbol_mongo['trendline'] = symbol_mongo['date'].apply(
-                        lambda d: start_price + slope * (d - start_date).days
-                    )
-
-                    # ✅ Check trendline condition
-                    if all(symbol_mongo['close'] >= symbol_mongo['trendline']):
-                        results.append(last_row)
-                        break  # ☑️ First valid match only
+                        if all(symbol_mongo['close'] >= symbol_mongo['trendline']):
+                            results.append(row2)
 
         today = datetime.now().strftime('%Y-%m-%d')
 
