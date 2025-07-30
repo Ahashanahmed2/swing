@@ -8,7 +8,7 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_TOKEN_TRADE")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID_TRADE")
 
-PDF_FOLDER = "./output/ai_signal/pdfs"
+PDF_FOLDER = os.path.join(os.environ["GITHUB_WORKSPACE"], "output/ai_signal/pdfs")
 
 def send_telegram_pdf(pdf_path):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
