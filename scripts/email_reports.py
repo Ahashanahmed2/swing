@@ -13,7 +13,8 @@ EMAIL_TO = os.getenv("EMAIL_TO")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
 
 # Directory containing PDFs
-PDF_DIR = "output/ai_signal/pdfs"
+PDF_FOLDER = os.path.join(os.environ["GITHUB_WORKSPACE"], "output/ai_signal/pdfs")
+
 
 def send_email():
     msg = EmailMessage()
