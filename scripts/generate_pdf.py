@@ -37,7 +37,7 @@ class PDF(FPDF):
     def footer(self):
         self.set_y(-15)
         self.set_font("NotoSans", "I", 8)
-        f"Page {self.page_no()}", 0, new_x=XPos.RIGHT, new_y=YPos.TOP, align="C")
+        self.cell(0, 10, f"Page {self.page_no()}", 0, new_x=XPos.RIGHT, new_y=YPos.TOP, align="C")
 
     def add_table(self, data):
         if data.empty:
