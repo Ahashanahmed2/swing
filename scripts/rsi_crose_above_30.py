@@ -4,7 +4,7 @@ import requests
 from datetime import datetime
 from dotenv import load_dotenv
 
-# 🔐 Load Telegram credentials
+# Load env variables
 load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -24,81 +24,45 @@ def send_telegram_message(message):
         print(f"Telegram message sending failed: {str(e)}")
         return None
 
-def check_rsi_divergence_and_send():
+def detect_rsi_cross_above_30():
     try:
-        df = pd.read_csv('./csv/swing/down_to_up.csv')
-        df['source'] = 'down_to_up'
+        df = pd.read_csv('./swing/csv/mongodb.csv')
         df['date'] = pd.to_datetime(df['date'])
         df = df.sort_values(by=['symbol', 'date'])
 
-        mongo_df = pd.read_csv('./csv/mongodb.csv')
-        mongo_df['date'] = pd.to_datetime(mongo_df['date'])
-
-        results = []
+        cross_list = []
 
         for symbol, group in df.groupby('symbol'):
-            group = group.sort_values(by='date', ascending=True).reset_index(drop=True)
+            group = group.sort_values(by='date').reset_index(drop=True)
 
             if len(group) < 2:
                 continue
 
-            last_idx = len(group) - 1
-            last_row = group.iloc[last_idx]
+            prev_row = group.iloc[-2]
+            curr_row = group.iloc[-1]
 
-            # 👉 Loop from second last to top
-            for i in range(last_idx - 1, -1, -1):
-                prev_row = group.iloc[i]
-
-                if (last_row.orderblock_low < prev_row.orderblock_low) and (last_row.rsi > prev_row.rsi):
-                    # 🔍 Trendline check
-                    start_date = prev_row.date
-                    end_date = last_row.date
-                    start_price = prev_row.orderblock_low
-                    end_price = last_row.orderblock_low
-
-                    days_diff = (end_date - start_date).days
-                    if days_diff == 0:
-                        continue
-
-                    slope = (end_price - start_price) / days_diff
-
-                    symbol_mongo = mongo_df[(mongo_df['symbol'] == symbol) & 
-                                            (mongo_df['date'] >= start_date) & 
-                                            (mongo_df['date'] <= end_date)].copy()
-                    if symbol_mongo.empty:
-                        continue
-
-                    symbol_mongo['trendline'] = symbol_mongo['date'].apply(
-                        lambda d: start_price + slope * (d - start_date).days
-                    )
-
-                    # ✅ Check trendline condition
-                    if all(symbol_mongo['close'] >= symbol_mongo['trendline']):
-                        results.append(last_row)
-                        break  # ☑️ First valid match only
+            # RSI cross above 30 detection
+            if prev_row['rsi'] <= 30 and curr_row['rsi'] > 30:
+                cross_list.append({
+                    "symbol": symbol,
+                    "date": curr_row['date'],
+                    "rsi": curr_row['rsi'],
+                    "close": curr_row['close']
+                })
 
         today = datetime.now().strftime('%Y-%m-%d')
 
-        if results:
-            output_df = pd.DataFrame(results)
-            output_df = output_df.sort_values(by='date', ascending=False)
-
-            output_path = './csv/swing/rsi_divergences/rsi_divergences.csv'
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            output_df.to_csv(output_path, index=False)
-
-            message = f"<b>📉 RSI Divergence + Trendline Hold - {today}</b>\n\n"
-            for row in output_df.itertuples():
+        if cross_list:
+            message = f"<b>📈 RSI Cross Above 30 Detected - {today}</b>\n\n"
+            for item in cross_list:
                 message += (
-                    f"<b>📌 {row.symbol}</b> ({row.source})\n"
-                    f"📅 তারিখ: {row.date.strftime('%Y-%m-%d')}\n"
-                    f"🔻 OB Low: {row.orderblock_low}, RSI: {row.rsi:.2f}\n\n"
+                    f"<b>📌 {item['symbol']}</b>\n"
+                    f"📅 তারিখ: {item['date'].strftime('%Y-%m-%d')}\n"
+                    f"💹 RSI: {item['rsi']:.2f}, 📉 Close: {item['close']}\n\n"
                 )
-
             send_telegram_message(message)
-            send_telegram_message(f"✅ রিপোর্ট সেভ হয়েছে: {output_path}")
         else:
-            send_telegram_message(f"ℹ️ {today} তারিখে কোনো RSI divergence পাওয়া যায়নি।")
+            send_telegram_message(f"ℹ️ {today} তারিখে কোনো RSI > 30 cross পাওয়া যায়নি।")
 
     except Exception as e:
         error_msg = f"❌ ত্রুটি: {str(e)}"
@@ -106,4 +70,4 @@ def check_rsi_divergence_and_send():
         send_telegram_message(error_msg)
 
 # ▶️ Run
-check_rsi_divergence_and_send()
+detect_rsi_cross_above_30()
