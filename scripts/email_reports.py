@@ -36,9 +36,9 @@ AI Signal Bot
     )
 
     # Attach all PDF files from the directory
-    for filename in os.listdir(PDF_DIR):
+    for filename in os.listdir(PDF_FOLDER):
         if filename.lower().endswith(".pdf"):
-            pdf_path = os.path.join(PDF_DIR, filename)
+            pdf_path = os.path.join(PDF_FOLDER, filename)
             with open(pdf_path, "rb") as f:
                 file_data = f.read()
             msg.add_attachment(file_data, maintype="application", subtype="pdf", filename=filename)
