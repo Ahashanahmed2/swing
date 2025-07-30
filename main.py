@@ -9,7 +9,7 @@ import subprocess
 import os
 
 scripts = [
-    #"scripts/mongodb.py",
+    "scripts/mongodb.py",
     "scripts/swing_High_Low.py",
     "scripts/swing_point.py",
     "scripts/imbalance.py",
@@ -19,12 +19,12 @@ scripts = [
     'scripts/rsi_crose_above_30.py',
     "scripts/rsi_diversence.py",
     #'scripts/train_model.py',
-    #'scripts/signals.py',
-    #'scripts/error_analysis.py',
-    #'scripts/loss_logging_callback.py',
-    #'scripts/generate_signal.py',
+    'scripts/signals.py',
+    'scripts/error_analysis.py',
+    'scripts/loss_logging_callback.py',
+    'scripts/generate_signal.py',
     'scripts/sort_signals.py',
-    #'scripts/filter_trends.py',
+    'scripts/filter_trends.py',
     'scripts/generate_pdf.py',
     'scripts/dayliMassage.py',
     'scripts/email_reports.py',
