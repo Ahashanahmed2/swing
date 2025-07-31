@@ -32,8 +32,8 @@ def check_rsi_divergence_and_send():
 
         # ✅ FIX: Ensure MongoDB CSV dates are datetime
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        csv_path = os.path.join(base_dir, "..", "csv", "mongodb.csv")
-
+        mongo_path = os.path.join(base_dir, "..", "csv", "mongodb.csv")
+        mongo_df = pd.read_csv(mongo_path)
         mongo_df['date'] = pd.to_datetime(mongo_df['date'])  # 🔥 critical fix
 
         results = []
