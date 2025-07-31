@@ -30,7 +30,7 @@ def check_rsi_divergence_and_send():
         df['date'] = pd.to_datetime(df['date'])
         df = df.sort_values(by=['symbol', 'date'])
 
-       mongo_df = pd.read_csv(os.path.join("csv", "mongodb.csv"))
+        mongo_df = pd.read_csv(os.path.join("csv", "mongodb.csv"))
 
 
         results = []
