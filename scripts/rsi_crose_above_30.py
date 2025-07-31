@@ -26,7 +26,7 @@ def send_telegram_message(message):
 
 def detect_rsi_cross_above_30():
     try:
-        df = pd.read_csv('./swing/csv/mongodb.csv')
+        df = pd.read_csv('./csv/mongodb.csv')
         df['date'] = pd.to_datetime(df['date'])
         df = df.sort_values(by=['symbol', 'date'])
 
