@@ -30,8 +30,9 @@ def check_rsi_divergence_and_send():
         df['date'] = pd.to_datetime(df['date'])
         df = df.sort_values(by=['symbol', 'date'])
 
+        # ✅ FIX: Ensure MongoDB CSV dates are datetime
         mongo_df = pd.read_csv(os.path.join("csv", "mongodb.csv"))
-
+        mongo_df['date'] = pd.to_datetime(mongo_df['date'])  # 🔥 critical fix
 
         results = []
 
@@ -46,7 +47,6 @@ def check_rsi_divergence_and_send():
                     row1 = group.iloc[i]
                     row2 = group.iloc[j]
 
-                    # RSI divergence condition
                     if row2.orderblock_low < row1.orderblock_low and row2.rsi > row1.rsi:
                         start_date = row1.date
                         end_date = row2.date
@@ -59,9 +59,12 @@ def check_rsi_divergence_and_send():
 
                         slope = (end_price - start_price) / days_diff
 
-                        symbol_mongo = mongo_df[(mongo_df['symbol'] == symbol) & 
-                                                (mongo_df['date'] >= start_date) & 
-                                                (mongo_df['date'] <= end_date)].copy()
+                        symbol_mongo = mongo_df[
+                            (mongo_df['symbol'] == symbol) &
+                            (mongo_df['date'] >= start_date) &
+                            (mongo_df['date'] <= end_date)
+                        ].copy()
+
                         if symbol_mongo.empty:
                             continue
 
