@@ -9,7 +9,7 @@ import subprocess
 import os
 
 scripts = [
-    'scripts/mongodb.py',
+    #'scripts/mongodb.py',
     'scripts/swing_High_Low.py',
     'scripts/swing_point.py',
     'scripts/imbalance.py',
