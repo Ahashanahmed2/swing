@@ -142,4 +142,4 @@ if __name__ == "__main__":
                 print(f"full_csv_path:{full_csv_path} \n output_pdf_path:{output_pdf_path}")
                 generate_pdf_report(full_csv_path, output_pdf_path)
 
-upload_to_hf()
+#upload_to_hf()
