@@ -19,6 +19,7 @@ scripts = [
     'scripts/rsi_crose_above_30.py',
     'scripts/rsi_diversence.py',
     'scripts/backtest_and_retrain.py',
+    "scripts/short_trade.py",
     #'scripts/train_model_ppo.py',
     'scripts/signals.py',
     'scripts/error_analysis.py',
