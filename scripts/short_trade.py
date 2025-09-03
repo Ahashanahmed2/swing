@@ -39,7 +39,7 @@ for symbol, group in df.groupby('symbol'):
 result_df = pd.DataFrame(filtered_rows)
 
 # Step 6: Sort by date ascending
-result_df = result_df.sort_values(by='date').reset_index(drop=True)
+result_df = result_df.sort_values(by='date', ascending=False).reset_index(drop=True)
 
 # Step 7: Create directory if not exists and save to CSV
 output_dir = 'output/ai_signal'
