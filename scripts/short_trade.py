@@ -7,7 +7,7 @@ df = pd.read_csv(input_file)
 
 # Step 2: Convert date columns to datetime for comparison
 df['date'] = pd.to_datetime(df['date'])
-df['orderblock_date'] = pd.to_datetime(df['orderblock_date'])
+df['orderblock_date'] = pd.to_datetime(df['orderblock_date'],format='mixed')
 
 # Step 3: Sort data by symbol and date
 df = df.sort_values(by=['symbol', 'date']).reset_index(drop=True)
