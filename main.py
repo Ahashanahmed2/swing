@@ -10,7 +10,7 @@ import os
 
 scripts = [
     #"scripts/mongodb.py",
-    "scripts/swing_High_Low.py",
+    #"scripts/swing_High_Low.py",
     "scripts/orderblock.py",
     "uptrand_smc_bos.idm.py",
     "scripts/imbalance.py",
