@@ -1,10 +1,4 @@
-def identifyswingpoints(df, usersi=False, rsithresholdlow=30, rsithreshold_high=70):
-    from ta.momentum import RSIIndicator
-
-    if use_rsi:
-        rsi_indicator = RSIIndicator(close=df['close'], window=14, fillna=True)
-        df['rsi'] = rsi_indicator.rsi()
-
+def identify_swing_points(df):
     swing_lows = []
     swing_highs = []
 
@@ -22,15 +16,14 @@ def identifyswingpoints(df, usersi=False, rsithresholdlow=30, rsithreshold_high=
                 (i + 3, i + 5, i + 4),
                 (i + 4, i + 6, i + 5),
             ]
-            for highidx, lowidx, closecompareidx in condition_pairs:
+            for high_idx, low_idx, close_compare_idx in condition_pairs:
                 if low_idx >= len(df):
                     break
                 if (
-                    df.iloc[highidx]['high'] < df.iloc[lowidx]['low'] and
-                    df.iloc[lowidx]['close'] > df.iloc[closecompare_idx]['high']
+                    df.iloc[high_idx]['high'] < df.iloc[low_idx]['low'] and
+                    df.iloc[low_idx]['close'] > df.iloc[close_compare_idx]['high']
                 ):
-                    if not usersi or df['rsi'].iloc[i] < rsithreshold_low:
-                        swinglows.append((i, lowidx))
+                    swing_lows.append((i, low_idx))
                     break
 
         # === 🔼 Swing High Logic ===
@@ -42,15 +35,14 @@ def identifyswingpoints(df, usersi=False, rsithresholdlow=30, rsithreshold_high=
                 (i + 3, i + 5, i + 4),
                 (i + 4, i + 6, i + 5),
             ]
-            for lowidx, highidx, closecompareidx in condition_pairs:
+            for low_idx, high_idx, close_compare_idx in condition_pairs:
                 if high_idx >= len(df):
                     break
                 if (
-                    df.iloc[lowidx]['low'] > df.iloc[highidx]['high'] and
-                    df.iloc[highidx]['close'] < df.iloc[closecompare_idx]['low']
+                    df.iloc[low_idx]['low'] > df.iloc[high_idx]['high'] and
+                    df.iloc[high_idx]['close'] < df.iloc[close_compare_idx]['low']
                 ):
-                    if not usersi or df['rsi'].iloc[i] > rsithreshold_high:
-                        swinghighs.append((i, highidx))
+                    swing_highs.append((i, high_idx))
                     break
 
-    return swinglows, swinghighs.
+    return swing_lows, swing_highs
