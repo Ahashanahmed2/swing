@@ -12,6 +12,7 @@ scripts = [
     #"scripts/mongodb.py",
     "scripts/swing_High_Low.py",
     "scripts/orderblock.py",
+    "uptrand_smc_bos.idm.py",
     "scripts/imbalance.py",
     "scripts/main_rsu_divergence.py",
     'scripts/uptrand_downtrand.py',
