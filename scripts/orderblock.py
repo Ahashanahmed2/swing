@@ -2,41 +2,68 @@ import os
 import pandas as pd
 import glob
 
-# Paths
-candle_dir = './csv/swing/candle/'
-orderblock_dir = './csv/orderblock/'
+# Define source paths
+low_candle_path = './csv/swing/swing_low/low_candle/'
+low_confirm_path = './csv/swing/swing_low/low_confirm/'
+high_candle_path = './csv/swing/swing_high/high_candle/'
+high_confirm_path = './csv/swing/swing_high/high_confirm/'
 
-# Ensure orderblock directory exists
-os.makedirs(orderblock_dir, exist_ok=True)
+# Define output path
+orderblock_path = './csv/orderblock/'
+os.makedirs(orderblock_path, exist_ok=True)
 
-# Process each candle file
-for candle_file in glob.glob(os.path.join(candle_dir, '*.csv')):
-    symbol = os.path.splitext(os.path.basename(candle_file))[0]
-    candle_df = pd.read_csv(candle_file)
-    candle_df['date'] = pd.to_datetime(candle_df['date'])
+# All source folders
+source_folders = {
+    'orderblock': [low_candle_path, high_candle_path],
+    'fvg': [low_confirm_path, high_confirm_path]
+}
 
-    # Prepare orderblock rows
-    ob_rows = candle_df[['symbol', 'date', 'high', 'low']].copy()
-    ob_rows.rename(columns={
-        'high': 'orderblock High',
-        'low': 'orderblock low'
-    }, inplace=True)
-    ob_rows['FVG high'] = ob_rows['orderblock High']
-    ob_rows['FVG low'] = ob_rows['orderblock low']
+# Helper function to load and tag data
+def load_and_tag(folder, tag_type):
+    data = []
+    for file in glob.glob(os.path.join(folder, '*.csv')):
+        symbol = os.path.splitext(os.path.basename(file))[0]
+        try:
+            df = pd.read_csv(file)
+            df['symbol'] = symbol
+            df['date'] = pd.to_datetime(df['date'])
+            df = df[['symbol', 'date', 'high', 'low']].copy()
+            df.rename(columns={
+                'high': f'{tag_type} High',
+                'low': f'{tag_type} low'
+            }, inplace=True)
+            data.append(df)
+        except Exception as e:
+            print(f"⚠️ Error reading {file}: {e}")
+    return pd.concat(data, ignore_index=True) if data else pd.DataFrame()
 
-    # Load existing orderblock file if exists
-    ob_file = os.path.join(orderblock_dir, f'{symbol}.csv')
-    if os.path.exists(ob_file):
-        existing_df = pd.read_csv(ob_file)
-        existing_df['date'] = pd.to_datetime(existing_df['date'])
-        last_date = existing_df['date'].max()
-        new_rows = ob_rows[ob_rows['date'] > last_date]
-        combined_df = pd.concat([existing_df, new_rows], ignore_index=True)
+# Load and merge all data
+orderblock_df = pd.concat([load_and_tag(p, 'orderblock') for p in source_folders['orderblock']], ignore_index=True)
+fvg_df = pd.concat([load_and_tag(p, 'FVG') for p in source_folders['fvg']], ignore_index=True)
+
+# Merge both on symbol and date
+merged_df = pd.merge(orderblock_df, fvg_df, on=['symbol', 'date'], how='outer')
+
+# Process each symbol
+for symbol in merged_df['symbol'].unique():
+    symbol_df = merged_df[merged_df['symbol'] == symbol].copy()
+    symbol_df.sort_values('date', inplace=True)
+
+    # Output file path
+    out_file = os.path.join(orderblock_path, f'{symbol}.csv')
+
+    # If file exists, append only newer dates
+    if os.path.exists(out_file):
+        existing = pd.read_csv(out_file)
+        existing['date'] = pd.to_datetime(existing['date'])
+        last_date = existing['date'].max()
+        new_data = symbol_df[symbol_df['date'] > last_date]
+        final_df = pd.concat([existing, new_data], ignore_index=True)
     else:
-        combined_df = ob_rows
+        final_df = symbol_df
 
-    # Sort by date
-    combined_df.sort_values('date', inplace=True)
-    combined_df.to_csv(ob_file, index=False)
+    # Final sort and save
+    final_df.sort_values('date', inplace=True)
+    final_df.to_csv(out_file, index=False)
 
-print("✅ Orderblock CSV files created/updated successfully.")
+print("✅ All orderblock files generated/updated successfully.")
