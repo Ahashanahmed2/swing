@@ -1,69 +1,114 @@
-import os
 import pandas as pd
-import glob
+import os
+from swing_point import identify_swing_points
+from hf_uploader import download_from_hf_or_run_script
 
-# Define source paths
+# Step 1: Download CSV from HF if needed
+if download_from_hf_or_run_script():
+    print(f"HF data download success")
+
+# Output paths
 low_candle_path = './csv/swing/swing_low/low_candle/'
 low_confirm_path = './csv/swing/swing_low/low_confirm/'
 high_candle_path = './csv/swing/swing_high/high_candle/'
 high_confirm_path = './csv/swing/swing_high/high_confirm/'
-
-# Define output path
 orderblock_path = './csv/orderblock/'
-os.makedirs(orderblock_path, exist_ok=True)
 
-# All source folders
-source_folders = {
-    'orderblock': [low_candle_path, high_candle_path],
-    'fvg': [low_confirm_path, high_confirm_path]
-}
+# Ensure directories exist
+for path in [low_candle_path, low_confirm_path, high_candle_path, high_confirm_path, orderblock_path]:
+    os.makedirs(path, exist_ok=True)
 
-# Helper function to load and tag data
-def load_and_tag(folder, tag_type):
-    data = []
-    for file in glob.glob(os.path.join(folder, '*.csv')):
-        symbol = os.path.splitext(os.path.basename(file))[0]
-        try:
-            df = pd.read_csv(file)
-            df['symbol'] = symbol
-            df['date'] = pd.to_datetime(df['date'])
-            df = df[['symbol', 'date', 'high', 'low']].copy()
-            df.rename(columns={
-                'high': f'{tag_type} High',
-                'low': f'{tag_type} low'
-            }, inplace=True)
-            data.append(df)
-        except Exception as e:
-            print(f"⚠️ Error reading {file}: {e}")
-    return pd.concat(data, ignore_index=True) if data else pd.DataFrame()
+# Read master CSV
+mongodb_data = pd.read_csv('./csv/mongodb.csv')
 
-# Load and merge all data
-orderblock_df = pd.concat([load_and_tag(p, 'orderblock') for p in source_folders['orderblock']], ignore_index=True)
-fvg_df = pd.concat([load_and_tag(p, 'FVG') for p in source_folders['fvg']], ignore_index=True)
+# Group by symbol
+symbol_group = mongodb_data.groupby('symbol')
 
-# Merge both on symbol and date
-merged_df = pd.merge(orderblock_df, fvg_df, on=['symbol', 'date'], how='outer')
+# Processing loop
+for symbol, df in symbol_group:
+    df = df.reset_index(drop=True)  # Ensure integer index for iloc
+    swing_lows, swing_highs = identify_swing_points(df)
 
-# Process each symbol
-for symbol in merged_df['symbol'].unique():
-    symbol_df = merged_df[merged_df['symbol'] == symbol].copy()
-    symbol_df.sort_values('date', inplace=True)
+    # ---- Swing Highs ----
+    if swing_highs:
+        high_candle_rows = [df.iloc[candle_idx] for candle_idx, _ in swing_highs]
+        high_confirm_rows = [df.iloc[confirm_idx] for _, confirm_idx in swing_highs]
 
-    # Output file path
-    out_file = os.path.join(orderblock_path, f'{symbol}.csv')
+        new_high_candle_df = pd.DataFrame(high_candle_rows)
+        new_high_confirm_df = pd.DataFrame(high_confirm_rows)
 
-    # If file exists, append only newer dates
-    if os.path.exists(out_file):
-        existing = pd.read_csv(out_file)
-        existing['date'] = pd.to_datetime(existing['date'])
-        last_date = existing['date'].max()
-        new_data = symbol_df[symbol_df['date'] > last_date]
-        final_df = pd.concat([existing, new_data], ignore_index=True)
-    else:
-        final_df = symbol_df
+        candle_file = f'{high_candle_path}{symbol}.csv'
+        confirm_file = f'{high_confirm_path}{symbol}.csv'
 
-    # Final sort and save
-    final_df.sort_values('date', inplace=True)
-    final_df.to_csv(out_file, index=False)
+        for file_path, new_df in [(candle_file, new_high_candle_df), (confirm_file, new_high_confirm_df)]:
+            if os.path.exists(file_path):
+                existing = pd.read_csv(file_path)
+                combined = pd.concat([existing, new_df])
+                combined = combined.drop_duplicates(subset=['date'], keep='last').reset_index(drop=True)
+            else:
+                combined = new_df
+            combined.to_csv(file_path, index=False)
 
-print("✅ All orderblock files generated/updated successfully.")
+    # ---- Swing Lows ----
+    if swing_lows:
+        low_candle_rows = [df.iloc[candle_idx] for candle_idx, _ in swing_lows]
+        low_confirm_rows = [df.iloc[confirm_idx] for _, confirm_idx in swing_lows]
+
+        new_low_candle_df = pd.DataFrame(low_candle_rows)
+        new_low_confirm_df = pd.DataFrame(low_confirm_rows)
+
+        candle_file = f'{low_candle_path}{symbol}.csv'
+        confirm_file = f'{low_confirm_path}{symbol}.csv'
+
+        for file_path, new_df in [(candle_file, new_low_candle_df), (confirm_file, new_low_confirm_df)]:
+            if os.path.exists(file_path):
+                existing = pd.read_csv(file_path)
+                combined = pd.concat([existing, new_df])
+                combined = combined.drop_duplicates(subset=['date'], keep='last').reset_index(drop=True)
+            else:
+                combined = new_df
+            combined.to_csv(file_path, index=False)
+
+    # ---- Orderblock Extraction ----
+    orderblock_rows = []
+
+    # Swing High Orderblocks
+    for candle_idx, confirm_idx in swing_highs:
+        candle = df.iloc[candle_idx]
+        confirm = df.iloc[confirm_idx]
+        orderblock_rows.append({
+            'symbol': symbol,
+            'date': confirm['date'],  # Orderblock date = confirm candle date
+            'orderblock low': candle['low'],
+            'orderblock high': candle['high'],
+            'fvg low': confirm['low'],
+            'fvg high': confirm['high'],
+        })
+
+    # Swing Low Orderblocks
+    for candle_idx, confirm_idx in swing_lows:
+        candle = df.iloc[candle_idx]
+        confirm = df.iloc[confirm_idx]
+        orderblock_rows.append({
+            'symbol': symbol,
+            'date': confirm['date'],
+            'orderblock low': candle['low'],
+            'orderblock high': candle['high'],
+            'fvg low': confirm['low'],
+            'fvg high': confirm['high'],
+        })
+
+    # Save Orderblock CSV
+    if orderblock_rows:
+        orderblock_df = pd.DataFrame(orderblock_rows)
+        file_path = f'{orderblock_path}{symbol}.csv'
+
+        if os.path.exists(file_path):
+            existing = pd.read_csv(file_path)
+            combined = pd.concat([existing, orderblock_df])
+            combined = combined.drop_duplicates(subset=['date'], keep='last').reset_index(drop=True)
+        else:
+            combined = orderblock_df
+
+        combined = combined.sort_values(by='date').reset_index(drop=True)
+        combined.to_csv(file_path, index=False)
