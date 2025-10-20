@@ -11,7 +11,7 @@ import os
 scripts = [
     "scripts/mongodb.py",
     "scripts/swing_High_Low.py",
-    "scripts/swing_point.py",
+    "scripts/orderblock.py",
     "scripts/imbalance.py",
     "scripts/main_rsu_divergence.py",
     'scripts/uptrand_downtrand.py',
