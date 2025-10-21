@@ -20,7 +20,7 @@ for symbol, group in mongo_df.groupby('symbol'):
         continue
 
     ob_df = pd.read_csv(ob_file)
-    if len(ob_df) < 2:
+    if len(ob_df) < 2 or 'orderblock low' not in ob_df.columns or 'orderblock high' not in ob_df.columns:
         continue
 
     last = ob_df.iloc[-1]
@@ -31,24 +31,28 @@ for symbol, group in mongo_df.groupby('symbol'):
     ob_low_second = second_last['orderblock low']
     ob_high_second = second_last['orderblock high']
 
+    # Matching condition
     if (
         ob_high_last < latest_close and
         ob_low_second > ob_high_last and
-        ob_low_second < latest_close
+        ob_high_second < latest_close
     ):
         output_rows.append({
-            'symbol': symbol,
-            'date': latest_date,
-            'close': latest_close,
-            'bos': ob_low_last,        # ✅ bos = orderblock low
-            'idm': ob_high_second
+            'SYMBOL': symbol,
+            'CLOSE': latest_close,
+            'Last OB Date': last['date'] if 'date' in last else '',
+            'BOS': ob_low_last,
+            'Second Last OB Date': second_last['date'] if 'date' in second_last else '',
+            'IDM': ob_high_second
         })
 
 # Save to both locations
 if output_rows:
     uptrend_df = pd.DataFrame(output_rows)
     # Save to ./csv/uptrand.csv
-    uptrend_df.to_csv('./csv/uptrand.csv', index=False)
+    uptrend_df.to_csv('./csv/uptrand.csv', index=False, columns=[
+        'SYMBOL', 'CLOSE', 'Last OB Date', 'BOS', 'Second Last OB Date', 'IDM'
+    ])
     # Ensure target folder exists
     os.makedirs('./output/ai_signal', exist_ok=True)
     # Copy to ./output/ai_signal/uptrand.csv
