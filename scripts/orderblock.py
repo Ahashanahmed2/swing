@@ -1,11 +1,11 @@
 import pandas as pd
 import os
 from swing_point import identify_swing_points
-#hf_uploader import download_from_hf_or_run_script
+# from hf_uploader import download_from_hf_or_run_script  # Optional HF download logic
 
-# Step 1: Download CSV from HF if needed
-#if download_from_hf_or_run_script():
-    #print("HF data download success")
+# Optional: Download CSV from HF if needed
+# if download_from_hf_or_run_script():
+#     print("HF data download success")
 
 # Output path for orderblocks
 orderblock_path = './csv/orderblock/'
@@ -20,6 +20,8 @@ symbol_group = mongodb_data.groupby('symbol')
 # Processing loop
 for symbol, df in symbol_group:
     df = df.reset_index(drop=True)
+
+    # Identify swing points
     swing_lows, swing_highs = identify_swing_points(df)
 
     orderblock_rows = []
@@ -28,6 +30,8 @@ for symbol, df in symbol_group:
     for candle_idx, confirm_idx in swing_highs:
         candle = df.iloc[candle_idx]
         confirm = df.iloc[confirm_idx]
+        rsi_value = round(candle['rsi'], 2) if 'rsi' in candle else None
+
         orderblock_rows.append({
             'symbol': symbol,
             'date': candle['date'],  # ✅ candle date as orderblock date
@@ -35,12 +39,15 @@ for symbol, df in symbol_group:
             'orderblock high': candle['high'],
             'fvg low': confirm['low'],
             'fvg high': confirm['high'],
+            'rsi': rsi_value
         })
 
     # Swing Low Orderblocks
     for candle_idx, confirm_idx in swing_lows:
         candle = df.iloc[candle_idx]
         confirm = df.iloc[confirm_idx]
+        rsi_value = round(candle['rsi'], 2) if 'rsi' in candle else None
+
         orderblock_rows.append({
             'symbol': symbol,
             'date': candle['date'],  # ✅ candle date as orderblock date
@@ -48,6 +55,7 @@ for symbol, df in symbol_group:
             'orderblock high': candle['high'],
             'fvg low': confirm['low'],
             'fvg high': confirm['high'],
+            'rsi': rsi_value
         })
 
     # Save to CSV
