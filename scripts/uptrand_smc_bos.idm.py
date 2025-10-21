@@ -1,7 +1,6 @@
 import pandas as pd
 import os
 from glob import glob
-import shutil
 
 # Load mongodb.csv
 mongo_df = pd.read_csv('./csv/mongodb.csv')
@@ -49,14 +48,12 @@ for symbol, group in mongo_df.groupby('symbol'):
 # Save to both locations
 if output_rows:
     uptrend_df = pd.DataFrame(output_rows)
-    # Save to ./csv/uptrand.csv
-    uptrend_df.to_csv('./csv/uptrand.csv', index=False, columns=[
-        'SYMBOL', 'CLOSE', 'Last OB Date', 'BOS', 'Second Last OB Date', 'IDM'
-    ])
+    # Save to ./output/uptrand.csv
     # Ensure target folder exists
     os.makedirs('./output/ai_signal', exist_ok=True)
-    # Copy to ./output/ai_signal/uptrand.csv
-    shutil.copy('./csv/uptrand.csv', './output/ai_signal/uptrand.csv')
-    print("✅ uptrand.csv saved to both ./csv/ and ./output/ai_signal/")
+    uptrend_df.to_csv('./output/ai_signal/uptrand.csv', index=False, columns=[
+        'SYMBOL', 'CLOSE', 'Last OB Date', 'BOS', 'Second Last OB Date', 'IDM'
+    ])
+    print("✅ uptrand.csv saved to ./output/ai_signal/")
 else:
     print("⚠️ No matching conditions found.")
