@@ -52,8 +52,8 @@ for symbol, group in mongo_df.groupby('symbol'):
         for i in range(len(ob_df) - 2, -1, -1):
             candidate = ob_df.iloc[i]
             if (
-                candidate['orderblock low'] > ob_low_last and
-                candidate['rsi'] < last['rsi']
+                candidate['orderblock low'] > ob_low_last and  # price lower low
+                candidate['rsi'] < last['rsi']                 # RSI higher low
             ):
                 start_date = pd.to_datetime(candidate['date'])
                 end_date = pd.to_datetime(last['date'])
@@ -69,9 +69,9 @@ for symbol, group in mongo_df.groupby('symbol'):
                     (mongo_df['date'] < end_date)
                 ]
                 if (intermediate['low'] < start_price).any():
-                    continue  # skip if any low breaks below candidate OB low
+                    continue
 
-                # Filter mongo_df for trendline generation
+                # Trendline break validation
                 symbol_mongo = mongo_df[
                     (mongo_df['symbol'] == symbol) &
                     (mongo_df['date'] >= start_date) &
@@ -85,20 +85,17 @@ for symbol, group in mongo_df.groupby('symbol'):
                     lambda d: round(start_price + slope * (d - start_date).days, 2)
                 )
 
-                # Trendline break validation
                 if (symbol_mongo['low'] < symbol_mongo['trendline']).any():
-                    continue  # skip if any candle breaks below trendline
+                    continue
 
-                for _, row in symbol_mongo.iterrows():
-                    rsi_div_rows.append({
-                        'SYMBOL': symbol,
-                        'CLOSE': row['close'],
-                        'Start OB Date': start_date,
-                        'Start OB Low': start_price,
-                        'End OB Date': end_date,
-                        'End OB Low': end_price,
-                  
-                    })
+                # ✅ Append only one row per symbol
+                rsi_div_rows.append({
+                    'SYMBOL': symbol,
+                    'Start OB Date': start_date,
+                    'Start OB Low': start_price,
+                    'End OB Date': end_date,
+                    'End OB Low': end_price
+                })
                 break  # Stop after first match
 
 # Ensure output folder exists
