@@ -52,8 +52,8 @@ for symbol, group in mongo_df.groupby('symbol'):
         for i in range(len(ob_df) - 2, -1, -1):
             candidate = ob_df.iloc[i]
             if (
-                candidate['orderblock low'] < ob_low_last and
-                candidate['rsi'] > last['rsi']
+                candidate['orderblock low'] > ob_low_last and
+                candidate['rsi'] < last['rsi']
             ):
                 start_date = pd.to_datetime(candidate['date'])
                 end_date = pd.to_datetime(last['date'])
