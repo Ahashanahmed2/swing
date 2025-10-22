@@ -60,7 +60,16 @@ for symbol, group in mongo_df.groupby('symbol'):
                 start_price = candidate['orderblock low']
                 end_price = ob_low_last
                 days_diff = (end_date - start_date).days
-                slope = (end_price - start_price) / days_diff if days_diff != 0 else 0
+                slope = round((end_price - start_price) / days_diff, 2) if days_diff != 0 else 0.00
+
+                # Intermediate price validation
+                intermediate = mongo_df[
+                    (mongo_df['symbol'] == symbol) &
+                    (mongo_df['date'] > start_date) &
+                    (mongo_df['date'] < end_date)
+                ]
+                if (intermediate['low'] < start_price).any():
+                    continue  # skip if any low breaks below candidate OB low
 
                 # Filter mongo_df for trendline generation
                 symbol_mongo = mongo_df[
@@ -81,8 +90,8 @@ for symbol, group in mongo_df.groupby('symbol'):
                         'SYMBOL': symbol,
                         'CLOSE': row['close'],
                         'Date': row['date'],
-                        'Trendline': row['trendline'],
-                        'RSI': row['rsi'],
+                        'Trendline': round(row['trendline'], 2),
+                        'RSI': round(row['rsi'],2),
                         'Start OB Date': start_date,
                         'Start OB Low': start_price,
                         'End OB Date': end_date,
@@ -102,7 +111,7 @@ if uptrend_rows:
 else:
     print("⚠️ No matching uptrend conditions found.")
 
-# Save rsi_divergence.csv
+# Save rsi_divergence.csv only if RSI divergence found
 if rsi_div_rows:
     rsi_df = pd.DataFrame(rsi_div_rows)
     rsi_df.to_csv('./output/ai_signal/rsi_divergence.csv', index=False)
