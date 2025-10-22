@@ -82,16 +82,20 @@ for symbol, group in mongo_df.groupby('symbol'):
                     break
 
                 symbol_mongo['trendline'] = symbol_mongo['date'].apply(
-                    lambda d: start_price + slope * (d - start_date).days
+                    lambda d: round(start_price + slope * (d - start_date).days, 2)
                 )
+
+                # Trendline break validation
+                if (symbol_mongo['low'] < symbol_mongo['trendline']).any():
+                    continue  # skip if any candle breaks below trendline
 
                 for _, row in symbol_mongo.iterrows():
                     rsi_div_rows.append({
                         'SYMBOL': symbol,
                         'CLOSE': row['close'],
                         'Date': row['date'],
-                        'Trendline': round(row['trendline'], 2),
-                        'RSI': round(row['rsi'],2),
+                        'Trendline': row['trendline'],
+                        'RSI': row['rsi'],
                         'Start OB Date': start_date,
                         'Start OB Low': start_price,
                         'End OB Date': end_date,
