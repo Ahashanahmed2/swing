@@ -1,11 +1,11 @@
 import pandas as pd
 import os
 from swing_point import identify_swing_points
-# from hf_uploader import download_from_hf_or_run_script  # Optional HF download logic
+from hf_uploader import download_from_hf_or_run_script  # Optional HF download logic
 
 # Optional: Download CSV from HF if needed
-# if download_from_hf_or_run_script():
-#     print("HF data download success")
+if download_from_hf_or_run_script():
+     print("HF data download success")
 
 # Output path for orderblocks
 orderblock_path = './csv/orderblock/'
