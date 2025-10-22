@@ -93,9 +93,6 @@ for symbol, group in mongo_df.groupby('symbol'):
                     rsi_div_rows.append({
                         'SYMBOL': symbol,
                         'CLOSE': row['close'],
-                        'Date': row['date'],
-    
-                        'RSI': row['rsi'],
                         'Start OB Date': start_date,
                         'Start OB Low': start_price,
                         'End OB Date': end_date,
