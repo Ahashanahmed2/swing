@@ -94,13 +94,13 @@ for symbol, group in mongo_df.groupby('symbol'):
                         'SYMBOL': symbol,
                         'CLOSE': row['close'],
                         'Date': row['date'],
-                        'Trendline': row['trendline'],
+    
                         'RSI': row['rsi'],
                         'Start OB Date': start_date,
                         'Start OB Low': start_price,
                         'End OB Date': end_date,
                         'End OB Low': end_price,
-                        'Slope': slope
+                  
                     })
                 break  # Stop after first match
 
