@@ -9,8 +9,8 @@ import subprocess
 import os
 
 scripts = [
-    #"scripts/mongodb.py",
-    #"scripts/swing_High_Low.py",
+    "scripts/mongodb.py",
+    "scripts/swing_High_Low.py",
     "scripts/orderblock.py",
     #"scripts/uptrand_smc_bos.idm.py",
     "scripts/uptrand_&_divergence.py",
