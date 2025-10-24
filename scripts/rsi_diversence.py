@@ -124,6 +124,11 @@ for symbol, group in mongo_df.groupby('symbol'):
                             wave_4_date = row['date']
                             break
 
+                # Wave-5 projection
+                wave_5 = ''
+                if wave_4 != '' and wave_3 != '':
+                    wave_5 = round(wave_4 + 1.618 * (wave_4 - wave_3), 2)
+
                 # Final validation
                 uptrend_valid = True
                 if wave_4 != '':
@@ -136,6 +141,8 @@ for symbol, group in mongo_df.groupby('symbol'):
                         ]
                         if (post_wave4['close'] < wave_1).any():
                             uptrend_valid = False
+                        if wave_5 != '' and (post_wave4['close'] >= wave_5).any():
+                            continue  # wave-5 target hit → skip saving
 
                 # Final row
                 all_divergence_rows.append({
@@ -149,6 +156,7 @@ for symbol, group in mongo_df.groupby('symbol'):
                     'wave-2': wave_2,
                     'wave-3': wave_3,
                     'wave-4': wave_4,
+                    'wave-5': wave_5,
                     'Uptrend Valid': uptrend_valid
                 })
                 break
@@ -159,8 +167,8 @@ os.makedirs('./csv', exist_ok=True)
 
 if all_divergence_rows:
     all_df = pd.DataFrame(all_divergence_rows)
-    all_df.to_csv('./output/ai_signal/all_diver.csv', index=False)
-    all_df.to_csv('./csv/all_diver.csv', index=False)
+    all_df.to_csv('./output/ai_signal/all_divergence.csv', index=False)
+    all_df.to_csv('./csv/all_divergence.csv', index=False)
     print("✅ all_divergence.csv saved.")
 else:
     print("⚠️ No valid RSI divergence found.")
