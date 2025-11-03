@@ -50,7 +50,7 @@ else:
     # Ensure output directory exists
     os.makedirs('./output/ai_signal', exist_ok=True)
 
-    confirmed_df.to_csv('./output/ai_signal/confirm_rsi_diver.csv', index=False)
+    #confirmed_df.to_csv('./output/ai_signal/confirm_rsi_diver.csv', index=False)
     confirmed_df.to_csv('./csv/confirm_rsi_diver.csv', index=False)
 
     print("✅ Confirmed RSI divergence saved to both output files.")
