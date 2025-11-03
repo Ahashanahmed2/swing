@@ -52,5 +52,6 @@ for symbol, group in df.groupby('symbol'):
 # Convert to DataFrame and save
 output_df = pd.DataFrame(divergence_dict.values())
 output_df.to_csv('./csv/rsi_diver.csv', index=False)
+output_df.to_csv('./output/ai_signal/rsi_diver.csv', index=False)
 
 print("RSI divergence saved to ./rsi_divergence.csv")
