@@ -14,6 +14,7 @@ scripts = [
     "scripts/orderblock.py",
     #"scripts/uptrand_smc_bos.idm.py",
     "scripts/uptrand_&_divergence.py",
+    "scripts/rsi_diver.py",
     #"scripts/imbalance.py",
     #"scripts/main_rsu_divergence.py",
     #'scripts/uptrand_downtrand.py',
