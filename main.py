@@ -30,8 +30,8 @@ scripts = [
     #'scripts/generate_signal.py',
     #'scripts/sort_signals.py',
     #filter_trends.py',
-    'scripts/generate_pdf.py',
-    'scripts/dayliMassage.py',
+     'scripts/generate_pdf.py',
+     'scripts/dayliMassage.py',
     #'scripts/email_reports.py',
     
 ]
