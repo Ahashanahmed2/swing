@@ -1,54 +1,23 @@
-# scripts/send_email.py
+jobs:
+  report-and-mail:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-import smtplib
-from email.message import EmailMessage
-from dotenv import load_dotenv
-import os
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-# Load environment variables
-load_dotenv()
+      - name: Install deps
+        run: pip install python-dotenv  # (যদি অন্য কোথাও লাগে) আসলে এখানে লাগছে না
 
-EMAIL_USER = os.getenv("EMAIL_USER")
-EMAIL_TO = os.getenv("EMAIL_TO")
-EMAIL_PASS = os.getenv("EMAIL_PASS")
+      - name: Generate PDF report
+        run: python generate_report.py   # ফোল্ডার output/ai_signal/pdfs বানাবে
 
-# Directory containing PDFs
-PDF_FOLDER = os.path.join(os.environ["GITHUB_WORKSPACE"], "output/ai_signal/pdfs")
-
-
-def send_email():
-    msg = EmailMessage()
-    msg['Subject'] = "📈 Daily Stock Signal Report"
-    msg['From'] = EMAIL_USER
-    msg['To'] = EMAIL_TO
-
-    msg.set_content(
-        """\
-Hello,
-
-Please find attached today's AI-generated stock signal report(s).
-This report includes trend direction and confidence for selected DSE stocks.
-
-Best regards,
-
-AI Signal Bot
-"""
-    )
-
-    # Attach all PDF files from the directory
-    for filename in os.listdir(PDF_FOLDER):
-        if filename.lower().endswith(".pdf"):
-            pdf_path = os.path.join(PDF_FOLDER, filename)
-            with open(pdf_path, "rb") as f:
-                file_data = f.read()
-            msg.add_attachment(file_data, maintype="application", subtype="pdf", filename=filename)
-
-    # Send the email
-    with smtplib.SMTP_SSL("smtp.mail.yahoo.com", 465) as smtp:
-        smtp.login(EMAIL_USER, EMAIL_PASS)
-        smtp.send_message(msg)
-
-    print("✅ Email sent successfully with all PDFs!")
-
-if __name__ == "__main__":
-    send_email()
+      - name: Send email
+        env:
+          EMAIL_USER: ${{ secrets.MAIL_USER }}
+          EMAIL_PASS: ${{ secrets.MAIL_PASS }}
+          EMAIL_TO:   ${{ secrets.MAIL_TO  }}
+        run: python scripts/send_email.py
