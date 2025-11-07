@@ -2,8 +2,8 @@ import pandas as pd
 import os
 
 # ---------- 1. Read source files ----------
-up_candle   = pd.read_csv('./csv/up_candle.csv')
-mongo_df    = pd.read_csv('./csv/mongodb.csv')
+up_candle = pd.read_csv('./csv/up_candle.csv')
+mongo_df  = pd.read_csv('./csv/mongodb.csv')
 
 # date columns to datetime
 up_candle['date'] = pd.to_datetime(up_candle['date'])
@@ -11,23 +11,39 @@ mongo_df['date']  = pd.to_datetime(mongo_df['date'])
 
 buy_rows = []
 
-# ---------- 2. Loop every up-candle row ----------
+# ---------- 2. Group mongo_df by symbol ----------
+grouped = mongo_df.sort_values('date').groupby('symbol')
+
+# ---------- 3. Loop every up-candle row ----------
 for _, uc_row in up_candle.iterrows():
-    symbol = uc_row['symbol']
+    symbol    = uc_row['symbol']
     base_date = uc_row['date']
 
-    # symbol group from mongodb
-    sym_df = mongo_df[mongo_df['symbol'] == symbol].sort_values('date').reset_index(drop=True)
+    if symbol not in grouped.groups:
+        continue
+
+    sym_df = grouped.get_group(symbol).reset_index(drop=True)
 
     # slice: only rows after base_date
     future = sym_df[sym_df['date'] > base_date].reset_index(drop=True)
     if future.empty:
         continue
 
-    # ---------- 3. Check condition ----------
+    # ---------- 4. Check trigger condition ----------
     for i in range(len(future) - 1):
-        if future.loc[i + 1, 'close'] > future.loc[i, 'high']:
-            # take the LAST row of this symbol
+        row_i     = future.loc[i]
+        row_next  = future.loc[i + 1]
+
+        # Volume spike condition
+        vol_spike = row_next['volume'] > row_i['volume'] * 1.5
+
+        # Candle body confirmation
+        body_size = row_next['close'] - row_next['open']
+        wick_size = row_next['high'] - row_next['low']
+        body_confirm = (row_next['close'] > row_next['open']) and (abs(body_size) > wick_size * 0.5)
+
+        # Final trigger condition
+        if row_next['close'] > row_i['high'] and vol_spike and body_confirm:
             last_row = sym_df.iloc[-1]
             buy_rows.append({
                 'symbol': last_row['symbol'],
@@ -38,11 +54,11 @@ for _, uc_row in up_candle.iterrows():
             })
             break  # only first trigger per symbol
 
-# ---------- 4. Save outputs ----------
+# ---------- 5. Save outputs ----------
 os.makedirs('./output/ai_signal', exist_ok=True)
 
-csv_path     = './csv/buy_stock.csv'
-ai_path      = './output/ai_signal/buy_stock.csv'
+csv_path = './csv/buy_stock.csv'
+ai_path  = './output/ai_signal/buy_stock.csv'
 
 def save_unique(file_path, new_rows):
     if os.path.exists(file_path):
