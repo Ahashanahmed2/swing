@@ -1,15 +1,13 @@
 import pandas as pd
 import os
 
-# Load mongodb.csv
+# ---------- 1. Existing code (unchanged) ----------
 mongo_df = pd.read_csv('./csv/mongodb.csv')
 mongo_df['date'] = pd.to_datetime(mongo_df['date'])
 
-# Prepare output lists
 uptrend_rows = []
 rsi_div_rows = []
 
-# Group by symbol
 for symbol, group in mongo_df.groupby('symbol'):
     latest_row = group.sort_values('date').iloc[-1]
     latest_close = latest_row['close']
@@ -24,7 +22,6 @@ for symbol, group in mongo_df.groupby('symbol'):
 
     ob_df['date'] = pd.to_datetime(ob_df['date'])
 
-    # Latest two rows
     last = ob_df.iloc[-1]
     second_last = ob_df.iloc[-2]
 
@@ -33,7 +30,6 @@ for symbol, group in mongo_df.groupby('symbol'):
     ob_low_second = second_last['orderblock low']
     ob_high_second = second_last['orderblock high']
 
-    # Matching condition for uptrend
     if (
         ob_high_last < latest_close and
         ob_low_second > ob_high_last and
@@ -48,7 +44,30 @@ for symbol, group in mongo_df.groupby('symbol'):
             'IDM': ob_high_second
         })
 
-        # RSI divergence check: loop from second last to earlier rows
+        # --------- 2. NEW: collect latest candle info for up_candle.csv ---------
+        up_candle_new = {
+            'symbol': symbol,
+            'date': latest_row['date'].strftime('%Y-%m-%d'),
+            'high': latest_row['high'],
+            'low': latest_row['low']
+        }
+
+        up_candle_file = './csv/up_candle.csv'
+        # Load existing data if file exists
+        if os.path.exists(up_candle_file):
+            existing = pd.read_csv(up_candle_file)
+            # drop duplicates (same symbol+date) just in case
+            existing = existing[
+                ~((existing['symbol'] == symbol) & (existing['date'] == up_candle_new['date']))
+            ]
+        else:
+            existing = pd.DataFrame()
+
+        updated = pd.concat([existing, pd.DataFrame([up_candle_new])], ignore_index=True)
+        updated.to_csv(up_candle_file, index=False)
+        # -----------------------------------------------------------------------
+
+        # RSI divergence loop (unchanged)
         for i in range(len(ob_df) - 2, -1, -1):
             candidate = ob_df.iloc[i]
             if (
@@ -62,7 +81,6 @@ for symbol, group in mongo_df.groupby('symbol'):
                 days_diff = (end_date - start_date).days
                 slope = (end_price - start_price) / days_diff if days_diff != 0 else 0
 
-                # Filter mongo_df for trendline generation
                 symbol_mongo = mongo_df[
                     (mongo_df['symbol'] == symbol) &
                     (mongo_df['date'] >= start_date) &
@@ -89,12 +107,11 @@ for symbol, group in mongo_df.groupby('symbol'):
                         'End OB Low': end_price,
                         'Slope': slope
                     })
-                break  # Stop after first match
+                break
 
-# Ensure output folder exists
+# ---------- 3. Save final outputs ----------
 os.makedirs('./output/ai_signal', exist_ok=True)
 
-# Save uptrend.csv
 if uptrend_rows:
     uptrend_df = pd.DataFrame(uptrend_rows)
     uptrend_df.to_csv('./output/ai_signal/uptrand.csv', index=False)
@@ -102,7 +119,6 @@ if uptrend_rows:
 else:
     print("⚠️ No matching uptrend conditions found.")
 
-# Save rsi_divergence.csv
 if rsi_div_rows:
     rsi_df = pd.DataFrame(rsi_div_rows)
     rsi_df.to_csv('./output/ai_signal/rsi_divergence.csv', index=False)
