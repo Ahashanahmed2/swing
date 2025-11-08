@@ -36,12 +36,12 @@ for _, uc_row in up_candle.iterrows():
         row_next = future.loc[i + 1]
 
         # Volume spike condition
-        vol_spike = row_next['volume'] > row_i['volume'] * 1.5
+        vol_spike = row_next['volume'] > row_i['volume'] * 1.05
 
         # Candle body confirmation
         body_size = row_next['close'] - row_next['open']
         wick_size = row_next['high'] - row_next['low']
-        body_confirm = (row_next['close'] > row_next['open']) and (abs(body_size) > wick_size * 0.5)
+        body_confirm = (row_next['close'] > row_next['open']) and (abs(body_size) > wick_size * 0.05)
 
         # New condition: both closes must be above ob_low_last
         close_check = (row_i['close'] > ob_low_last) and (row_next['close'] > ob_low_last)
