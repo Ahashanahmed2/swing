@@ -16,8 +16,9 @@ grouped = mongo_df.sort_values('date').groupby('symbol')
 
 # ---------- 3. Loop every up-candle row ----------
 for _, uc_row in up_candle.iterrows():
-    symbol    = uc_row['symbol']
-    base_date = uc_row['date']
+    symbol      = uc_row['symbol']
+    base_date   = uc_row['date']
+    ob_low_last = uc_row['ob_low_last']
 
     if symbol not in grouped.groups:
         continue
@@ -31,8 +32,8 @@ for _, uc_row in up_candle.iterrows():
 
     # ---------- 4. Check trigger condition ----------
     for i in range(len(future) - 1):
-        row_i     = future.loc[i]
-        row_next  = future.loc[i + 1]
+        row_i    = future.loc[i]
+        row_next = future.loc[i + 1]
 
         # Volume spike condition
         vol_spike = row_next['volume'] > row_i['volume'] * 1.5
@@ -42,8 +43,11 @@ for _, uc_row in up_candle.iterrows():
         wick_size = row_next['high'] - row_next['low']
         body_confirm = (row_next['close'] > row_next['open']) and (abs(body_size) > wick_size * 0.5)
 
+        # New condition: both closes must be above ob_low_last
+        close_check = (row_i['close'] > ob_low_last) and (row_next['close'] > ob_low_last)
+
         # Final trigger condition
-        if row_next['close'] > row_i['high'] and vol_spike and body_confirm:
+        if row_next['close'] > row_i['high'] and vol_spike and body_confirm and close_check:
             last_row = sym_df.iloc[-1]
             buy_rows.append({
                 'symbol': last_row['symbol'],
