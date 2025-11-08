@@ -24,7 +24,7 @@ for symbol, group in df.groupby('symbol'):
         upper_rsi = upper_row['rsi']
 
         if (
-            last_rsi > upper_rsi and
+            last_rsi >= upper_rsi and
             last_low <= upper_low and
             last_date > upper_date
         ):
