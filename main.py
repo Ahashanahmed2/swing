@@ -15,7 +15,7 @@ scripts = [
     "scripts/rsi_diver.py",
     #"scripts/confirm_rsi_divergence.py",
     #"scripts/filter_up_candle_to_uptrand.py",
-    "scripts/buy_candle.py",
+    #"scripts/buy_candle.py",
     "scripts/rsi_diver_retest.py",
     'scripts/rsi_crose_above_30.py',
     "scripts/rsi_diversence.py",
