@@ -12,7 +12,6 @@ scripts = [
     "scripts/mongodb.py",
     "scripts/swing_High_Low.py",
     "scripts/orderblock.py",
-    #"scripts/uptrand_smc_bos.idm.py",
     "scripts/uptrand_&_divergence.py",
     "scripts/rsi_diver.py",
     "scripts/confirm_rsi_divergence.py",
