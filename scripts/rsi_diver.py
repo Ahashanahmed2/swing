@@ -1,5 +1,9 @@
 import pandas as pd
 
+Ensure the output directory exists
+os.makedirs('./output/aisignal', existok=True)
+
+
 # Load and prepare data
 df = pd.read_csv('./csv/mongodb.csv')
 df['date'] = pd.to_datetime(df['date'])
