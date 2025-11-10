@@ -2,7 +2,7 @@ import pandas as pd
 
 
 #Ensure the output directory exists
-os.makedirs('./output/aisignal', existok=True)
+os.makedirs('./output/ai_signal', existok=True)
 
 
 # Load and prepare data
