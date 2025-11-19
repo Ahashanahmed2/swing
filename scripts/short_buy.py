@@ -42,7 +42,7 @@ for _, rsi_row in rsi_df.iterrows():
             'low': last_row['low'],
             'high': last_row['high'],
             
-            # RSI retest info
+            # RSI retest info (mapping original CSV names → clean names)
             'last_row_date': rsi_row['last row date'],
             'last_row_low': rsi_row['last row low'],
             'last_row_high': rsi_row['last row high'],
@@ -55,11 +55,12 @@ for _, rsi_row in rsi_df.iterrows():
 # Create DataFrame
 output_df = pd.DataFrame(output_rows)
 
-# Convert second_row_date to datetime for proper sorting
-output_df['second_row_date'] = pd.to_datetime(output_df['second_row_date'], errors='coerce')
+if not output_df.empty:
+    # Convert second_row_date to datetime for proper sorting
+    output_df['second_row_date'] = pd.to_datetime(output_df['second_row_date'], errors='coerce')
 
-# Sort by symbol first, then by second_row_date (older first)
-output_df = output_df.sort_values(by=['symbol', 'second_row_date'], ascending=[True, True])
+    # Sort by symbol first, then by second_row_date (older first)
+    output_df = output_df.sort_values(by=['symbol', 'second_row_date'], ascending=[True, True])
 
 # Save to CSV
 output_df.to_csv(output_path, index=False)
