@@ -35,15 +35,33 @@ for _, rsi_row in rsi_df.iterrows():
     # Compare close with last row high
     if last_row['close'] > last_high:
         output_rows.append({
+            # MongoDB last row info
             'symbol': symbol,
             'date': last_row['date'],
             'close': last_row['close'],
             'low': last_row['low'],
-            'high': last_row['high']
+            'high': last_row['high'],
+            
+            # RSI retest info
+            'last_row_date': rsi_row['last row date'],
+            'last_row_low': rsi_row['last row low'],
+            'last_row_high': rsi_row['last row high'],
+            'last_row_rsi': rsi_row['last row rsi'],
+            'second_row_date': rsi_row['second row date'],
+            'second_row_low': rsi_row['second row low'],
+            'second_row_rsi': rsi_row['second row rsi']
         })
 
-# Save output
+# Create DataFrame
 output_df = pd.DataFrame(output_rows)
+
+# Convert second_row_date to datetime for proper sorting
+output_df['second_row_date'] = pd.to_datetime(output_df['second_row_date'], errors='coerce')
+
+# Sort by symbol first, then by second_row_date (older first)
+output_df = output_df.sort_values(by=['symbol', 'second_row_date'], ascending=[True, True])
+
+# Save to CSV
 output_df.to_csv(output_path, index=False)
 
-print(f"Saved {len(output_rows)} signals to {output_path}")
+print(f"Saved {len(output_rows)} signals to {output_path} (sorted by symbol and second_row_date)")
