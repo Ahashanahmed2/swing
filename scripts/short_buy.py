@@ -42,14 +42,12 @@ for _, rsi_row in rsi_df.iterrows():
             'low': last_row['low'],
             'high': last_row['high'],
             
-            # RSI retest info (mapping original CSV names → clean names)
+            # RSI retest info (without RSI columns)
             'last_row_date': rsi_row['last row date'],
             'last_row_low': rsi_row['last row low'],
             'last_row_high': rsi_row['last row high'],
-            'last_row_rsi': rsi_row['last row rsi'],
             'second_row_date': rsi_row['second row date'],
-            'second_row_low': rsi_row['second row low'],
-            'second_row_rsi': rsi_row['second row rsi']
+            'second_row_low': rsi_row['second row low']
         })
 
 # Create DataFrame
@@ -61,6 +59,9 @@ if not output_df.empty:
 
     # Sort by symbol first, then by second_row_date (older first)
     output_df = output_df.sort_values(by=['symbol', 'second_row_date'], ascending=[True, True])
+
+    # Add serial number column (1,2,3,...)
+    output_df.insert(0, 'id', range(1, len(output_df) + 1))
 
 # Save to CSV
 output_df.to_csv(output_path, index=False)
