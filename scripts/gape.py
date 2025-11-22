@@ -2,7 +2,7 @@ import pandas as pd
 import os
 
 # Input and output paths
-input_path = "./csv/mongobd.csv"
+input_path = "./csv/mongodb.csv"
 output_path1 = "./csv/gape.csv"
 output_path2 = "./output/signal_ai/gape.csv"
 
