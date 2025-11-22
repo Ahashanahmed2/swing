@@ -6,7 +6,7 @@ input_path = "./csv/mongodb.csv"
 output_path1 = "./csv/gape.csv"
 output_path2 = "./output/ai_signal/gape.csv"
 # Read CSV
-df = pd.read_csv(input_path)
+df = pd.read_csv('./csv/mongodb.csv')
 
 # Ensure sorted by symbol and date
 df = df.sort_values(by=["symbol", "date"]).reset_index(drop=True)
