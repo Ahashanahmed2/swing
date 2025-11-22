@@ -4,9 +4,10 @@ import os
 # Input and output paths
 input_path = "./csv/mongodb.csv"
 output_path1 = "./csv/gape.csv"
-output_path2 = "./output/ai_signal/gape.csv"
+output_path2 = "./output/aisignal/gape.csv"
+
 # Read CSV
-df = pd.read_csv('./csv/mongodb.csv')
+df = pd.read_csv(input_path)
 
 # Ensure sorted by symbol and date
 df = df.sort_values(by=["symbol", "date"]).reset_index(drop=True)
@@ -37,30 +38,30 @@ for symbol, group in df.groupby("symbol"):
                     results.append({
                         "No": len(results) + 1,
                         "symbol": symbol,
-                        "last_row_date": last_row["date"],
-                        "last_row_high": last_row["high"],
-                        "last_row_low": last_row["low"],
-                        "last_row_close": last_row["close"],
-                        "A_row_date": A_row["date"],
-                        "A_row_high": A_row["high"],
-                        "A_row_low": A_row["low"],
-                        "A_row_close": A_row["close"]
+                        "lastrowdate": last_row["date"],
+                        "lastrowhigh": last_row["high"],
+                        "lastrowlow": last_row["low"],
+                        "lastrowclose": last_row["close"],
+                        "Arowdate": A_row["date"],
+                        "Arowhigh": A_row["high"],
+                        "Arowlow": A_row["low"],
+                        "Arowclose": A_row["close"]
                     })
 
 # Convert results to DataFrame
 result_df = pd.DataFrame(results)
 
-# 👉 Convert date columns to datetime
-result_df["last_row_date"] = pd.to_datetime(result_df["last_row_date"])
-result_df["A_row_date"] = pd.to_datetime(result_df["A_row_date"])
+# Convert date columns to datetime
+result_df["lastrowdate"] = pd.to_datetime(result_df["lastrowdate"])
+result_df["Arowdate"] = pd.to_datetime(result_df["Arowdate"])
 
-# 👉 Calculate difference (last_row_date - A_row_date)
-result_df["date_diff"] = (result_df["last_row_date"] - result_df["A_row_date"]).dt.days
+# Calculate difference (lastrowdate - Arowdate)
+result_df["datediff"] = (result_df["lastrowdate"] - result_df["Arowdate"]).dt.days
 
-# 👉 Sort by date_diff descending, then last_row_date descending
-result_df = result_df.sort_values(by=["date_diff", "last_row_date"], ascending=[False, False]).reset_index(drop=True)
+# Sort by datediff descending, then lastrowdate descending
+result_df = result_df.sort_values(by=["datediff", "lastrowdate"], ascending=[False, False]).reset_index(drop=True)
 
-# 👉 Reassign serial No after sorting
+# Reassign serial No after sorting
 result_df["No"] = range(1, len(result_df) + 1)
 
 # Ensure output directories exist
