@@ -6,7 +6,8 @@ gape_file = "./csv/gape.csv"
 mongodb_file = "./csv/mongodb.csv"
 
 # আউটপুট ফাইল পাথ
-output_file = "./output/ai_signal/gape_buy.csv"
+output_file1 = "./output/ai_signal/gape_buy.csv"
+output_file2 = "./csv/gape_buy.csv"
 
 # ডেটা পড়া
 gape_df = pd.read_csv(gape_file)
@@ -48,11 +49,14 @@ for symbol in gape_df['symbol'].unique():
         row_id += 1
 
 # আউটপুট ডিরেক্টরি তৈরি করা যদি না থাকে
-os.makedirs(os.path.dirname(output_file), exist_ok=True)
+os.makedirs(os.path.dirname(output_file1), exist_ok=True)
+os.makedirs(os.path.dirname(output_file2), exist_ok=True)
 
 # ফলাফল CSV তে লেখা
 if results:
-    pd.DataFrame(results).to_csv(output_file, index=False)
-    print(f"✅ Output saved to {output_file}")
+    df = pd.DataFrame(results)
+    df.to_csv(output_file1, index=False)
+    df.to_csv(output_file2, index=False)
+    print(f"✅ Output saved to {output_file1} and {output_file2}")
 else:
     print("⚠️ কোনো মিল পাওয়া যায়নি, আউটপুট ফাইল তৈরি হয়নি।")
