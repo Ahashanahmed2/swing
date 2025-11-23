@@ -12,16 +12,15 @@ output_file = "./output/ai_signal/gape_buy.csv"
 gape_df = pd.read_csv(gape_file)
 mongodb_df = pd.read_csv(mongodb_file)
 
-# আউটপুট রাখার জন্য লিস্ট
 results = []
+row_id = 1  # প্রতিটি আউটপুট row এর জন্য সিরিয়াল নাম্বার
 
-# প্রতিটি symbol এর জন্য কাজ করা
 for symbol in gape_df['symbol'].unique():
     # gape.csv থেকে ওই symbol এর শেষ row
     symbol_data = gape_df[gape_df['symbol'] == symbol].sort_values(by='last_row_date')
     last_row = symbol_data.iloc[-1]
 
-    last_row_date = last_row['last_row_date']
+    A_row_date = last_row['last_row_date']
     last_row_low = last_row['last_row_low']
     last_row_close = last_row['last_row_close']
 
@@ -29,20 +28,24 @@ for symbol in gape_df['symbol'].unique():
     mongo_data = mongodb_df[mongodb_df['symbol'] == symbol].sort_values(by='date')
 
     # ওই তারিখের আগের row খুঁজে বের করা
-    prev_rows = mongo_data[mongo_data['date'] < last_row_date]
+    prev_rows = mongo_data[mongo_data['date'] < A_row_date]
     if prev_rows.empty:
         continue
 
     prev_row = prev_rows.iloc[-1]  # শেষ আগের row
+    B_row_date = prev_row['date']
 
     # শর্ত মিলানো
     if (last_row_low > prev_row['low']) and (last_row_close > prev_row['high']):
         results.append({
+            'row_id': row_id,
             'symbol': symbol,
-            'last_row_date': last_row_date,
+            'A_row_date': A_row_date,
+            'B_row_date': B_row_date,
             'last_row_low': last_row_low,
             'last_row_close': last_row_close
         })
+        row_id += 1
 
 # আউটপুট ডিরেক্টরি তৈরি করা যদি না থাকে
 os.makedirs(os.path.dirname(output_file), exist_ok=True)
