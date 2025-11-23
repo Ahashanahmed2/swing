@@ -45,20 +45,16 @@ if new_data.empty:
     print("🟡 No new data found. Training skipped.")
     exit()
 
-# ✅ Load required datasets
-filtered_output_path = './csv/filtered_output.csv'
-filtered_output = pd.read_csv(filtered_output_path) if os.path.exists(filtered_output_path) and not pd.read_csv(filtered_output_path).empty else pd.DataFrame()
-
+# ✅ Load required datasets (filtered_output বাদ)
 gape_df = pd.read_csv("./csv/gape.csv")
 gapebuy_df = pd.read_csv("./csv/gape_buy.csv")
 shortbuy_df = pd.read_csv("./csv/short_buy.csv")
 rsi_diver_df = pd.read_csv("./csv/rsi_diver.csv")
 rsi_diver_retest_df = pd.read_csv("./csv/rsi_diver_retest.csv")
 
-# ✅ Prepare environment
+# ✅ Prepare environment (filtered_output বাদ)
 env = TradeEnv(
     maindf=main_df,
-    filtered_output=filtered_output,
     gape_path="./csv/gape.csv",
     gapebuy_path="./csv/gape_buy.csv",
     shortbuy_path="./csv/short_buy.csv",
