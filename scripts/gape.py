@@ -14,13 +14,21 @@ df = df.sort_values(by=["symbol", "date"]).reset_index(drop=True)
 
 results = {}
 
+# 👉 প্রথমে gape.csv থেকে cutoff date বের করা
+try:
+    gape_df = pd.read_csv(output_path1)
+    if not gape_df.empty:
+        cutoff_date = pd.to_datetime(gape_df.iloc[0]["A_row_date"])
+    else:
+        cutoff_date = None
+except FileNotFoundError:
+    cutoff_date = None
+
 # Group by symbol
 for symbol, group in df.groupby("symbol"):
     group = group.reset_index(drop=True)
 
     last_row = group.iloc[-1]
-    last_row_date = pd.to_datetime(last_row["date"])
-    limit_date = last_row_date - pd.Timedelta(days=200)  # ৬ মাসের লিমিট
 
     A_row = None
 
@@ -30,8 +38,9 @@ for symbol, group in df.groupby("symbol"):
         prev_row = group.iloc[i-1]
 
         current_date = pd.to_datetime(current_row["date"])
-        # ✅ লিমিট: শুধু ৬ মাসের মধ্যে থাকা row-গুলো চেক হবে
-        if current_date < limit_date:
+
+        # ✅ নতুন লিমিট: gape.csv এর ১ নাম্বার A_row_date পর্যন্ত
+        if cutoff_date is not None and current_date < cutoff_date:
             break
 
         # শর্ত: current_row এর high < prev_row এর low - 0.10
@@ -40,7 +49,6 @@ for symbol, group in df.groupby("symbol"):
             # ✅ নতুন শর্ত: নিচের সব row-এর high < current_row এর high
             if (below_rows["high"] < current_row["high"]).all():
                 A_row = current_row
-                # 👉 একই symbol-এর জন্য আগের A_row থাকলেও আপডেট হবে
                 results[symbol] = {
                     "symbol": symbol,
                     "last_row_date": last_row["date"],
@@ -51,7 +59,6 @@ for symbol, group in df.groupby("symbol"):
                     "A_row_high": A_row["high"],
                     "A_row_low": A_row["low"],
                     "A_row_close": A_row["close"],
-                    # ✅ নতুন যুক্ত অংশ
                     "B_row_date": prev_row["date"],
                     "B_row_low": prev_row["low"]
                 }
