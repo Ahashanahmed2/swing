@@ -4,10 +4,12 @@ import os
 # Paths
 rsi_path = './csv/rsi_diver_retest.csv'
 mongo_path = './csv/mongodb.csv'
-output_path = './output/ai_signal/short_buy.csv'
+output_path1 = './output/ai_signal/short_buy.csv'
+output_path2 = './csv/short_buy.csv'
 
-# Ensure output directory exists
-os.makedirs(os.path.dirname(output_path), exist_ok=True)
+# Ensure output directories exist
+os.makedirs(os.path.dirname(output_path1), exist_ok=True)
+os.makedirs(os.path.dirname(output_path2), exist_ok=True)
 
 # Read data
 rsi_df = pd.read_csv(rsi_path)
@@ -63,7 +65,8 @@ if not output_df.empty:
     # Add serial number column (1,2,3,...)
     output_df.insert(0, 'id', range(1, len(output_df) + 1))
 
-# Save to CSV
-output_df.to_csv(output_path, index=False)
+# Save to both CSV files
+output_df.to_csv(output_path1, index=False)
+output_df.to_csv(output_path2, index=False)
 
-print(f"Saved {len(output_rows)} signals to {output_path} (sorted by symbol and second_row_date)")
+print(f"✅ Saved {len(output_rows)} signals to {output_path1} and {output_path2} (sorted by symbol and second_row_date)")
