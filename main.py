@@ -22,6 +22,7 @@ scripts = [
     "scripts/gape_buy.py",
     'scripts/rsi_crose_above_30.py',
     "scripts/rsi_diversence.py",
+    "scripts/train_model_ppo.py",
     'scripts/generate_pdf.py',
     'scripts/dayliMassage.py',
     'scripts/email_reports.py',
