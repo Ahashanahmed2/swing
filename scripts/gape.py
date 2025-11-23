@@ -20,7 +20,7 @@ for symbol, group in df.groupby("symbol"):
 
     last_row = group.iloc[-1]
     last_row_date = pd.to_datetime(last_row["date"])
-    limit_date = last_row_date - pd.Timedelta(days=180)  # ৬ মাসের লিমিট
+    limit_date = last_row_date - pd.Timedelta(days=580)  # ৬ মাসের লিমিট
 
     A_row = None
 
