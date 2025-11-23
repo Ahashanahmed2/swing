@@ -6,7 +6,6 @@ import math
 class TradeEnv(gym.Env):
     def __init__(self,
                  maindf,
-                 filtered_output,
                  gape_path="./csv/gape.csv",
                  gapebuy_path="./csv/gape_buy.csv",
                  shortbuy_path="./csv/short_buy.csv",
@@ -17,7 +16,6 @@ class TradeEnv(gym.Env):
         
         # ✅ মূল ডেটা
         self.maindf = maindf
-        self.filtered_output = filtered_output
 
         # ✅ নতুন CSV ফাইলগুলো লোড করুন
         self.gape_df = pd.read_csv(gape_path)
@@ -64,15 +62,6 @@ class TradeEnv(gym.Env):
             print(f"🚨 NaN in reward at step {self.current_step}")
             print(f"Price: {price}, Last: {self.last_price}, Confidence: {confidence}")
             raise ValueError("NaN found in reward")
-
-        # ✅ filtered_output match হলে বোনাস রিওয়ার্ড
-        if not self.filtered_output.empty:
-            is_matched = (
-                (self.filtered_output['symbol'] == symbol) &
-                (self.filtered_output['date'] == date)
-            ).any()
-            if is_matched and action == 1:
-                reward += 1.0
 
         # ✅ CSV ভিত্তিক রিওয়ার্ড লজিক
         if symbol in self.gapebuy_df['symbol'].values:
