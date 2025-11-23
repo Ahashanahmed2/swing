@@ -3,15 +3,7 @@ import os
 from datetime import datetime
 from env import TradeEnv
 from stable_baselines3 import DQN
-import glob
 import numpy as np
-
-
-def get_latest_file_from_folder(folder_path):
-    list_of_files = glob.glob(os.path.join(folder_path, '*.csv'))
-    if not list_of_files:
-        raise FileNotFoundError(f"No CSV files found in {folder_path}")
-    return max(list_of_files, key=os.path.getctime)
 
 def generate_signals():
     # 📥 Load Accuracy Report
@@ -33,20 +25,15 @@ def generate_signals():
     unique_symbols = main_df["symbol"].dropna().unique()
     print(f"🔎 Symbol found: {len(unique_symbols)}")
 
-    # 📂 Load Feature Sets
-    filtered_df = pd.read_csv('./csv/swing/filtered_low_rsi_candles.csv')
-    imbalance_high_df = pd.read_csv(get_latest_file_from_folder("./csv/swing/imbalanceZone/down_to_up"))
-    imbalance_low_df = pd.read_csv(get_latest_file_from_folder("./csv/swing/imbalanceZone/up_to_down"))
-    swing_high_candle_df = pd.read_csv(get_latest_file_from_folder("./csv/swing/swing_high/high_candle"))
-    swing_high_confirm_df = pd.read_csv(get_latest_file_from_folder("./csv/swing/swing_high/high_confirm"))
-    swing_low_candle_df = pd.read_csv(get_latest_file_from_folder("./csv/swing/swing_low/low_candle"))
-    swing_low_confirm_df = pd.read_csv(get_latest_file_from_folder("./csv/swing/swing_low/low_confirm"))
-    rsi_divergences = pd.read_csv("./csv/swing/rsi_divergences/rsi_divergences.csv")
+    # 📂 Load Feature Sets (নতুন CSV গুলো)
     filtered_output_path = './csv/filtered_output.csv'
     filtered_output = pd.read_csv(filtered_output_path) if os.path.exists(filtered_output_path) and not pd.read_csv(filtered_output_path).empty else pd.DataFrame()
 
-    down_to_up_df = pd.read_csv("./csv/swing/down_to_up.csv")
-    up_to_down_df = pd.read_csv("./csv/swing/up_to_down.csv")
+    gape_df = pd.read_csv("./csv/gape.csv")
+    gapebuy_df = pd.read_csv("./csv/gape_buy.csv")
+    shortbuy_df = pd.read_csv("./csv/short_buy.csv")
+    rsi_diver_df = pd.read_csv("./csv/rsi_diver.csv")
+    rsi_diver_retest_df = pd.read_csv("./csv/rsi_diver_retest.csv")
 
     os.makedirs("./output/ai_signal", exist_ok=True)
     output_path = "./output/ai_signal/all_signals.csv"
@@ -58,19 +45,15 @@ def generate_signals():
             if symbol_df.empty:
                 continue
 
+            # ✅ নতুন TradeEnv ইনিশিয়ালাইজেশন
             env = TradeEnv(
-                symbol_df,
-                filtered_df,
-                imbalance_high_df,
-                imbalance_low_df,
-                swing_high_candle_df,
-                swing_high_confirm_df,
-                swing_low_candle_df,
-                swing_low_confirm_df,
-                rsi_divergences,
-                filtered_output,
-                down_to_up_df,
-                up_to_down_df
+                maindf=symbol_df,
+                filtered_output=filtered_output,
+                gape_path="./csv/gape.csv",
+                gapebuy_path="./csv/gape_buy.csv",
+                shortbuy_path="./csv/short_buy.csv",
+                rsi_diver_path="./csv/rsi_diver.csv",
+                rsi_diver_retest_path="./csv/rsi_diver_retest.csv"
             )
 
             obs, _ = env.reset()
