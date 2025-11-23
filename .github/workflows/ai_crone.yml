@@ -25,7 +25,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        # install torch==2.3.0+cpu -f https://download.pytorch.org/whl/torch_stable.html
+       install torch==2.3.0+cpu -f https://download.pytorch.org/whl/torch_stable.html
         pip install -r requirements.txt
 
 
