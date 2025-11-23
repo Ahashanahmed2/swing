@@ -4,7 +4,7 @@ import os
 # Input and output paths
 input_path = "./csv/mongodb.csv"
 output_path1 = "./csv/gape.csv"
-output_path2 = "./output/signal_ai/gape.csv"
+output_path2 = "./output/ai_signal/gape.csv"
 
 # Read CSV
 df = pd.read_csv(input_path)
