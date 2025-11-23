@@ -21,54 +21,28 @@ def load_csv_safe(path):
         print(f"❌ Failed to load {path}: {e}")
     return pd.DataFrame()
 
-def load_all_csv_from_folder(folder_path):
-    dfs = []
-    if os.path.isdir(folder_path):
-        for file in os.listdir(folder_path):
-            if file.endswith('.csv'):
-                full_path = os.path.join(folder_path, file)
-                try:
-                    df = pd.read_csv(full_path)
-                    if not {'symbol', 'date'}.issubset(df.columns):
-                        print(f"⚠️ Warning: {file} missing 'symbol' or 'date'")
-                    dfs.append(df)
-                    print(f"✅ Loaded: {file} ({len(df)} rows)")
-                except Exception as e:
-                    print(f"❌ Error loading {file}: {e}")
-    else:
-        print(f"⚠️ Folder not found: {folder_path}")
-    return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
-
 # --- Load Datasets ---
 main_df = load_csv_safe('./csv/mongodb.csv')
-filtered_df = load_csv_safe('./csv/swing/filtered_low_rsi_candles.csv')
-imbalance_high = load_all_csv_from_folder('./csv/swing/imbalanceZone/down_to_up')
-imbalance_low = load_all_csv_from_folder('./csv/swing/imbalanceZone/up_to_down')
-swing_high_candle = load_all_csv_from_folder('./csv/swing/swing_high/high_candle')
-swing_high_confirm = load_all_csv_from_folder('./csv/swing/swing_high/high_confirm')
-swing_low_candle = load_all_csv_from_folder('./csv/swing/swing_low/low_candle')
-swing_low_confirm = load_all_csv_from_folder('./csv/swing/swing_low/low_confirm')
-rsi_divergences = load_csv_safe("./csv/swing/rsi_divergences/rsi_divergences.csv")
 filtered_output_path = './csv/filtered_output.csv'
 filtered_output = pd.read_csv(filtered_output_path) if os.path.exists(filtered_output_path) and not pd.read_csv(filtered_output_path).empty else pd.DataFrame()
-down_to_up = load_csv_safe("./csv/swing/down_to_up.csv")
-up_to_down = load_csv_safe("./csv/swing/up_to_down.csv")
+
+# ✅ নতুন CSV ফাইলগুলো লোড করুন
+gape_df = load_csv_safe("./csv/gape.csv")
+gapebuy_df = load_csv_safe("./csv/gape_buy.csv")
+shortbuy_df = load_csv_safe("./csv/short_buy.csv")
+rsi_diver_df = load_csv_safe("./csv/rsi_diver.csv")
+rsi_diver_retest_df = load_csv_safe("./csv/rsi_diver_retest.csv")
 
 # --- Create Environment ---
 try:
     env = TradeEnv(
-        main_df,
-        filtered_df,
-        imbalance_high,
-        imbalance_low,
-        swing_high_candle,
-        swing_high_confirm,
-        swing_low_candle,
-        swing_low_confirm,
-        rsi_divergences,
-        filtered_output,
-        down_to_up,
-        up_to_down
+        maindf=main_df,
+        filtered_output=filtered_output,
+        gape_path="./csv/gape.csv",
+        gapebuy_path="./csv/gape_buy.csv",
+        shortbuy_path="./csv/short_buy.csv",
+        rsi_diver_path="./csv/rsi_diver.csv",
+        rsi_diver_retest_path="./csv/rsi_diver_retest.csv"
     )
     print("✅ Environment initialized")
 except Exception as e:
