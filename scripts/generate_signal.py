@@ -25,10 +25,7 @@ def generate_signals():
     unique_symbols = main_df["symbol"].dropna().unique()
     print(f"🔎 Symbol found: {len(unique_symbols)}")
 
-    # 📂 Load Feature Sets (নতুন CSV গুলো)
-    filtered_output_path = './csv/filtered_output.csv'
-    filtered_output = pd.read_csv(filtered_output_path) if os.path.exists(filtered_output_path) and not pd.read_csv(filtered_output_path).empty else pd.DataFrame()
-
+    # 📂 Load Feature Sets (শুধু নতুন CSV গুলো)
     gape_df = pd.read_csv("./csv/gape.csv")
     gapebuy_df = pd.read_csv("./csv/gape_buy.csv")
     shortbuy_df = pd.read_csv("./csv/short_buy.csv")
@@ -45,10 +42,9 @@ def generate_signals():
             if symbol_df.empty:
                 continue
 
-            # ✅ নতুন TradeEnv ইনিশিয়ালাইজেশন
+            # ✅ নতুন TradeEnv ইনিশিয়ালাইজেশন (filtered_output বাদ)
             env = TradeEnv(
                 maindf=symbol_df,
-                filtered_output=filtered_output,
                 gape_path="./csv/gape.csv",
                 gapebuy_path="./csv/gape_buy.csv",
                 shortbuy_path="./csv/short_buy.csv",
