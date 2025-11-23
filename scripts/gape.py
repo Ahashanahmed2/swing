@@ -4,7 +4,7 @@ import os
 # Input and output paths
 input_path = "./csv/mongodb.csv"
 output_path1 = "./csv/gape.csv"
-output_path2 = "./output/signal_ai/gape.csv"
+output_path2 = "./output/ai_signal/gape.csv"
 
 # Read CSV
 df = pd.read_csv(input_path)
@@ -20,44 +20,41 @@ for symbol, group in df.groupby("symbol"):
 
     last_row = group.iloc[-1]
     last_row_date = pd.to_datetime(last_row["date"])
-    limit_date = last_row_date - pd.Timedelta(days=180)  # ৬ মাসের লিমিট
+    limit_date = last_row_date - pd.Timedelta(days=200)  # ৬ মাসের লিমিট
 
-    # উপরের দিকে লুপ চালানো
+    A_row = None
+
+    # উপরের দিকে লুপ চালানো (শেষ থেকে শুরু করে)
     for i in range(len(group)-2, 0, -1):
-        A_row = group.iloc[i]
+        current_row = group.iloc[i]
         prev_row = group.iloc[i-1]
-        A_date = pd.to_datetime(A_row["date"])
 
-        if A_date < limit_date:
+        current_date = pd.to_datetime(current_row["date"])
+        # ✅ লিমিট: শুধু ৬ মাসের মধ্যে থাকা row-গুলো চেক হবে
+        if current_date < limit_date:
             break
 
-        # শর্ত 1: A_row এর high < prev_row এর low - 0.10
-        if A_row["high"] < prev_row["low"] - 0.10:
-            # শর্ত 2: নিচের সব row-এর high < A_row এর high
+        # শর্ত: current_row এর high < prev_row এর low - 0.10
+        if current_row["high"] < prev_row["low"] - 0.10:
             below_rows = group.iloc[i+1:]
-            if not (below_rows["high"] < A_row["high"]).all():
-                continue
-
-            # ✅ Gap validation: A_row ও prev_row এর মাঝে থাকা row গুলো
-            gap_high = max(A_row["high"], prev_row["high"])
-            gap_low = min(A_row["low"], prev_row["low"])
-            between_rows = group.iloc[i+1:]  # A_row এর নিচে থাকা সব row
-
-            if ((between_rows["high"] >= gap_low) & (between_rows["high"] <= gap_high)).any():
-                continue  # symbol বাতিল হবে
-
-            # সব শর্ত পূরণ হলে result-এ যোগ করুন (overwrite হবে যদি আগের থাকে)
-            results[symbol] = {
-                "symbol": symbol,
-                "last_row_date": last_row["date"],
-                "last_row_high": last_row["high"],
-                "last_row_low": last_row["low"],
-                "last_row_close": last_row["close"],
-                "A_row_date": A_row["date"],
-                "A_row_high": A_row["high"],
-                "A_row_low": A_row["low"],
-                "A_row_close": A_row["close"]
-            }
+            # ✅ নতুন শর্ত: নিচের সব row-এর high < current_row এর high
+            if (below_rows["high"] < current_row["high"]).all():
+                A_row = current_row
+                # 👉 একই symbol-এর জন্য আগের A_row থাকলেও আপডেট হবে
+                results[symbol] = {
+                    "symbol": symbol,
+                    "last_row_date": last_row["date"],
+                    "last_row_high": last_row["high"],
+                    "last_row_low": last_row["low"],
+                    "last_row_close": last_row["close"],
+                    "A_row_date": A_row["date"],
+                    "A_row_high": A_row["high"],
+                    "A_row_low": A_row["low"],
+                    "A_row_close": A_row["close"],
+                    # ✅ নতুন যুক্ত অংশ
+                    "B_row_date": prev_row["date"],
+                    "B_row_low": prev_row["low"]
+                }
 
 # Convert results to DataFrame
 result_df = pd.DataFrame(results.values())
@@ -66,6 +63,7 @@ result_df = pd.DataFrame(results.values())
 if not result_df.empty:
     result_df["last_row_date"] = pd.to_datetime(result_df["last_row_date"])
     result_df["A_row_date"] = pd.to_datetime(result_df["A_row_date"])
+    result_df["B_row_date"] = pd.to_datetime(result_df["B_row_date"])
 
     # Calculate difference
     result_df["date_diff"] = (result_df["last_row_date"] - result_df["A_row_date"]).dt.days
