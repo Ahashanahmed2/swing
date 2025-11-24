@@ -45,21 +45,21 @@ if new_data.empty:
     print("🟡 No new data found. Training skipped.")
     exit()
 
-# ✅ Load required datasets (filtered_output বাদ)
-gape_df = pd.read_csv("./csv/gape.csv")
-gapebuy_df = pd.read_csv("./csv/gape_buy.csv")
-shortbuy_df = pd.read_csv("./csv/short_buy.csv")
-rsi_diver_df = pd.read_csv("./csv/rsi_diver.csv")
-rsi_diver_retest_df = pd.read_csv("./csv/rsi_diver_retest.csv")
+# ✅ Load required datasets
+gape_path = "./csv/gape.csv"
+gapebuy_path = "./csv/gape_buy.csv"
+shortbuy_path = "./csv/short_buy.csv"
+rsi_diver_path = "./csv/rsi_diver.csv"
+rsi_diver_retest_path = "./csv/rsi_diver_retest.csv"
 
-# ✅ Prepare environment (filtered_output বাদ)
+# ✅ Prepare environment
 env = TradeEnv(
     maindf=main_df,
-    gape_path="./csv/gape.csv",
-    gapebuy_path="./csv/gape_buy.csv",
-    shortbuy_path="./csv/short_buy.csv",
-    rsi_diver_path="./csv/rsi_diver.csv",
-    rsi_diver_retest_path="./csv/rsi_diver_retest.csv"
+    gape_path=gape_path,
+    gapebuy_path=gapebuy_path,
+    shortbuy_path=shortbuy_path,
+    rsi_diver_path=rsi_diver_path,
+    rsi_diver_retest_path=rsi_diver_retest_path
 )
 env = DummyVecEnv([lambda: env])
 
