@@ -87,7 +87,7 @@ except Exception as e:
 
 # --- Save PPO Model ---
 try:
-    save_path = './models/ppo_retrained'
+    save_path = './csv/models/ppo_retrained'
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     model.save(save_path)
     print(f"✅ PPO model saved at: {save_path}")
