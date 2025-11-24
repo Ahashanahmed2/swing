@@ -6,8 +6,10 @@ from stable_baselines3 import DQN
 import numpy as np
 
 def generate_signals():
+    # 📥 Load Accuracy Report
     accuracy_df = pd.read_csv("./csv/accuracy_by_symbol.csv")
 
+    # 🧠 Load Trained Model
     try:
         model = DQN.load("./csv/dqn_retrained")
         print("✅ মডেল সফলভাবে লোড হয়েছে")
@@ -15,15 +17,16 @@ def generate_signals():
         print(f"❌ মডেল লোড করতে ব্যর্থ: {e}")
         return
 
+    # 📊 Load Main Data
     main_df = pd.read_csv("./csv/mongodb.csv")
     if 'symbol' not in main_df.columns:
         print("❌ 'symbol' column not found in main_df")
         return
 
     unique_symbols = main_df["symbol"].dropna().unique()
-    print(f"🔎 Symbol found: {len(unique_symbols)}")
+    print(f"🔎 মোট {len(unique_symbols)}টি symbol পাওয়া গেছে")
 
-    # Load feature CSVs
+    # 📂 Load Feature Sets
     gape_path = "./csv/gape.csv"
     gapebuy_path = "./csv/gape_buy.csv"
     shortbuy_path = "./csv/short_buy.csv"
@@ -71,7 +74,7 @@ def generate_signals():
             ai_score = float(row_match['accuracy (%)'].iloc[0]) if not row_match.empty else 0.0
             ai_action = row_match['ai_action'].iloc[0] if not row_match.empty and 'ai_action' in row_match.columns else ['Hold', 'Buy', 'Sell'][last_action]
 
-            # Filter weak signals
+            # 🔍 Filter weak signals
             if ai_score < 60 or confidence_score < 50:
                 continue
 
@@ -97,7 +100,7 @@ def generate_signals():
 
     if all_signals:
         pd.DataFrame(all_signals).to_csv(output_path, index=False)
-        print(f"✅ মোট {len(all_signals)}টি সিগন্যাল সেভ হয়েছে: {output_path}")
+        print(f"✅ মোট {len(all_signals)}টি শক্তিশালী সিগন্যাল সেভ হয়েছে: {output_path}")
     else:
         print("⚠️ কোনো শক্তিশালী সিগন্যাল পাওয়া যায়নি।")
 
