@@ -7,7 +7,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 
 # 📂 Paths
 main_df_path = './csv/mongodb.csv'
-backtest_dir = './output/backtest_results'
+backtest_dir = './csv/backtest_results'
 model_path = './csv/dqn_retrained'
 
 # 📊 Load main_df
