@@ -11,7 +11,7 @@ def generate_signals():
 
     # 🧠 Load Trained Model
     try:
-        model = DQN.load("./csv/dqn_retrained")
+        model = DQN.load("./csv/ppo_retrained")
         print("✅ মডেল সফলভাবে লোড হয়েছে")
     except Exception as e:
         print(f"❌ মডেল লোড করতে ব্যর্থ: {e}")
