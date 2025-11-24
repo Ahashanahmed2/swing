@@ -66,8 +66,7 @@ try:
         ent_coef=0.01,
         clip_range=0.2,
         n_epochs=10,
-        device='cpu',
-        tensorboard_log="./csv/ppo_tensorboard/"
+        device='cpu'
     )
     print("✅ PPO model created")
 except Exception as e:
