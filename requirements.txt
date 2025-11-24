@@ -4,6 +4,7 @@ ta
 dotenv
 requests
 #torch==2.3.0+cpu -f https://download.pytorch.org/whl/torch_stable.html
+gymnasium
 stable-baselines3
 shimmy>=2.0
 fpdf2>=2.7.0
