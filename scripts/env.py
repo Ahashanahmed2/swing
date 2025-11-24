@@ -28,10 +28,17 @@ class TradeEnv(gym.Env):
         self.total_steps = len(maindf) - 1
         self.last_obs = None
 
-        # ✅ Define observation and action space
         obs_shape = self.get_obs().shape[0]
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_shape,), dtype=np.float32)
-        self.action_space = spaces.Discrete(3)  # 0 = Hold, 1 = Buy, 2 = Sell
+        self.action_space = spaces.Discrete(3)
+
+    def reset(self, *, seed=None, options=None):
+        self.cash = 10000
+        self.stock = 0
+        self.last_price = None
+        self.current_step = 0
+        self.last_obs = self.get_obs()
+        return self.last_obs, {}
 
     def get_obs(self):
         window = 20
@@ -63,27 +70,27 @@ class TradeEnv(gym.Env):
 
         return obs_df.values.flatten()
 
-    def step(self, action, price, confidence, symbol, date):
+    def step(self, action):
         row = self.maindf.iloc[self.current_step]
+        price = row['close']
+        symbol = row['symbol']
+        date = row['date']
+        confidence = row.get('confidence', 0)
         reward = 0.0
 
-        # Basic action logic
         if action == 1:
             self.stock += 1
             self.cash -= price
             self.last_price = price
             reward = -0.1 * (1 - confidence)
-
         elif action == 2 and self.stock > 0:
             self.stock -= 1
             self.cash += price
             profit = price - self.last_price
             reward = profit * (1 + confidence * 1.5) if profit > 0 else profit
-
         elif action == 0:
             reward = -0.01
 
-        # Pattern-based reward
         if action == 1 and any(row.get(pat) == 'TRUE' for pat in ['BullishEngulfing', 'MorningStar', 'ThreeWhiteSoldiers']):
             reward += 1.0
         if action == 1 and row['RSI'] < 30:
@@ -109,12 +116,10 @@ class TradeEnv(gym.Env):
         if action == 2 and row['change'] < 0:
             reward += 0.25
 
-        # Volatility bonus
         volatility = row['high'] - row['low']
         if volatility > row['close'] * 0.05:
             reward *= 1.2
 
-        # Symbol-based reward
         if symbol in self.gape_df['symbol'].values:
             reward += 0.3
         if symbol in self.gapebuy_df['symbol'].values:
@@ -126,7 +131,6 @@ class TradeEnv(gym.Env):
         if symbol in self.rsi_diver_retest_df['symbol'].values:
             reward += 0.2
 
-        # Duration-based reward with decay
         duration_days = row.get('duration_days', None)
         outcome = row.get('outcome', None)
 
@@ -138,49 +142,13 @@ class TradeEnv(gym.Env):
         elif outcome == 'HOLD':
             reward -= 0.1
 
-        # Future price movement
-        symbol_df = self.maindf[self.maindf['symbol'] == symbol].copy()
-        symbol_df = symbol_df.sort_values(by='date')
-        symbol_df.reset_index(drop=True, inplace=True)
-
-        current_date = pd.to_datetime(date).date()
-        current_idx = symbol_df[symbol_df['date'] == current_date].index
-
-        if not current_idx.empty:
-            idx = current_idx[0]
-            future_rows = symbol_df.iloc[idx+1:idx+4]
-
-            if not future_rows.empty:
-                if float(future_rows.iloc[0]['close']) < price:
-                    reward -= 0.5
-                if len(future_rows) > 1 and float(future_rows.iloc[1]['close']) < future_rows.iloc[0]['close']:
-                    reward -= 1.0
-                if len(future_rows) > 2 and float(future_rows.iloc[2]['close']) > price:
-                    reward += 1.0
-
         self.current_step += 1
         done = self.current_step >= self.total_steps
-
         obs = self.get_obs() if not done else self.last_obs
         self.last_obs = obs
-
         reward = np.clip(reward, -10, 10)
 
-        info = {
-            'cash': self.cash,
-            'stock': self.stock,
-            'portfolio_value': self.cash + self.stock * price,
-            'price': price,
-            'action': action,
-            'symbol': symbol,
-            'reward': reward,
-            'confidence': confidence,
-            'lastprice': self.last_price,
-            'duration_days': duration_days,
-            'outcome': outcome
-        }
-
-        return obs, reward, done, False, info
+        return obs, reward, done, False, {}
 
     def render(self):
         r = self.maindf.iloc[self.current_step]
