@@ -1,6 +1,7 @@
 import gymnasium as gym
 import numpy as np
 import pandas as pd
+from gymnasium import spaces
 
 class TradeEnv(gym.Env):
     def __init__(self,
@@ -26,6 +27,11 @@ class TradeEnv(gym.Env):
         self.current_step = 0
         self.total_steps = len(maindf) - 1
         self.last_obs = None
+
+        # ✅ Define observation and action space
+        obs_shape = self.get_obs().shape[0]
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_shape,), dtype=np.float32)
+        self.action_space = spaces.Discrete(3)  # 0 = Hold, 1 = Buy, 2 = Sell
 
     def get_obs(self):
         window = 20
