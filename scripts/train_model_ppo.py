@@ -9,11 +9,15 @@ from env import TradeEnv  # নিশ্চিত হও যে env.py তে �
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # --- Helper Functions ---
-def load_csv_safe(path):
+def load_csv_safe(path, required_columns=None):
     try:
         if os.path.exists(path):
             df = pd.read_csv(path)
             print(f"✅ Loaded: {path} ({len(df)} rows)")
+            if required_columns:
+                for col in required_columns:
+                    if col not in df.columns:
+                        df[col] = 0  # fallback column
             return df
         else:
             print(f"⚠️ File not found: {path}")
@@ -22,9 +26,8 @@ def load_csv_safe(path):
     return pd.DataFrame()
 
 # --- Load Datasets ---
-main_df = load_csv_safe('./csv/mongodb.csv')
-
-# ✅ নতুন CSV ফাইলগুলো লোড করুন
+required_cols = ['RSI', 'confidence', 'ai_score', 'duration_days']
+main_df = load_csv_safe('./csv/mongodb.csv', required_columns=required_cols)
 gape_df = load_csv_safe("./csv/gape.csv")
 gapebuy_df = load_csv_safe("./csv/gape_buy.csv")
 shortbuy_df = load_csv_safe("./csv/short_buy.csv")
@@ -63,8 +66,8 @@ try:
         ent_coef=0.01,
         clip_range=0.2,
         n_epochs=10,
-        device='cpu'
-        #tensorboard_log="./ppo_tensorboard/"
+        device='cpu',
+        tensorboard_log="./ppo_tensorboard/"
     )
     print("✅ PPO model created")
 
@@ -84,7 +87,8 @@ except Exception as e:
 
 # --- Save PPO Model ---
 try:
-    save_path = './csv/ppo_retrained'
+    save_path = './models/ppo_retrained'
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     model.save(save_path)
     print(f"✅ PPO model saved at: {save_path}")
 except Exception as e:
