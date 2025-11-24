@@ -3,7 +3,7 @@ import pandas as pd
 import warnings
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
-from env import TradeEnv  # নিশ্চিত হও যে env.py তে TradeEnv আছে
+from env import TradeEnv  # নিশ্চিত হও যে env.py তে আপডেটেড TradeEnv আছে
 
 # ⚠️ Warning অফ
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -23,8 +23,6 @@ def load_csv_safe(path):
 
 # --- Load Datasets ---
 main_df = load_csv_safe('./csv/mongodb.csv')
-filtered_output_path = './csv/filtered_output.csv'
-filtered_output = pd.read_csv(filtered_output_path) if os.path.exists(filtered_output_path) and not pd.read_csv(filtered_output_path).empty else pd.DataFrame()
 
 # ✅ নতুন CSV ফাইলগুলো লোড করুন
 gape_df = load_csv_safe("./csv/gape.csv")
@@ -37,7 +35,6 @@ rsi_diver_retest_df = load_csv_safe("./csv/rsi_diver_retest.csv")
 try:
     env = TradeEnv(
         maindf=main_df,
-        filtered_output=filtered_output,
         gape_path="./csv/gape.csv",
         gapebuy_path="./csv/gape_buy.csv",
         shortbuy_path="./csv/short_buy.csv",
