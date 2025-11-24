@@ -3,12 +3,12 @@ import pandas as pd
 import warnings
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
-from env import TradeEnv  # নিশ্চিত হও যে env.py তে আপডেটেড TradeEnv আছে
+from env import TradeEnv
 
 # ⚠️ Warning অফ
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
-# --- Helper Functions ---
+# --- Helper Function ---
 def load_csv_safe(path, required_columns=None):
     try:
         if os.path.exists(path):
@@ -17,7 +17,7 @@ def load_csv_safe(path, required_columns=None):
             if required_columns:
                 for col in required_columns:
                     if col not in df.columns:
-                        df[col] = 0  # fallback column
+                        df[col] = 0
             return df
         else:
             print(f"⚠️ File not found: {path}")
@@ -28,21 +28,21 @@ def load_csv_safe(path, required_columns=None):
 # --- Load Datasets ---
 required_cols = ['RSI', 'confidence', 'ai_score', 'duration_days']
 main_df = load_csv_safe('./csv/mongodb.csv', required_columns=required_cols)
-gape_df = load_csv_safe("./csv/gape.csv")
-gapebuy_df = load_csv_safe("./csv/gape_buy.csv")
-shortbuy_df = load_csv_safe("./csv/short_buy.csv")
-rsi_diver_df = load_csv_safe("./csv/rsi_diver.csv")
-rsi_diver_retest_df = load_csv_safe("./csv/rsi_diver_retest.csv")
+gape_df = load_csv_safe('./csv/gape.csv')
+gapebuy_df = load_csv_safe('./csv/gape_buy.csv')
+shortbuy_df = load_csv_safe('./csv/short_buy.csv')
+rsi_diver_df = load_csv_safe('./csv/rsi_diver.csv')
+rsi_diver_retest_df = load_csv_safe('./csv/rsi_diver_retest.csv')
 
 # --- Create Environment ---
 try:
     env = TradeEnv(
         maindf=main_df,
-        gape_path="./csv/gape.csv",
-        gapebuy_path="./csv/gape_buy.csv",
-        shortbuy_path="./csv/short_buy.csv",
-        rsi_diver_path="./csv/rsi_diver.csv",
-        rsi_diver_retest_path="./csv/rsi_diver_retest.csv"
+        gape_path='./csv/gape.csv',
+        gapebuy_path='./csv/gape_buy.csv',
+        shortbuy_path='./csv/short_buy.csv',
+        rsi_diver_path='./csv/rsi_diver.csv',
+        rsi_diver_retest_path='./csv/rsi_diver_retest.csv'
     )
     print("✅ Environment initialized")
 except Exception as e:
@@ -70,7 +70,6 @@ try:
         tensorboard_log="./csv/ppo_tensorboard/"
     )
     print("✅ PPO model created")
-
 except Exception as e:
     print(f"❌ Failed to create PPO model: {e}")
     exit()
@@ -80,7 +79,6 @@ try:
     print("🚀 Training the PPO model...")
     model.learn(total_timesteps=200_000)
     print("✅ PPO Training complete")
-
 except Exception as e:
     print(f"❌ Training failed: {e}")
     exit()
@@ -90,6 +88,6 @@ try:
     save_path = './csv/ppo_retrained'
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     model.save(save_path)
-    print(f"✅ PPO model saved at: {save_path}")
+    print(f"✅ PPO model saved at: {save_path}.zip")
 except Exception as e:
     print(f"❌ Failed to save PPO model: {e}")
