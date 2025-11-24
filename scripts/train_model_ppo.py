@@ -5,7 +5,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 from env import TradeEnv
 
-# ⚠️ Warning অফ
+# ⚠️ FutureWarning অফ
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # --- Helper Function ---
@@ -38,21 +38,20 @@ rsi_diver_retest_df = load_csv_safe('./csv/rsi_diver_retest.csv')
 try:
     env = TradeEnv(
         maindf=main_df,
-        gape_path='./csv/gape.csv',
-        gapebuy_path='./csv/gape_buy.csv',
-        shortbuy_path='./csv/short_buy.csv',
-        rsi_diver_path='./csv/rsi_diver.csv',
-        rsi_diver_retest_path='./csv/rsi_diver_retest.csv'
+        gape_path="./csv/gape.csv",
+        gapebuy_path="./csv/gape_buy.csv",
+        shortbuy_path="./csv/short_buy.csv",
+        rsi_diver_path="./csv/rsi_diver.csv",
+        rsi_diver_retest_path="./csv/rsi_diver_retest.csv"
     )
     print("✅ Environment initialized")
 except Exception as e:
     print(f"❌ Failed to initialize environment: {e}")
     exit()
 
-# --- Wrap Environment ---
 env = DummyVecEnv([lambda: env])
 
-# --- Create PPO Model ---
+# --- Create PPO Model (TensorBoard log removed) ---
 try:
     model = PPO(
         policy="MlpPolicy",
