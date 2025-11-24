@@ -1,7 +1,6 @@
 import gym
 import numpy as np
 import pandas as pd
-import math
 
 class TradeEnv(gym.Env):
     def __init__(self,
@@ -38,15 +37,19 @@ class TradeEnv(gym.Env):
             'RSI', 'bb_upper', 'bb_middle', 'bb_lower',
             'macd', 'macd_signal', 'macd_hist', 'zigzag',
             'Hammer', 'BullishEngulfing', 'MorningStar',
-            'Doji', 'PiercingLine', 'ThreeWhiteSoldiers'
+            'Doji', 'PiercingLine', 'ThreeWhiteSoldiers',
+            'confidence', 'ai_score', 'duration_days'
         ]
 
         obs_df = obs_df[features].copy()
 
-        # Convert pattern flags to binary
         pattern_flags = ['Hammer', 'BullishEngulfing', 'MorningStar', 'Doji', 'PiercingLine', 'ThreeWhiteSoldiers']
         for col in pattern_flags:
             obs_df[col] = obs_df[col].astype(str).str.upper().map({'TRUE': 1, 'FALSE': 0}).fillna(0)
+
+        obs_df['confidence'] = obs_df['confidence'] / 100
+        obs_df['ai_score'] = obs_df['ai_score'] / 100
+        obs_df['duration_days'] = obs_df['duration_days'].fillna(0) / 10
 
         if len(obs_df) < window:
             pad = pd.DataFrame(np.zeros((window - len(obs_df), len(features))), columns=features)
@@ -58,56 +61,43 @@ class TradeEnv(gym.Env):
         row = self.maindf.iloc[self.current_step]
         reward = 0.0
 
-        if action == 1:  # Buy
+        # Basic action logic
+        if action == 1:
             self.stock += 1
             self.cash -= price
             self.last_price = price
             reward = -0.1 * (1 - confidence)
 
-        elif action == 2 and self.stock > 0:  # Sell
+        elif action == 2 and self.stock > 0:
             self.stock -= 1
             self.cash += price
             profit = price - self.last_price
             reward = profit * (1 + confidence * 1.5) if profit > 0 else profit
 
-        elif action == 0:  # Hold
+        elif action == 0:
             reward = -0.01
 
         # Pattern-based reward
         if action == 1 and any(row.get(pat) == 'TRUE' for pat in ['BullishEngulfing', 'MorningStar', 'ThreeWhiteSoldiers']):
             reward += 1.0
-
-        # RSI-based reward
         if action == 1 and row['RSI'] < 30:
             reward += 0.5
         if action == 2 and row['RSI'] > 70:
             reward += 0.5
-
-        # MACD crossover
         if action == 1 and row['macd'] > row['macd_signal']:
             reward += 0.25
         if action == 2 and row['macd'] < row['macd_signal']:
             reward += 0.25
-
-        # Zigzag trend
         if action == 1 and row['zigzag'] > 0:
             reward += 0.25
         if action == 2 and row['zigzag'] < 0:
             reward += 0.25
-
-        # Volume spike
         if action == 1 and row['volume'] > self.maindf['volume'].mean() * 1.5:
             reward += 0.5
-
-        # Trades activity
         if action == 1 and row['trades'] > self.maindf['trades'].mean():
             reward += 0.25
-
-        # MarketCap filter
         if action == 1 and row['marketCap'] > 1e9:
             reward += 0.25
-
-        # Price change
         if action == 1 and row['change'] > 0:
             reward += 0.25
         if action == 2 and row['change'] < 0:
@@ -118,7 +108,31 @@ class TradeEnv(gym.Env):
         if volatility > row['close'] * 0.05:
             reward *= 1.2
 
-        # Future pattern-based penalty
+        # Symbol-based reward
+        if symbol in self.gape_df['symbol'].values:
+            reward += 0.3
+        if symbol in self.gapebuy_df['symbol'].values:
+            reward += 0.5
+        if symbol in self.shortbuy_df['symbol'].values:
+            reward += 0.3
+        if symbol in self.rsi_diver_df['symbol'].values:
+            reward += 0.4
+        if symbol in self.rsi_diver_retest_df['symbol'].values:
+            reward += 0.2
+
+        # Duration-based reward with decay
+        duration_days = row.get('duration_days', None)
+        outcome = row.get('outcome', None)
+
+        if outcome == 'TP':
+            if duration_days is not None:
+                reward += max(1.0 - (duration_days * 0.2), 0.2)
+        elif outcome == 'SL':
+            reward -= 1.0
+        elif outcome == 'HOLD':
+            reward -= 0.1
+
+        # Future price movement
         symbol_df = self.maindf[self.maindf['symbol'] == symbol].copy()
         symbol_df = symbol_df.sort_values(by='date')
         symbol_df.reset_index(drop=True, inplace=True)
@@ -141,11 +155,8 @@ class TradeEnv(gym.Env):
         self.current_step += 1
         done = self.current_step >= self.total_steps
 
-        if not done:
-            obs = self.get_obs()
-            self.last_obs = obs
-        else:
-            obs = self.last_obs
+        obs = self.get_obs() if not done else self.last_obs
+        self.last_obs = obs
 
         reward = np.clip(reward, -10, 10)
 
@@ -158,7 +169,9 @@ class TradeEnv(gym.Env):
             'symbol': symbol,
             'reward': reward,
             'confidence': confidence,
-            'lastprice': self.last_price
+            'lastprice': self.last_price,
+            'duration_days': duration_days,
+            'outcome': outcome
         }
 
         return obs, reward, done, False, info
