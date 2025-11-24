@@ -67,7 +67,7 @@ try:
         clip_range=0.2,
         n_epochs=10,
         device='cpu',
-        tensorboard_log="./ppo_tensorboard/"
+        tensorboard_log="./csv/ppo_tensorboard/"
     )
     print("✅ PPO model created")
 
