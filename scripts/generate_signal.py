@@ -99,8 +99,17 @@ def generate_signals():
             print(f"❌ {symbol} প্রসেস করতে ব্যর্থ: {e}")
 
     if all_signals:
-        pd.DataFrame(all_signals).to_csv(output_path, index=False)
+        df = pd.DataFrame(all_signals)
+        # মূল আউটপুট
+        df.to_csv(output_path, index=False)
         print(f"✅ মোট {len(all_signals)}টি শক্তিশালী সিগন্যাল সেভ হয়েছে: {output_path}")
+
+        # নতুন পাথেও সেভ হবে entry_date.csv নামে
+        os.makedirs("./csv/all_signal", exist_ok=True)
+        entry_date = datetime.now().strftime("%Y-%m-%d")
+        new_output_path = f"./csv/all_signal/{entry_date}.csv"
+        df.to_csv(new_output_path, index=False)
+        print(f"📂 অতিরিক্ত সেভ হয়েছে: {new_output_path}")
     else:
         print("⚠️ কোনো শক্তিশালী সিগন্যাল পাওয়া যায়নি।")
 
