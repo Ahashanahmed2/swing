@@ -1,24 +1,35 @@
-import pandas as pd
 import os
+import pandas as pd
+import numpy as np
 from datetime import datetime
 from env import TradeEnv
-from stable_baselines3 import DQN
-import numpy as np
+from stable_baselines3 import PPO
 
 def generate_signals():
     # 📥 Load Accuracy Report
-    accuracy_df = pd.read_csv("./csv/accuracy_by_symbol.csv")
+    accuracy_path = "./csv/accuracy_by_symbol.csv"
+    accuracy_df = pd.read_csv(accuracy_path) if os.path.exists(accuracy_path) else pd.DataFrame()
 
-    # 🧠 Load Trained Model
+    # 🧠 Load Trained PPO Model
     try:
-        model = DQN.load("./csv/ppo_retrained")
-        print("✅ মডেল সফলভাবে লোড হয়েছে")
+        model = PPO.load("./csv/ppo_retrained")
+        print("✅ PPO মডেল সফলভাবে লোড হয়েছে")
     except Exception as e:
-        print(f"❌ মডেল লোড করতে ব্যর্থ: {e}")
+        print(f"❌ PPO মডেল লোড করতে ব্যর্থ: {e}")
         return
 
     # 📊 Load Main Data
-    main_df = pd.read_csv("./csv/mongodb.csv")
+    main_path = "./csv/mongodb.csv"
+    if not os.path.exists(main_path):
+        print("❌ মূল ডেটা ফাইল পাওয়া যায়নি:", main_path)
+        return
+
+    main_df = pd.read_csv(main_path)
+    required_cols = ['RSI', 'confidence', 'ai_score', 'duration_days']
+    for col in required_cols:
+        if col not in main_df.columns:
+            main_df[col] = 0
+
     if 'symbol' not in main_df.columns:
         print("❌ 'symbol' column not found in main_df")
         return
@@ -33,8 +44,8 @@ def generate_signals():
     rsi_diver_path = "./csv/rsi_diver.csv"
     rsi_diver_retest_path = "./csv/rsi_diver_retest.csv"
 
-    os.makedirs("./output/ai_signal", exist_ok=True)
-    output_path = "./output/ai_signal/all_signals.csv"
+    os.makedirs("./csv/all_signal", exist_ok=True)
+    output_path = "./csv/all_signals.csv"
     all_signals = []
 
     for symbol in unique_symbols:
@@ -100,17 +111,15 @@ def generate_signals():
 
     if all_signals:
         df = pd.DataFrame(all_signals)
-        # মূল আউটপুট
         df.to_csv(output_path, index=False)
         print(f"✅ মোট {len(all_signals)}টি শক্তিশালী সিগন্যাল সেভ হয়েছে: {output_path}")
 
-        # নতুন পাথেও সেভ হবে entry_date.csv নামে
-        os.makedirs("./csv/all_signal", exist_ok=True)
         entry_date = datetime.now().strftime("%Y-%m-%d")
-        new_output_path = f"./csv/all_signal/{entry_date}.csv"
-        df.to_csv(new_output_path, index=False)
-        print(f"📂 অতিরিক্ত সেভ হয়েছে: {new_output_path}")
+        dated_output = f"./csv/all_signal/{entry_date}.csv"
+        df.to_csv(dated_output, index=False)
+        print(f"📂 অতিরিক্ত সেভ হয়েছে: {dated_output}")
     else:
         print("⚠️ কোনো শক্তিশালী সিগন্যাল পাওয়া যায়নি।")
 
+# 🔁 Run the signal generator
 generate_signals()
