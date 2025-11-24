@@ -14,18 +14,18 @@ class TradeEnv(gym.Env):
 
         super(TradeEnv, self).__init__()
 
-        self.maindf = maindf.copy()
-        self.gape_df = pd.read_csv(gape_path)
-        self.gapebuy_df = pd.read_csv(gapebuy_path)
-        self.shortbuy_df = pd.read_csv(shortbuy_path)
-        self.rsi_diver_df = pd.read_csv(rsi_diver_path)
-        self.rsi_diver_retest_df = pd.read_csv(rsi_diver_retest_path)
+        self.maindf = maindf.copy().reset_index(drop=True)
+        self.gape_df = pd.read_csv(gape_path) if os.path.exists(gape_path) else pd.DataFrame()
+        self.gapebuy_df = pd.read_csv(gapebuy_path) if os.path.exists(gapebuy_path) else pd.DataFrame()
+        self.shortbuy_df = pd.read_csv(shortbuy_path) if os.path.exists(shortbuy_path) else pd.DataFrame()
+        self.rsi_diver_df = pd.read_csv(rsi_diver_path) if os.path.exists(rsi_diver_path) else pd.DataFrame()
+        self.rsi_diver_retest_df = pd.read_csv(rsi_diver_retest_path) if os.path.exists(rsi_diver_retest_path) else pd.DataFrame()
 
         self.cash = 10000
         self.stock = 0
         self.last_price = None
         self.current_step = 0
-        self.total_steps = len(maindf) - 1
+        self.total_steps = len(self.maindf) - 1
         self.last_obs = None
 
         obs_shape = self.get_obs().shape[0]
@@ -54,27 +54,31 @@ class TradeEnv(gym.Env):
             'confidence', 'ai_score', 'duration_days'
         ]
 
-        obs_df = obs_df[features].copy()
+        obs_df = obs_df.copy()
+        for col in features:
+            if col not in obs_df.columns:
+                obs_df[col] = 0
 
         pattern_flags = ['Hammer', 'BullishEngulfing', 'MorningStar', 'Doji', 'PiercingLine', 'ThreeWhiteSoldiers']
         for col in pattern_flags:
             obs_df[col] = obs_df[col].astype(str).str.upper().map({'TRUE': 1, 'FALSE': 0}).fillna(0)
 
-        obs_df['confidence'] = obs_df['confidence'] / 100
-        obs_df['ai_score'] = obs_df['ai_score'] / 100
+        obs_df['confidence'] = obs_df['confidence'].fillna(0) / 100
+        obs_df['ai_score'] = obs_df['ai_score'].fillna(0) / 100
         obs_df['duration_days'] = obs_df['duration_days'].fillna(0) / 10
 
         if len(obs_df) < window:
             pad = pd.DataFrame(np.zeros((window - len(obs_df), len(features))), columns=features)
             obs_df = pd.concat([pad, obs_df], ignore_index=True)
 
-        return obs_df.values.flatten()
+        obs_array = obs_df[features].values.flatten().astype(np.float32)
+        obs_array = np.nan_to_num(obs_array, nan=0.0, posinf=0.0, neginf=0.0)
+        return obs_array
 
     def step(self, action):
         row = self.maindf.iloc[self.current_step]
-        price = row['close']
-        symbol = row['symbol']
-        date = row['date']
+        price = row.get('close', 0)
+        symbol = row.get('symbol', '')
         confidence = row.get('confidence', 0)
         reward = 0.0
 
@@ -86,57 +90,59 @@ class TradeEnv(gym.Env):
         elif action == 2 and self.stock > 0:
             self.stock -= 1
             self.cash += price
-            profit = price - self.last_price
+            profit = price - self.last_price if self.last_price else 0
             reward = profit * (1 + confidence * 1.5) if profit > 0 else profit
         elif action == 0:
             reward = -0.01
 
-        if action == 1 and any(row.get(pat) == 'TRUE' for pat in ['BullishEngulfing', 'MorningStar', 'ThreeWhiteSoldiers']):
-            reward += 1.0
-        if action == 1 and row['RSI'] < 30:
-            reward += 0.5
-        if action == 2 and row['RSI'] > 70:
-            reward += 0.5
-        if action == 1 and row['macd'] > row['macd_signal']:
-            reward += 0.25
-        if action == 2 and row['macd'] < row['macd_signal']:
-            reward += 0.25
-        if action == 1 and row['zigzag'] > 0:
-            reward += 0.25
-        if action == 2 and row['zigzag'] < 0:
-            reward += 0.25
-        if action == 1 and row['volume'] > self.maindf['volume'].mean() * 1.5:
-            reward += 0.5
-        if action == 1 and row['trades'] > self.maindf['trades'].mean():
-            reward += 0.25
-        if action == 1 and row['marketCap'] > 1e9:
-            reward += 0.25
-        if action == 1 and row['change'] > 0:
-            reward += 0.25
-        if action == 2 and row['change'] < 0:
-            reward += 0.25
+        try:
+            if action == 1 and any(str(row.get(pat)).upper() == 'TRUE' for pat in ['BullishEngulfing', 'MorningStar', 'ThreeWhiteSoldiers']):
+                reward += 1.0
+            if action == 1 and row.get('RSI', 0) < 30:
+                reward += 0.5
+            if action == 2 and row.get('RSI', 100) > 70:
+                reward += 0.5
+            if action == 1 and row.get('macd', 0) > row.get('macd_signal', 0):
+                reward += 0.25
+            if action == 2 and row.get('macd', 0) < row.get('macd_signal', 0):
+                reward += 0.25
+            if action == 1 and row.get('zigzag', 0) > 0:
+                reward += 0.25
+            if action == 2 and row.get('zigzag', 0) < 0:
+                reward += 0.25
+            if action == 1 and row.get('volume', 0) > self.maindf['volume'].mean() * 1.5:
+                reward += 0.5
+            if action == 1 and row.get('trades', 0) > self.maindf['trades'].mean():
+                reward += 0.25
+            if action == 1 and row.get('marketCap', 0) > 1e9:
+                reward += 0.25
+            if action == 1 and row.get('change', 0) > 0:
+                reward += 0.25
+            if action == 2 and row.get('change', 0) < 0:
+                reward += 0.25
+        except:
+            pass
 
-        volatility = row['high'] - row['low']
-        if volatility > row['close'] * 0.05:
+        volatility = row.get('high', 0) - row.get('low', 0)
+        if volatility > row.get('close', 1) * 0.05:
             reward *= 1.2
 
-        if symbol in self.gape_df['symbol'].values:
+        if symbol in self.gape_df.get('symbol', []):
             reward += 0.3
-        if symbol in self.gapebuy_df['symbol'].values:
+        if symbol in self.gapebuy_df.get('symbol', []):
             reward += 0.5
-        if symbol in self.shortbuy_df['symbol'].values:
+        if symbol in self.shortbuy_df.get('symbol', []):
             reward += 0.3
-        if symbol in self.rsi_diver_df['symbol'].values:
+        if symbol in self.rsi_diver_df.get('symbol', []):
             reward += 0.4
-        if symbol in self.rsi_diver_retest_df['symbol'].values:
+        if symbol in self.rsi_diver_retest_df.get('symbol', []):
             reward += 0.2
 
         duration_days = row.get('duration_days', None)
         outcome = row.get('outcome', None)
 
-        if outcome == 'TP':
-            if duration_days is not None:
-                reward += max(1.0 - (duration_days * 0.2), 0.2)
+        if outcome == 'TP' and duration_days is not None:
+            reward += max(1.0 - (duration_days * 0.2), 0.2)
         elif outcome == 'SL':
             reward -= 1.0
         elif outcome == 'HOLD':
@@ -147,10 +153,12 @@ class TradeEnv(gym.Env):
         obs = self.get_obs() if not done else self.last_obs
         self.last_obs = obs
         reward = np.clip(reward, -10, 10)
+        if np.isnan(reward) or np.isinf(reward):
+            reward = 0.0
 
         return obs, reward, done, False, {}
 
     def render(self):
         r = self.maindf.iloc[self.current_step]
-        price = float(r.get('close'))
+        price = float(r.get('close', 0))
         print(f"Step {self.current_step}: Cash {self.cash:.2f}, Stock {self.stock}, Value {self.cash + self.stock * price:.2f}")
