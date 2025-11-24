@@ -7,7 +7,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 
 # 📂 Paths
 main_df_path = './csv/mongodb.csv'
-backtest_dir = './csv/backtest_results'
+backtest_dir = './csv/backtest_result'  # ✅ Updated path
 model_path = './csv/dqn_retrained'
 
 # 📊 Load main_df
@@ -17,6 +17,9 @@ main_df['date'] = pd.to_datetime(main_df['date']).dt.date
 # 🔍 Step 1: Aggregate backtest results
 backtest_files = [f for f in os.listdir(backtest_dir) if f.endswith('.csv')]
 bt_df = pd.concat([pd.read_csv(os.path.join(backtest_dir, f)) for f in backtest_files], ignore_index=True)
+
+# ✅ Sort by duration_days (fastest outcomes first)
+bt_df = bt_df.sort_values(by='duration_days', na_position='last')
 
 # ✅ Step 2: Filter strong signals
 tp_symbols = bt_df[bt_df['outcome'] == 'TP']['symbol'].value_counts()
@@ -30,6 +33,11 @@ whitelist = tp_symbols[tp_symbols >= 2].index.tolist()
 
 # 🧹 Filter training data
 filtered_df = main_df[main_df['symbol'].isin(whitelist) & ~main_df['symbol'].isin(blacklist)]
+
+# ✅ Optional: Keep only fast TP symbols (e.g., TP within 3 days)
+fast_tp = bt_df[(bt_df['outcome'] == 'TP') & (bt_df['duration_days'] <= 3)]
+fast_tp_symbols = fast_tp['symbol'].unique().tolist()
+filtered_df = filtered_df[filtered_df['symbol'].isin(fast_tp_symbols)]
 
 if filtered_df.empty:
     print("⚠️ Filtered training data is empty. Retrain skipped.")
