@@ -14,7 +14,6 @@ gape_df = pd.read_csv(gape_file)
 mongodb_df = pd.read_csv(mongodb_file)
 
 results = []
-row_id = 1
 
 for _, last_row in gape_df.iterrows():
     symbol = last_row['symbol']
@@ -67,15 +66,11 @@ for _, last_row in gape_df.iterrows():
         # gape.csv এর row + নতুন ফিল্ড যুক্ত করা
         result_row = last_row.to_dict()
         result_row.update({
-            'row_id': row_id,
-            'Brow_date': Browdate,
-            'pre_candle_date': pre_candle_date,
-            'low_candle_date': low_candle_date,
-            'candle_count': candle_count,
-            'SL': SL
+           'low_candle_date': low_candle_date,
+           'candle_count': candle_count + 1,
+           'SL': SL
         })
         results.append(result_row)
-        row_id += 1
 
 # আউটপুট ডিরেক্টরি তৈরি করা যদি না থাকে
 os.makedirs(os.path.dirname(output_file1), exist_ok=True)
@@ -85,6 +80,10 @@ os.makedirs(os.path.dirname(output_file2), exist_ok=True)
 if results:
     df = pd.DataFrame(results)
     df = df.sort_values(by=['SL', 'candle_count'], ascending=[True, True]).reset_index(drop=True)
+
+    # ✅ ascending sort হওয়ার পর নতুন row_id যুক্ত করা
+    df.insert(0, 'row_id', range(1, len(df) + 1))
+
     df.to_csv(output_file1, index=False)
     df.to_csv(output_file2, index=False)
     print(f"✅ Output saved to {output_file1} and {output_file2}")
