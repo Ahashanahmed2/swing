@@ -14,47 +14,77 @@ gape_df = pd.read_csv(gape_file)
 mongodb_df = pd.read_csv(mongodb_file)
 
 results = []
-row_id = 1  # প্রতিটি আউটপুট row এর জন্য সিরিয়াল নাম্বার
+row_id = 1
 
-for symbol in gape_df['symbol'].unique():
-    # gape.csv থেকে ওই symbol এর শেষ row
-    symbol_data = gape_df[gape_df['symbol'] == symbol].sort_values(by='last_row_date')
-    last_row = symbol_data.iloc[-1]
-
-    A_row_date = last_row['last_row_date']
-    last_row_low = last_row['last_row_low']
-    last_row_close = last_row['last_row_close']
+for _, last_row in gape_df.iterrows():
+    symbol = last_row['symbol']
+    Arow_date = last_row['last_row_date']
+    lastrowhigh = last_row['last_row_high']
+    lastrowlow = last_row['last_row_low']
+    lastrowclose = last_row['last_row_close']
 
     # mongodb.csv থেকে ওই symbol এর ডেটা
-    mongo_data = mongodb_df[mongodb_df['symbol'] == symbol].sort_values(by='date')
+    mongodata = mongodb_df[mongodb_df['symbol'] == symbol].sort_values(by='date')
 
-    # ওই তারিখের আগের row খুঁজে বের করা
-    prev_rows = mongo_data[mongo_data['date'] < A_row_date]
-    if prev_rows.empty:
+    # ওই তারিখের আগের row গুলো
+    prevrows = mongodata[mongodata['date'] < Arow_date]
+    if prevrows.empty:
         continue
 
-    prev_row = prev_rows.iloc[-1]  # শেষ আগের row
-    B_row_date = prev_row['date']
+    # শেষ আগের row
+    prevrow = prevrows.iloc[-1]
+    Browdate = prevrow['date']
 
     # শর্ত মিলানো
-    if (last_row_low > prev_row['low']) and (last_row_close > prev_row['high']):
-        results.append({
+    if (lastrowlow > prevrow['low']) and (lastrowclose > prevrow['high']):
+        # pre_candle খুঁজে বের করা
+        pre_candle = None
+        for i in range(len(prevrows)-1, -1, -1):  # শেষ থেকে লুপ
+            row = prevrows.iloc[i]
+            if row['low'] <= lastrowhigh <= row['high'] or row['low'] <= lastrowlow <= row['high']:
+                pre_candle = row
+                break
+
+        if pre_candle is None:
+            continue
+
+        pre_candle_date = pre_candle['date']
+
+        # pre_candle ও last_row এর মাঝে যত row আছে
+        between_rows = mongodata[(mongodata['date'] > pre_candle_date) & (mongodata['date'] < Arow_date)]
+        if between_rows.empty:
+            continue
+
+        # low_candle বের করা (যার low সবচেয়ে কম)
+        low_candle = between_rows.loc[between_rows['low'].idxmin()]
+        low_candle_date = low_candle['date']
+        SL = low_candle['low']
+
+        # low_candle ও last_row এর মাঝে কতগুলো candle আছে
+        candles_between = mongodata[(mongodata['date'] > low_candle_date) & (mongodata['date'] < Arow_date)]
+        candle_count = len(candles_between)
+
+        # gape.csv এর row + নতুন ফিল্ড যুক্ত করা
+        result_row = last_row.to_dict()
+        result_row.update({
             'row_id': row_id,
-            'symbol': symbol,
-            'A_row_date': A_row_date,
-            'B_row_date': B_row_date,
-            'last_row_low': last_row_low,
-            'last_row_close': last_row_close
+            'Brow_date': Browdate,
+            'pre_candle_date': pre_candle_date,
+            'low_candle_date': low_candle_date,
+            'candle_count': candle_count,
+            'SL': SL
         })
+        results.append(result_row)
         row_id += 1
 
 # আউটপুট ডিরেক্টরি তৈরি করা যদি না থাকে
 os.makedirs(os.path.dirname(output_file1), exist_ok=True)
 os.makedirs(os.path.dirname(output_file2), exist_ok=True)
 
-# ফলাফল CSV তে লেখা
+# ফলাফল CSV তে লেখা (SL ascending, তারপর candle_count ascending)
 if results:
     df = pd.DataFrame(results)
+    df = df.sort_values(by=['SL', 'candle_count'], ascending=[True, True]).reset_index(drop=True)
     df.to_csv(output_file1, index=False)
     df.to_csv(output_file2, index=False)
     print(f"✅ Output saved to {output_file1} and {output_file2}")
