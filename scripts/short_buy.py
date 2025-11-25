@@ -15,6 +15,9 @@ os.makedirs(os.path.dirname(output_path2), exist_ok=True)
 rsi_df = pd.read_csv(rsi_path)
 mongo_df = pd.read_csv(mongo_path)
 
+# ✅ কলাম নামগুলোতে স্পেস থাকলে underscore দিয়ে বদলে নিন
+rsi_df.columns = rsi_df.columns.str.replace(" ", "_")
+
 # Group mongodb data by symbol
 mongo_groups = mongo_df.groupby('symbol')
 
@@ -24,10 +27,13 @@ output_rows = []
 # Iterate through RSI symbols
 for _, rsi_row in rsi_df.iterrows():
     symbol = rsi_row['symbol']
-    last_high = rsi_row['last row high']
-    last_row_date = rsi_row['last row date']
-    last_row_low = rsi_row['last row low']
-    last_row_close = rsi_row['last row close']
+    last_high = rsi_row['last_row_high']
+    last_row_date = rsi_row['last_row_date']
+    last_row_low = rsi_row['last_row_low']
+    last_row_rsi = rsi_row['last_row_rsi']
+    second_row_date = rsi_row['second_row_date']
+    second_row_low = rsi_row['second_row_low']
+    second_row_rsi = rsi_row['second_row_rsi']
 
     # Check if symbol exists in mongodb
     if symbol not in mongo_groups.groups:
@@ -50,7 +56,7 @@ for _, rsi_row in rsi_df.iterrows():
         prev_row = prev_rows.iloc[-1]
 
         # শর্ত মিলানো
-        if (last_row_low > prev_row['low']) and (last_row_close > prev_row['high']):
+        if (last_row_low > prev_row['low']) and (last_row['close'] > prev_row['high']):
             # pre_candle খুঁজে বের করা
             pre_candle = None
             for i in range(len(prev_rows)-1, -1, -1):
@@ -88,8 +94,10 @@ for _, rsi_row in rsi_df.iterrows():
                 'last_row_date': last_row_date,
                 'last_row_low': last_row_low,
                 'last_row_high': last_high,
-                'second_row_date': rsi_row['second row date'],
-                'second_row_low': rsi_row['second row low'],
+                'last_row_rsi': last_row_rsi,
+                'second_row_date': second_row_date,
+                'second_row_low': second_row_low,
+                'second_row_rsi': second_row_rsi,
                 'pre_candle_date': pre_candle_date,
                 'low_candle_date': low_candle_date,
                 'candle_count': candle_count,
