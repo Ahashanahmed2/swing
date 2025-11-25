@@ -78,8 +78,7 @@ if not result_df.empty:
     # ✅ Sort by date_diff descending, then last_row_date descending
     result_df = result_df.sort_values(by=["date_diff", "last_row_date"], ascending=[False, False]).reset_index(drop=True)
 
-    # Reassign serial No after sorting
-    result_df["No"] = range(1, len(result_df) + 1)
+    
 
 # Ensure output directories exist
 os.makedirs(os.path.dirname(output_path1), exist_ok=True)
