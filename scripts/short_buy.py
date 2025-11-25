@@ -100,7 +100,7 @@ for _, rsi_row in rsi_df.iterrows():
                 'second_row_rsi': second_row_rsi,
                 'pre_candle_date': pre_candle_date,
                 'low_candle_date': low_candle_date,
-                'candle_count': candle_count,
+                'candle_count': candle_count + 1,
                 'SL': SL
             })
 
