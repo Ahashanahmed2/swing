@@ -12,7 +12,7 @@ def generate_signals():
 
     # 🧠 Load Trained PPO Model
     try:
-        model = PPO.load("./csv/ppo_retrained")
+        model = PPO.load("./csv/ppo_retrained.zip")
         print("✅ PPO মডেল সফলভাবে লোড হয়েছে")
     except Exception as e:
         print(f"❌ PPO মডেল লোড করতে ব্যর্থ: {e}")
