@@ -18,20 +18,20 @@ df = df.sort_values(by=['symbol', 'date'])
 def process_symbol(group):
     # শেষ row
     last_row = group.iloc[-1].copy()
-    
+
     # শেষ row থেকে উপরের ৫ রো এর গড় volume
     window = group.tail(5)['volume']
     last_row['Avolume'] = window.mean()
-    
+
     return last_row
 
 # Apply per symbol
 latest_df = df.groupby('symbol').apply(process_symbol).reset_index(drop=True)
 
 # ---------------------------------------------------------
-# Turnover Ratio (TR) = value_traded / marketCap
+# Turnover Ratio (TR) = value_traded / marketCap (rounded 2 decimals)
 # ---------------------------------------------------------
-latest_df['TR'] = latest_df['value'] / latest_df['marketCap']
+latest_df['TR'] = (latest_df['value'] / latest_df['marketCap']).round(2)
 
 # ---------------------------------------------------------
 # Market Cap Range Label
@@ -54,15 +54,110 @@ def mcap_label(mcap):
 latest_df['mcap'] = latest_df['marketCap'].apply(mcap_label)
 
 # ---------------------------------------------------------
-# Liquidity Rating Function (same as before)
+# Liquidity Rating Function (Full Rules)
 # ---------------------------------------------------------
 def liquidity_rating(price, mcap, volume, value):
     value_cr = value / 1e7  # convert to crore
-    # এখানে আগের master table অনুযায়ী rating rules বসানো আছে
-    # (আগের স্ক্রিপ্টের মতোই)
-    # ...
-    return "Avoid"  # fallback
 
+    # ---------------- PRICE 1–5 ----------------
+    if 1 <= price <= 5:
+        if mcap == "<100cr" and volume >= 1500000 and value_cr >= 5:
+            return "Excellent"
+        if mcap == "100–300cr" and volume >= 800000 and value_cr >= 3:
+            return "Good"
+        if mcap == "300–600cr" and volume >= 400000 and value_cr >= 2:
+            return "Moderate"
+        if mcap == "600–1000cr" and volume >= 200000 and value_cr >= 1:
+            return "Poor"
+        return "Avoid"
+
+    # ---------------- PRICE 5–10 ----------------
+    if 5 < price <= 10:
+        if mcap == "<100cr" and volume >= 1000000 and value_cr >= 4:
+            return "Excellent"
+        if mcap == "100–300cr" and volume >= 600000 and value_cr >= 3:
+            return "Good"
+        if mcap == "300–600cr" and volume >= 300000 and value_cr >= 1.5:
+            return "Moderate"
+        if mcap == "600–1000cr" and volume >= 100000 and value_cr >= 1:
+            return "Poor"
+        return "Avoid"
+
+    # ---------------- PRICE 10–20 ----------------
+    if 10 < price <= 20:
+        if mcap == "<100cr" and volume >= 800000 and value_cr >= 4:
+            return "Excellent"
+        if mcap == "100–300cr" and volume >= 500000 and value_cr >= 2:
+            return "Good"
+        if mcap == "300–600cr" and volume >= 200000 and value_cr >= 1:
+            return "Moderate"
+        if mcap == "600–1000cr" and volume >= 100000 and value_cr >= 0.5:
+            return "Poor"
+        return "Avoid"
+
+    # ---------------- PRICE 20–40 ----------------
+    if 20 < price <= 40:
+        if mcap == "<150cr" and volume >= 400000 and value_cr >= 3:
+            return "Excellent"
+        if mcap == "150–300cr" and volume >= 300000 and value_cr >= 2:
+            return "Good"
+        if mcap == "300–600cr" and volume >= 100000 and value_cr >= 1:
+            return "Moderate"
+        if mcap == "600–1000cr" and volume >= 80000 and value_cr >= 0.5:
+            return "Poor"
+        return "Avoid"
+
+    # ---------------- PRICE 40–80 ----------------
+    if 40 < price <= 80:
+        if mcap == "<200cr" and volume >= 250000 and value_cr >= 2:
+            return "Excellent"
+        if mcap == "200–400cr" and volume >= 200000 and value_cr >= 1.5:
+            return "Good"
+        if mcap == "400–800cr" and volume >= 100000 and value_cr >= 1:
+            return "Moderate"
+        if mcap == "800–1000cr" and volume >= 50000 and value_cr >= 0.5:
+            return "Poor"
+        return "Avoid"
+
+    # ---------------- PRICE 80–200 ----------------
+    if 80 < price <= 200:
+        if mcap == "<300cr" and volume >= 150000 and value_cr >= 2:
+            return "Excellent"
+        if mcap == "300–600cr" and volume >= 100000 and value_cr >= 1.5:
+            return "Good"
+        if mcap == "600–1000cr" and volume >= 70000 and value_cr >= 1:
+            return "Moderate"
+        if mcap == "1000–1500cr" and volume >= 40000 and value_cr >= 0.5:
+            return "Poor"
+        return "Avoid"
+
+    # ---------------- PRICE 200–500 ----------------
+    if 200 < price <= 500:
+        if mcap == "<400cr" and volume >= 80000 and value_cr >= 2:
+            return "Excellent"
+        if mcap == "400–800cr" and volume >= 60000 and value_cr >= 1.5:
+            return "Good"
+        if mcap == "800–1200cr" and volume >= 40000 and value_cr >= 1:
+            return "Moderate"
+        if mcap == "1200–1500cr" and volume >= 20000 and value_cr >= 0.5:
+            return "Poor"
+        return "Avoid"
+
+    # ---------------- PRICE 500–1000 ----------------
+    if 500 < price <= 1000:
+        if mcap == "<500cr" and volume >= 40000 and value_cr >= 2:
+            return "Excellent"
+        if mcap == "500–1000cr" and volume >= 30000 and value_cr >= 1.5:
+            return "Good"
+        if mcap == "1000–1500cr" and volume >= 15000 and value_cr >= 1:
+            return "Moderate"
+        if mcap == "1500+" and volume >= 8000 and value_cr >= 0.5:
+            return "Poor"
+        return "Avoid"
+
+    return "Avoid"
+
+# Apply rating
 latest_df['liquidity_rating'] = latest_df.apply(
     lambda r: liquidity_rating(r['close'], r['mcap'], r['volume'], r['value']),
     axis=1
