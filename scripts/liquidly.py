@@ -26,8 +26,14 @@ latest_df['TR'] = ((latest_df['value'] / latest_df['marketCap']) * 100).round(2)
 # ---------------------------------------------------------
 # Liquidity Rating with debug
 # ---------------------------------------------------------
-def liquidity_rating_debug(price, mcap, vol, value):
+def liquidity_rating_debug(row):
+    price = row['close']
+    mcap = row['marketCap']
+    vol = row['volume']
+    value = row['value']
     value_cr = value * 0.1  # million → crore
+    symbol = row['symbol']
+
     bucket = None
     thresholds = []
 
@@ -100,10 +106,7 @@ def liquidity_rating_debug(price, mcap, vol, value):
     return rating
 
 # Apply with debug
-latest_df['liquidity_rating'] = latest_df.apply(
-    lambda r: liquidity_rating_debug(r['close'], r['marketCap'], r['volume'], r['value']),
-    axis=1
-)
+latest_df['liquidity_rating'] = latest_df.apply(liquidity_rating_debug, axis=1)
 
 # ---------------------------------------------------------
 # Final Output (only necessary columns)
