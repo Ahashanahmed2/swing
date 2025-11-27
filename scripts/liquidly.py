@@ -1,4 +1,3 @@
-
 import pandas as pd
 import os
 
@@ -30,38 +29,6 @@ latest_df = df.groupby('symbol').apply(process_symbol).reset_index(drop=True)
 latest_df['TR'] = (latest_df['value'] / latest_df['marketCap']).round(2)
 
 # ---------------------------------------------------------
-# Market Cap Range Label
-# ---------------------------------------------------------
-def mcap_label(mcap):
-    cr = 10000000  # 1 crore = 10,000,000
-    if mcap < 100 * cr:
-        return "<100cr"
-    elif mcap < 150 * cr:
-        return "<150cr"
-    elif mcap < 200 * cr:
-        return "<200cr"
-    elif mcap < 300 * cr:
-        return "100–300cr"
-    elif mcap < 400 * cr:
-        return "200–400cr"
-    elif mcap < 500 * cr:
-        return "<500cr"
-    elif mcap < 600 * cr:
-        return "300–600cr"
-    elif mcap < 800 * cr:
-        return "400–800cr"
-    elif mcap < 1000 * cr:
-        return "600–1000cr"
-    elif mcap < 1200 * cr:
-        return "800–1200cr"
-    elif mcap < 1500 * cr:
-        return "1000–1500cr"
-    else:
-        return "1500+"
-
-latest_df['mcap'] = latest_df['marketCap'].apply(mcap_label)
-
-# ---------------------------------------------------------
 # Liquidity Rating Function (master table অনুযায়ী)
 # ---------------------------------------------------------
 def liquidity_rating(price, mcap, volume, value):
@@ -70,104 +37,104 @@ def liquidity_rating(price, mcap, volume, value):
 
     # ---------------- PRICE 1–5 ----------------
     if 1 <= price <= 5:
-        if mcap == "<100cr" and volume >= 1500000 and value_cr >= 5:
+        if mcap < 100000000 and volume >= 1500000 and value_cr >= 5:
             return "Excellent"
-        if mcap == "100–300cr" and volume >= 800000 and value_cr >= 3:
+        if 100000000 <= mcap < 300000000 and volume >= 800000 and value_cr >= 3:
             return "Good"
-        if mcap == "300–600cr" and volume >= 400000 and value_cr >= 2:
+        if 300000000 <= mcap < 600000000 and volume >= 400000 and value_cr >= 2:
             return "Moderate"
-        if "600" in mcap or "+" in mcap and volume >= 200000 and value_cr >= 1:
+        if mcap >= 600000000 and volume >= 200000 and value_cr >= 1:
             return "Poor"
         if volume < 200000 or value_cr < 1:
             return "Avoid"
 
     # ---------------- PRICE 5–10 ----------------
     if 5 < price <= 10:
-        if mcap == "<100cr" and volume >= 1000000 and value_cr >= 4:
+        if mcap < 100000000 and volume >= 1000000 and value_cr >= 4:
             return "Excellent"
-        if mcap == "100–300cr" and volume >= 600000 and value_cr >= 3:
+        if 100000000 <= mcap < 300000000 and volume >= 600000 and value_cr >= 3:
             return "Good"
-        if mcap == "300–600cr" and volume >= 300000 and value_cr >= 1.5:
+        if 300000000 <= mcap < 600000000 and volume >= 300000 and value_cr >= 1.5:
             return "Moderate"
-        if "600" in mcap or "+" in mcap and volume >= 100000 and value_cr >= 1:
+        if mcap >= 600000000 and volume >= 100000 and value_cr >= 1:
             return "Poor"
         if volume < 100000 or value_cr < 1:
             return "Avoid"
 
     # ---------------- PRICE 10–20 ----------------
     if 10 < price <= 20:
-        if mcap == "<100cr" and volume >= 800000 and value_cr >= 4:
+        if mcap < 100000000 and volume >= 800000 and value_cr >= 4:
             return "Excellent"
-        if mcap == "100–300cr" and volume >= 500000 and value_cr >= 2:
+        if 100000000 <= mcap < 300000000 and volume >= 500000 and value_cr >= 2:
             return "Good"
-        if mcap == "300–600cr" and volume >= 200000 and value_cr >= 1:
+        if 300000000 <= mcap < 600000000 and volume >= 200000 and value_cr >= 1:
             return "Moderate"
-        if "600" in mcap or "+" in mcap and volume >= 100000 and value_cr >= 0.5:
+        if mcap >= 600000000 and volume >= 100000 and value_cr >= 0.5:
             return "Poor"
         if volume < 100000 or value_cr < 0.5:
             return "Avoid"
 
     # ---------------- PRICE 20–40 ----------------
     if 20 < price <= 40:
-        if mcap == "<150cr" and volume >= 400000 and value_cr >= 3:
+        if mcap < 150000000 and volume >= 400000 and value_cr >= 3:
             return "Excellent"
-        if mcap == "150–300cr" and volume >= 300000 and value_cr >= 2:
+        if 150000000 <= mcap < 300000000 and volume >= 300000 and value_cr >= 2:
             return "Good"
-        if mcap == "300–600cr" and volume >= 100000 and value_cr >= 1:
+        if 300000000 <= mcap < 600000000 and volume >= 100000 and value_cr >= 1:
             return "Moderate"
-        if "600" in mcap or "+" in mcap and volume >= 80000 and value_cr >= 0.5:
+        if mcap >= 600000000 and volume >= 80000 and value_cr >= 0.5:
             return "Poor"
         if volume < 80000 or value_cr < 0.5:
             return "Avoid"
 
     # ---------------- PRICE 40–80 ----------------
     if 40 < price <= 80:
-        if mcap == "<200cr" and volume >= 250000 and value_cr >= 2:
+        if mcap < 200000000 and volume >= 250000 and value_cr >= 2:
             return "Excellent"
-        if mcap == "200–400cr" and volume >= 200000 and value_cr >= 1.5:
+        if 200000000 <= mcap < 400000000 and volume >= 200000 and value_cr >= 1.5:
             return "Good"
-        if mcap == "400–800cr" and volume >= 100000 and value_cr >= 1:
+        if 400000000 <= mcap < 800000000 and volume >= 100000 and value_cr >= 1:
             return "Moderate"
-        if "800" in mcap or "+" in mcap and volume >= 50000 and value_cr >= 0.5:
+        if mcap >= 800000000 and volume >= 50000 and value_cr >= 0.5:
             return "Poor"
         if volume < 50000 or value_cr < 0.5:
             return "Avoid"
 
     # ---------------- PRICE 80–200 ----------------
     if 80 < price <= 200:
-        if mcap == "<300cr" and volume >= 150000 and value_cr >= 2:
+        if mcap < 300000000 and volume >= 150000 and value_cr >= 2:
             return "Excellent"
-        if mcap == "300–600cr" and volume >= 100000 and value_cr >= 1.5:
+        if 300000000 <= mcap < 600000000 and volume >= 100000 and value_cr >= 1.5:
             return "Good"
-        if mcap == "600–1000cr" and volume >= 70000 and value_cr >= 1:
+        if 600000000 <= mcap < 1000000000 and volume >= 70000 and value_cr >= 1:
             return "Moderate"
-        if "1000" in mcap or "+" in mcap and volume >= 40000 and value_cr >= 0.5:
+        if mcap >= 1000000000 and volume >= 40000 and value_cr >= 0.5:
             return "Poor"
         if volume < 40000 or value_cr < 0.5:
             return "Avoid"
 
     # ---------------- PRICE 200–500 ----------------
     if 200 < price <= 500:
-        if mcap == "<400cr" and volume >= 80000 and value_cr >= 2:
+        if mcap < 400000000 and volume >= 80000 and value_cr >= 2:
             return "Excellent"
-        if mcap == "400–800cr" and volume >= 60000 and value_cr >= 1.5:
+        if 400000000 <= mcap < 800000000 and volume >= 60000 and value_cr >= 1.5:
             return "Good"
-        if mcap == "800–1200cr" and volume >= 40000 and value_cr >= 1:
+        if 800000000 <= mcap < 1200000000 and volume >= 40000 and value_cr >= 1:
             return "Moderate"
-        if "1200" in mcap or "+" in mcap and volume >= 20000 and value_cr >= 0.5:
+        if mcap >= 1200000000 and volume >= 20000 and value_cr >= 0.5:
             return "Poor"
         if volume < 20000 or value_cr < 0.5:
             return "Avoid"
 
     # ---------------- PRICE 500–1000 ----------------
     if 500 < price <= 1000:
-        if mcap == "<500cr" and volume >= 40000 and value_cr >= 2:
+        if mcap < 500000000 and volume >= 40000 and value_cr >= 2:
             return "Excellent"
-        if mcap == "500–1000cr" and volume >= 30000 and value_cr >= 1.5:
+        if 500000000 <= mcap < 1000000000 and volume >= 30000 and value_cr >= 1.5:
             return "Good"
-        if mcap == "1000–1500cr" and volume >= 15000 and value_cr >= 1:
+        if 1000000000 <= mcap < 1500000000 and volume >= 15000 and value_cr >= 1:
             return "Moderate"
-        if "1500" in mcap or "+" in mcap and volume >= 8000 and value_cr >= 0.5:
+        if mcap >= 1500000000 and volume >= 8000 and value_cr >= 0.5:
             return "Poor"
         if volume < 8000 or value_cr < 0.5:
             return "Avoid"
@@ -176,7 +143,7 @@ def liquidity_rating(price, mcap, volume, value):
 
 # Apply rating
 latest_df['liquidity_rating'] = latest_df.apply(
-    lambda r: liquidity_rating(r['close'], r['mcap'], r['volume'], r['value']),
+    lambda r: liquidity_rating(r['close'], r['marketCap'], r['volume'], r['value']),
     axis=1
 )
 
@@ -187,4 +154,18 @@ latest_df['No'] = range(1, len(latest_df) + 1)
 latest_df['price'] = latest_df['close']
 latest_df['value_traded'] = latest_df['value']
 
-final_df = latest_df[['No', 'date', 'symbol', 'price', 'Avolume', '
+# এখানে mcap = raw marketCap
+final_df = latest_df[['No', 'date', 'symbol', 'price', 'Avolume', 'TR',
+                      'marketCap', 'volume', 'value_traded', 'liquidity_rating']]
+
+# ---------------------------------------------------------
+# Save to both locations
+# ---------------------------------------------------------
+os.makedirs("./csv", exist_ok=True)
+os.makedirs("./output/ai_signal", exist_ok=True)
+
+final_df.to_csv("./csv/liquidity.csv", index=False)
+final_df.to_csv("./output/ai_signal/liquidity.csv", index=False)
+
+print("✅ liquidity.csv files created successfully in both locations!")
+print(final_df.head())
