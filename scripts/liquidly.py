@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 import os
 
 # ---------------------------------------------------------
@@ -10,151 +11,133 @@ df = pd.read_csv("./csv/mongodb.csv")
 df['date'] = pd.to_datetime(df['date'])
 
 # Sort by symbol + date
-df = df.sort_values(by=['symbol', 'date'])
+df = df.sort_values(['symbol', 'date'])
 
 # ---------------------------------------------------------
-# Function: Get last row + 5-day avg volume
+# Get last row + last 5-day avg volume (FAST)
 # ---------------------------------------------------------
-def process_symbol(group):
-    last_row = group.iloc[-1].copy()
-    window = group.tail(5)['volume']
-    last_row['Avolume'] = window.mean()
-    return last_row
+# last row per symbol
+last_rows = df.groupby('symbol').tail(1)
 
-latest_df = df.groupby('symbol').apply(process_symbol).reset_index(drop=True)
+# fast rolling avg (5 days)
+df['Avolume'] = df.groupby('symbol')['volume'].transform(lambda x: x.rolling(5).mean())
+
+# take Avolume at last row
+Avol = df.groupby('symbol').tail(1)['Avolume']
+
+latest_df = last_rows.copy()
+latest_df['Avolume'] = Avol.values
 
 # ---------------------------------------------------------
-# Turnover Ratio (TR) = value_traded / marketCap (rounded 2 decimals)
+# Turnover Ratio
 # ---------------------------------------------------------
 latest_df['TR'] = (latest_df['value'] / latest_df['marketCap']).round(2)
 
 # ---------------------------------------------------------
-# Market Cap কে কোটি হিসাবে রূপান্তর করা
+# Convert MarketCap (million → crore)
+# 1 million = 0.1 crore
 # ---------------------------------------------------------
-def mcap_in_crore(mcap_million):
-    # CSV থেকে আসা marketCap মিলিয়ন এ আছে → কোটি তে রূপান্তর
-    return round(mcap_million / 10, 2)
-
-latest_df['mcap_crore'] = latest_df['marketCap'].apply(mcap_in_crore)
+latest_df['mcap_crore'] = (latest_df['marketCap'] * 0.1).round(2)
 
 # ---------------------------------------------------------
-# Liquidity Rating Function (সব Price Range বসানো হয়েছে)
+# Granular Liquidity Rating (Optimized & Vectorized)
+# New finer price bands: 40-60, 60-80, 80-120, 120-160, 160-200
 # ---------------------------------------------------------
-def liquidity_rating(price, mcap_crore, volume, value):
-    value_cr = value / 1e7  # কোটি টাকায় কনভার্ট
+def liquidity_rating_granular(price, mcap, vol, val):
+    # convert value (BDT) to কোটি (1 কোটি = 10,000,000)
+    vcr = val / 1e7 if val is not None and not np.isnan(val) else 0.0
 
-    # ---------------- PRICE 1–5 ----------------
+    # basic guards
+    if price is None or np.isnan(price) or mcap is None or np.isnan(mcap) or np.isnan(vol) or vol < 0:
+        return "Avoid"
+    try:
+        price = float(price)
+        mcap = float(mcap)
+        vol = float(vol)
+    except Exception:
+        return "Avoid"
+
+    # small price bands first (keep existing logic for low prices)
     if 1 <= price <= 5:
-        if mcap_crore < 100 and volume >= 1500000 and value_cr >= 5:
-            return "Excellent"
-        if 100 <= mcap_crore < 300 and volume >= 800000 and value_cr >= 3:
-            return "Good"
-        if 300 <= mcap_crore < 600 and volume >= 400000 and value_cr >= 2:
-            return "Moderate"
-        if mcap_crore >= 600 and volume >= 200000 and value_cr >= 1:
-            return "Poor"
-        if volume < 200000 or value_cr < 1:
-            return "Avoid"
+        if mcap < 100 and vol >= 1_500_000 and vcr >= 5: return "Excellent"
+        if 100 <= mcap < 300 and vol >= 800_000 and vcr >= 3: return "Good"
+        if 300 <= mcap < 600 and vol >= 400_000 and vcr >= 2: return "Moderate"
+        if mcap >= 600 and vol >= 200_000 and vcr >= 1: return "Poor"
+        return "Avoid"
 
-    # ---------------- PRICE 5–10 ----------------
     if 5 < price <= 10:
-        if mcap_crore < 100 and volume >= 1000000 and value_cr >= 4:
-            return "Excellent"
-        if 100 <= mcap_crore < 300 and volume >= 600000 and value_cr >= 3:
-            return "Good"
-        if 300 <= mcap_crore < 600 and volume >= 300000 and value_cr >= 1.5:
-            return "Moderate"
-        if mcap_crore >= 600 and volume >= 100000 and value_cr >= 1:
-            return "Poor"
-        if volume < 100000 or value_cr < 1:
-            return "Avoid"
+        if mcap < 100 and vol >= 1_000_000 and vcr >= 4: return "Excellent"
+        if 100 <= mcap < 300 and vol >= 600_000 and vcr >= 3: return "Good"
+        if 300 <= mcap < 600 and vol >= 300_000 and vcr >= 1.5: return "Moderate"
+        if mcap >= 600 and vol >= 100_000 and vcr >= 1: return "Poor"
+        return "Avoid"
 
-    # ---------------- PRICE 10–20 ----------------
     if 10 < price <= 20:
-        if mcap_crore < 100 and volume >= 800000 and value_cr >= 4:
-            return "Excellent"
-        if 100 <= mcap_crore < 300 and volume >= 500000 and value_cr >= 2:
-            return "Good"
-        if 300 <= mcap_crore < 600 and volume >= 200000 and value_cr >= 1:
-            return "Moderate"
-        if mcap_crore >= 600 and volume >= 100000 and value_cr >= 0.5:
-            return "Poor"
-        if volume < 100000 or value_cr < 0.5:
-            return "Avoid"
+        if mcap < 100 and vol >= 800_000 and vcr >= 4: return "Excellent"
+        if 100 <= mcap < 300 and vol >= 500_000 and vcr >= 2: return "Good"
+        if 300 <= mcap < 600 and vol >= 200_000 and vcr >= 1: return "Moderate"
+        if mcap >= 600 and vol >= 100_000 and vcr >= 0.5: return "Poor"
+        return "Avoid"
 
-    # ---------------- PRICE 20–40 ----------------
     if 20 < price <= 40:
-        if mcap_crore < 150 and volume >= 400000 and value_cr >= 3:
-            return "Excellent"
-        if 150 <= mcap_crore < 300 and volume >= 300000 and value_cr >= 2:
-            return "Good"
-        if 300 <= mcap_crore < 600 and volume >= 100000 and value_cr >= 1:
-            return "Moderate"
-        if mcap_crore >= 600 and volume >= 80000 and value_cr >= 0.5:
-            return "Poor"
-        if volume < 80000 or value_cr < 0.5:
-            return "Avoid"
+        if mcap < 150 and vol >= 400_000 and vcr >= 3: return "Excellent"
+        if 150 <= mcap < 300 and vol >= 300_000 and vcr >= 2: return "Good"
+        if 300 <= mcap < 600 and vol >= 100_000 and vcr >= 1: return "Moderate"
+        if mcap >= 600 and vol >= 80_000 and vcr >= 0.5: return "Poor"
+        return "Avoid"
 
-    # ---------------- PRICE 40–80 ----------------
-    if 40 < price <= 80:
-        if mcap_crore < 200 and volume >= 250000 and value_cr >= 2:
-            return "Excellent"
-        if 200 <= mcap_crore < 400 and volume >= 200000 and value_cr >= 1.5:
-            return "Good"
-        if 400 <= mcap_crore < 800 and volume >= 100000 and value_cr >= 1:
-            return "Moderate"
-        if mcap_crore >= 800 and volume >= 50000 and value_cr >= 0.5:
-            return "Poor"
-        if volume < 50000 or value_cr < 0.5:
-            return "Avoid"
+    # ---------- New finer bands ----------
+    # 40-60
+    if 40 < price <= 60:
+        if mcap < 220 and vol >= 225_000 and vcr >= 1.8: return "Excellent"
+        if 220 <= mcap < 420 and vol >= 180_000 and vcr >= 1.2: return "Good"
+        if 420 <= mcap < 800 and vol >= 90_000 and vcr >= 0.9: return "Moderate"
+        if mcap >= 800 and vol >= 45_000 and vcr >= 0.5: return "Poor"
+        return "Avoid"
 
-    # ---------------- PRICE 80–200 ----------------
-    if 80 < price <= 200:
-        if mcap_crore < 300 and volume >= 150000 and value_cr >= 2:
-            return "Excellent"
-        if 300 <= mcap_crore < 600 and volume >= 100000 and value_cr >= 1.5:
-            return "Good"
-        if 600 <= mcap_crore < 1000 and volume >= 70000 and value_cr >= 1:
-            return "Moderate"
-        if mcap_crore >= 1000 and volume >= 40000 and value_cr >= 0.5:
-            return "Poor"
-        if volume < 40000 or value_cr < 0.5:
-            return "Avoid"
+    # 60-80
+    if 60 < price <= 80:
+        if mcap < 220 and vol >= 200_000 and vcr >= 1.6: return "Excellent"
+        if 220 <= mcap < 420 and vol >= 160_000 and vcr >= 1.0: return "Good"
+        if 420 <= mcap < 800 and vol >= 80_000 and vcr >= 0.8: return "Moderate"
+        if mcap >= 800 and vol >= 40_000 and vcr >= 0.4: return "Poor"
+        return "Avoid"
 
-    # ---------------- PRICE 200–500 ----------------
-    if 200 < price <= 500:
-        if mcap_crore < 400 and volume >= 80000 and value_cr >= 2:
-            return "Excellent"
-        if 400 <= mcap_crore < 800 and volume >= 60000 and value_cr >= 1.5:
-            return "Good"
-        if 800 <= mcap_crore < 1200 and volume >= 40000 and value_cr >= 1:
-            return "Moderate"
-        if mcap_crore >= 1200 and volume >= 20000 and value_cr >= 0.5:
-            return "Poor"
-        if volume < 20000 or value_cr < 0.5:
-            return "Avoid"
+    # 80-120
+    if 80 < price <= 120:
+        if mcap < 280 and vol >= 170_000 and vcr >= 1.6: return "Excellent"
+        if 280 <= mcap < 600 and vol >= 120_000 and vcr >= 1.1: return "Good"
+        if 600 <= mcap < 1000 and vol >= 70_000 and vcr >= 0.9: return "Moderate"
+        if mcap >= 1000 and vol >= 35_000 and vcr >= 0.45: return "Poor"
+        return "Avoid"
 
-    # ---------------- PRICE 500–1000 ----------------
-    if 500 < price <= 1000:
-        if mcap_crore < 500 and volume >= 40000 and value_cr >= 2:
-            return "Excellent"
-        if 500 <= mcap_crore < 1000 and volume >= 30000 and value_cr >= 1.5:
-            return "Good"
-        if 1000 <= mcap_crore < 1500 and volume >= 15000 and value_cr >= 1:
-            return "Moderate"
-        if mcap_crore >= 1500 and volume >= 8000 and value_cr >= 0.5:
-            return "Poor"
-        if volume < 8000 or value_cr < 0.5:
-            return "Avoid"
+    # 120-160
+    if 120 < price <= 160:
+        if mcap < 350 and vol >= 140_000 and vcr >= 1.4: return "Excellent"
+        if 350 <= mcap < 800 and vol >= 90_000 and vcr >= 1.0: return "Good"
+        if 800 <= mcap < 1300 and vol >= 60_000 and vcr >= 0.8: return "Moderate"
+        if mcap >= 1300 and vol >= 30_000 and vcr >= 0.4: return "Poor"
+        return "Avoid"
 
+    # 160-200
+    if 160 < price <= 200:
+        if mcap < 420 and vol >= 120_000 and vcr >= 1.2: return "Excellent"
+        if 420 <= mcap < 1000 and vol >= 80_000 and vcr >= 0.9: return "Good"
+        if 1000 <= mcap < 1500 and vol >= 50_000 and vcr >= 0.7: return "Moderate"
+        if mcap >= 1500 and vol >= 25_000 and vcr >= 0.35: return "Poor"
+        return "Avoid"
+
+    # rest larger bands remain Avoid (or you can expand further)
     return "Avoid"
 
-# ---------------------------------------------------------
-# Apply rating
-# ---------------------------------------------------------
-latest_df['liquidity_rating'] = latest_df.apply(
-    lambda r: liquidity_rating(r['close'], r['mcap_crore'], r['volume'], r['value']),
-    axis=1
+# vectorize for speed
+vec_rating = np.vectorize(liquidity_rating_granular, otypes=[object])
+
+latest_df['liquidity_rating'] = vec_rating(
+    latest_df['close'].fillna(0).values,
+    latest_df['mcap_crore'].fillna(0).values,
+    latest_df['volume'].fillna(0).values,
+    latest_df['value'].fillna(0).values
 )
 
 # ---------------------------------------------------------
@@ -164,11 +147,12 @@ latest_df['No'] = range(1, len(latest_df) + 1)
 latest_df['price'] = latest_df['close']
 latest_df['value_traded'] = latest_df['value']
 
-final_df = latest_df[['No', 'date', 'symbol', 'price', 'Avolume', 'TR',
-                      'mcap_crore', 'volume', 'value_traded', 'liquidity_rating']]
+final_df = latest_df[['No', 'date', 'symbol', 'price', 'Avolume',
+                      'TR', 'mcap_crore', 'volume', 'value_traded',
+                      'liquidity_rating']]
 
 # ---------------------------------------------------------
-# Save to both locations
+# Save
 # ---------------------------------------------------------
 os.makedirs("./csv", exist_ok=True)
 os.makedirs("./output/ai_signal", exist_ok=True)
@@ -176,5 +160,5 @@ os.makedirs("./output/ai_signal", exist_ok=True)
 final_df.to_csv("./csv/liquidity.csv", index=False)
 final_df.to_csv("./output/ai_signal/liquidity.csv", index=False)
 
-print("✅ liquidity.csv files created successfully in both locations!")
+print("✅ Granular liquidity.csv generated!")
 print(final_df.head())
