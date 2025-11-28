@@ -2,7 +2,7 @@ name: Keep Alive Commit
 
 on:
   schedule:
-    - cron: "0 0 1 * *"   # প্রতি মাসের ১ তারিখে 00:00 UTC তে চলবে
+    - cron: "3 0 0 * *"   # প্রতি মাসের ১ তারিখে 00:00 UTC তে চলবে
   workflow_dispatch:
 
 permissions:
