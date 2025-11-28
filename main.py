@@ -12,6 +12,7 @@ scripts = [
     #"scripts/mongodb.py",
     "scripts/swing_High_Low.py",
     "scripts/liquidly.py",
+    "scripts/excellent.py",
     "scripts/orderblock.py",
     "scripts/rsi_diver.py",
     "scripts/rsi_diver_retest.py",
