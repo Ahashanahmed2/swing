@@ -2,7 +2,7 @@ name: Keep Alive Commit
 
 on:
   schedule:
-    - cron: "* * 2 * *"
+    - cron: "0 0 2 * *"
   workflow_dispatch:
 
 permissions:
