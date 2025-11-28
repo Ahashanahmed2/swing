@@ -7,7 +7,7 @@ import os
 source_path = './csv/liquidity.csv'
 output_path = './output/ai_signal/excellen.csv'
 
-# Ensure output directory exists
+# Ensure the output directory exists
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
 # ---------------------------------------------------------
@@ -16,9 +16,10 @@ os.makedirs(os.path.dirname(output_path), exist_ok=True)
 df = pd.read_csv(source_path)
 
 # ---------------------------------------------------------
-# Filter rows where LIQUIDITY_RATING == 'Excellen'
+# Filter rows where liquidity_rating == 'Excellen'
+# (case-insensitive + safe)
 # ---------------------------------------------------------
-filtered = df[df['LIQUIDITY_RATING'] == 'Excellen']
+filtered = df[df['liquidity_rating'].str.lower() == 'excellen'.lower()]
 
 # ---------------------------------------------------------
 # Save to output
