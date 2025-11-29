@@ -10,13 +10,13 @@ df['date'] = pd.to_datetime(df['date'])
 df = df.sort_values(['symbol', 'date'])
 
 # ---------------------------------------------------------
+# ---------------------------------------------------------
 # Get last row + 5-day avg volume
 # ---------------------------------------------------------
-last_rows = df.groupby('symbol').tail(1).copy()
-# 5 দিনের গড় ভলিউম গণনা
-df['Avolume'] = df.groupby('symbol')['volume'].transform(lambda x: x.rolling(5).mean())
-Avol = df.groupby('symbol').tail(1)['Avolume']
-last_rows['Avolume'] = Avol.values
+# ✅ সরাসরি একসাথে নিন — ইনডেক্স সেফ
+df['Avolume'] = df.groupby('symbol')['volume'].transform(lambda x: x.rolling(5, min_periods=1).mean())
+last_rows = df.groupby('symbol').tail(1).copy().reset_index(drop=True)  # ✅ reset_index দিন
+
 latest_df = last_rows
 
 # ---------------------------------------------------------
