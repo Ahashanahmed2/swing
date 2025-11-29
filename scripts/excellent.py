@@ -5,7 +5,7 @@ import os
 # Paths
 # ---------------------------------------------------------
 source_path = './csv/liquidity.csv'
-output_path = './output/ai_signal/excellen.csv'
+output_path = './output/ai_signal/excellent.csv'
 
 # Ensure the output directory exists
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -16,10 +16,10 @@ os.makedirs(os.path.dirname(output_path), exist_ok=True)
 df = pd.read_csv(source_path)
 
 # ---------------------------------------------------------
-# Filter rows where liquidity_rating == 'Excellen'
+# Filter rows where liquidity_rating == 'Excellent'
 # (case-insensitive + safe)
 # ---------------------------------------------------------
-filtered = df[df['liquidity_rating'].str.lower() == 'excellen'.lower()]
+filtered = df[df['liquidity_rating'].str.lower() == 'excellent']
 
 # ---------------------------------------------------------
 # Save to output
