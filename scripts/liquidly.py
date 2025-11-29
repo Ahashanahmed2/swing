@@ -137,7 +137,7 @@ latestdf['liquidityrating'] = latestdf.apply(liquidityrating_adjusted, axis=1)
 latestdf['No'] = range(1, len(latestdf) + 1)
 latestdf['price'] = latestdf['close']
 
-finaldf = latestdf[['No','date','symbol','price','Avolume','TR','liquidityrating']]
+finaldf = latestdf[['No','date','symbol','price','Avolume','TR','liquidity_rating']]
 
 # ---------------------------------------------------------
 # Save CSV
