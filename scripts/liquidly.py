@@ -129,7 +129,7 @@ def liquidityrating_adjusted(row):
 # ---------------------------------------------------------
 # Apply function
 # ---------------------------------------------------------
-latestdf['liquidityrating'] = latestdf.apply(liquidityrating_adjusted, axis=1)
+latestdf['liquidity_rating'] = latestdf.apply(liquidityrating_adjusted, axis=1)
 
 # ---------------------------------------------------------
 # Final Output
