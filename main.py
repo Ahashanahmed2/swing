@@ -19,6 +19,7 @@ scripts = [
     "scripts/gape.py",
     "scripts/gape_buy.py",
     "scripts/excellent.py",
+    "scripts/excellent_buy.csv",
     'scripts/rsi_crose_above_30.py',
     "scripts/rsi_diversence.py",
     #"scripts/train_model_ppo.py",
