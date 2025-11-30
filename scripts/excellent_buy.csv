@@ -21,7 +21,6 @@ results = []
 for idx, row in excellent.iterrows():
     sym = row['symbol']
     date = row['date']
-    close_A = row['close']
 
     # Filter mongodb for this symbol
     df = mongodb[mongodb['symbol'] == sym].reset_index(drop=True)
@@ -41,21 +40,13 @@ for idx, row in excellent.iterrows():
     B = df.loc[A_index - 1]
     C = df.loc[A_index - 2]
 
-    # Conditions:
+    # Conditions
     cond1 = A['close'] > B['high']
     cond2 = B['low'] <= C['low']
 
+    # If both conditions true → take excellent.csv row
     if cond1 and cond2:
-        results.append({
-            "symbol": sym,
-            "date_A": A['date'],
-            "close_A": A['close'],
-            "B_date": B['date'],
-            "B_high": B['high'],
-            "B_low": B['low'],
-            "C_date": C['date'],
-            "C_low": C['low'],
-        })
+        results.append(row)   # <-- original excellent row stored
 
 # ---------------------------------------------------------
 # Save output
