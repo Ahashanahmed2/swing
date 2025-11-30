@@ -6,6 +6,7 @@ import os
 # ---------------------------------------------------------
 source_path = './csv/liquidity.csv'
 output_path = './output/ai_signal/excellent.csv'
+csv_path = './csv/excellent.csv'
 
 # Ensure the output directory exists
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -25,5 +26,6 @@ filtered = df[df['liquidity_rating'].str.lower() == 'excellent']
 # Save to output
 # ---------------------------------------------------------
 filtered.to_csv(output_path, index=False)
+filtered.to_csv(csv_path, index=False)
 
 print(f"Saved {len(filtered)} rows to {output_path}")
