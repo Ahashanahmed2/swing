@@ -43,7 +43,7 @@ for idx, row in excellent.iterrows():
 
     # Conditions:
     cond1 = A['close'] > B['high']
-    cond2 = B['low'] >= C['low']
+    cond2 = B['low'] <= C['low']
 
     if cond1 and cond2:
         results.append({
