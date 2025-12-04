@@ -90,6 +90,7 @@ else:
         base_low = row['low']
         base_high = row['high']
         base_rsi = row['rsi']
+        sl = row['sl']
 
         log(f"Processing: {symbol} | Base Date: {base_date.strftime('%Y-%m-%d')} | RSI={base_rsi:.2f}")
 
@@ -120,7 +121,8 @@ else:
             # --------------------------
             if m_rsi > base_rsi and m_close < base_low:
                 log(f"  ❌ DELETE {symbol}: RSI↑({m_rsi:.2f}) & close({m_close}) < base_low({base_low})")
-                rsi30_final = rsi30_final[rsi30_final['symbol'] != symbol]
+                # ✅ Safe delete: remove ONLY this specific row (by sl)
+                rsi30_final = rsi30_final[rsi30_final['sl'] != sl]
                 break
 
             # --------------------------
@@ -142,7 +144,8 @@ else:
             # --------------------------
             if m_rsi > 30:
                 log(f"  ❌ EXIT {symbol}: RSI={m_rsi:.2f} > 30")
-                rsi30_final = rsi30_final[rsi30_final['symbol'] != symbol]
+                # ✅ Safe delete: remove ONLY this specific row (by sl)
+                rsi30_final = rsi30_final[rsi30_final['sl'] != sl]
                 break
 
 # ---------------------------------------------------------
@@ -160,8 +163,15 @@ else:
 # Save updated rsi_30.csv (surviving symbols only)
 # ---------------------------------------------------------
 rsi30_final = rsi30_final.reset_index(drop=True)
-if len(rsi30_final) > 0:
-    rsi30_final.insert(0, "sl", rsi30_final.index + 1)
+
+# Ensure correct column structure even when empty
+COLUMNS = ['sl', 'symbol', 'date', 'low', 'high', 'rsi']
+if len(rsi30_final) == 0:
+    rsi30_final = pd.DataFrame(columns=COLUMNS)
+else:
+    # Rebuild 'sl' to be sequential and ensure column order
+    rsi30_final = rsi30_final.reindex(columns=COLUMNS)
+    rsi30_final['sl'] = range(1, len(rsi30_final) + 1)
 
 rsi30_final.to_csv(RSI30_PATH, index=False)
 log(f"💾 rsi_30.csv updated — remaining symbols: {len(rsi30_final)}")
