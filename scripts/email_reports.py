@@ -58,7 +58,7 @@ def send_email() -> None:
             filename=pdf.name,
         )
 
-    with smtplib.SMTP_SSL("smtp.mail.yahoo.com", 465, timeout=60) as smtp:
+    with smtplib.SMTP_SSL("smtp.mail.yahoo.com", 587, timeout=60) as smtp:
         smtp.login(EMAIL_USER, EMAIL_PASS)
         smtp.send_message(msg)
 
