@@ -7,43 +7,92 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 
 # 📂 Paths
 main_df_path = './csv/mongodb.csv'
-backtest_dir = './csv/backtest_result'  # ✅ Updated path
+backtest_dir = './csv/backtest_result'
 model_path = './csv/dqn_retrained'
 
-# 📊 Load main_df
+# ---------------------------------------------------------
+# SAFE: Ensure folders exist
+# ---------------------------------------------------------
+os.makedirs(backtest_dir, exist_ok=True)
+
+# ---------------------------------------------------------
+# Load MongoDB main_df safely
+# ---------------------------------------------------------
+if not os.path.isfile(main_df_path):
+    print(f"❌ MongoDB CSV missing → {main_df_path}")
+    exit()
+
 main_df = pd.read_csv(main_df_path)
-main_df['date'] = pd.to_datetime(main_df['date']).dt.date
+main_df['date'] = pd.to_datetime(main_df['date'], errors='coerce').dt.date
 
-# 🔍 Step 1: Aggregate backtest results
+# ---------------------------------------------------------
+# Load backtest files safely
+# ---------------------------------------------------------
+if not os.path.isdir(backtest_dir):
+    print(f"⚠️ Backtest folder missing → {backtest_dir}")
+    exit()
+
 backtest_files = [f for f in os.listdir(backtest_dir) if f.endswith('.csv')]
-bt_df = pd.concat([pd.read_csv(os.path.join(backtest_dir, f)) for f in backtest_files], ignore_index=True)
 
-# ✅ Sort by duration_days (fastest outcomes first)
+if not backtest_files:
+    print("⚠️ No backtest files found → skipping retrain.")
+    exit()
+
+# Concatenate all backtests
+bt_df_list = []
+for f in backtest_files:
+    try:
+        df = pd.read_csv(os.path.join(backtest_dir, f))
+        bt_df_list.append(df)
+    except Exception as e:
+        print(f"⚠️ Failed to load backtest file {f}: {e}")
+
+if not bt_df_list:
+    print("⚠️ No valid backtest files → retrain aborted.")
+    exit()
+
+bt_df = pd.concat(bt_df_list, ignore_index=True)
+
+# ---------------------------------------------------------
+# Sort by fastest duration
+# ---------------------------------------------------------
 bt_df = bt_df.sort_values(by='duration_days', na_position='last')
 
-# ✅ Step 2: Filter strong signals
+# ---------------------------------------------------------
+# TP / SL Symbol Stats
+# ---------------------------------------------------------
 tp_symbols = bt_df[bt_df['outcome'] == 'TP']['symbol'].value_counts()
 sl_symbols = bt_df[bt_df['outcome'] == 'SL']['symbol'].value_counts()
 
-# ❌ Blacklist symbols with 3+ SL hits
+# ❌ Blacklist (bad symbols)
 blacklist = sl_symbols[sl_symbols >= 3].index.tolist()
 
-# ✅ Whitelist symbols with 2+ TP hits
+# ✅ Whitelist (high performing)
 whitelist = tp_symbols[tp_symbols >= 2].index.tolist()
 
-# 🧹 Filter training data
-filtered_df = main_df[main_df['symbol'].isin(whitelist) & ~main_df['symbol'].isin(blacklist)]
+# ---------------------------------------------------------
+# Filter main_df using whitelist/blacklist
+# ---------------------------------------------------------
+filtered_df = main_df[
+    main_df['symbol'].isin(whitelist) &
+    ~main_df['symbol'].isin(blacklist)
+]
 
-# ✅ Optional: Keep only fast TP symbols (e.g., TP within 3 days)
+# Keep only fast TP symbols (TP ≤ 3 days)
 fast_tp = bt_df[(bt_df['outcome'] == 'TP') & (bt_df['duration_days'] <= 3)]
 fast_tp_symbols = fast_tp['symbol'].unique().tolist()
 filtered_df = filtered_df[filtered_df['symbol'].isin(fast_tp_symbols)]
 
+# ---------------------------------------------------------
+# Empty dataset check
+# ---------------------------------------------------------
 if filtered_df.empty:
-    print("⚠️ Filtered training data is empty. Retrain skipped.")
+    print("⚠️ Filtered training data is empty → Retrain skipped.")
     exit()
 
-# ✅ Prepare environment
+# ---------------------------------------------------------
+# Prepare RL Environment
+# ---------------------------------------------------------
 env = TradeEnv(
     maindf=filtered_df,
     gape_path="./csv/gape.csv",
@@ -54,7 +103,9 @@ env = TradeEnv(
 )
 env = DummyVecEnv([lambda: env])
 
-# ✅ Load or create model
+# ---------------------------------------------------------
+# Load or create model
+# ---------------------------------------------------------
 if os.path.exists(model_path + ".zip"):
     model = DQN.load(model_path, env=env)
     print("✅ Loaded existing model for fine-tuning")
@@ -77,8 +128,11 @@ else:
     )
     print("🆕 Created new model")
 
-# 🧠 Train
+# ---------------------------------------------------------
+# 🚀 Train the Model
+# ---------------------------------------------------------
 print("🚀 Retraining model with auto-tuned data...")
 model.learn(total_timesteps=200_000)
+
 model.save(model_path)
 print(f"✅ Model saved at {model_path}")
