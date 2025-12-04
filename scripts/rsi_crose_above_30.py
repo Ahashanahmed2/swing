@@ -20,21 +20,54 @@ def log(msg):
 # Load mongodb.csv (must exist)
 # ---------------------------------------------------------
 log("Loading mongodb.csv...")
+if not os.path.exists(MONGO_PATH):
+    raise FileNotFoundError(f"❌ Required file not found: {MONGO_PATH}")
+
 mongodb = pd.read_csv(MONGO_PATH)
+
+# Ensure required columns exist
+required_cols = {'symbol', 'date', 'low', 'high', 'close', 'rsi'}
+if not required_cols.issubset(mongodb.columns):
+    missing = required_cols - set(mongodb.columns)
+    raise ValueError(f"❌ Missing required columns in mongodb.csv: {missing}")
+
 mongodb['date'] = pd.to_datetime(mongodb['date'])
 mongodb = mongodb.sort_values(['symbol', 'date']).reset_index(drop=True)
 
 # ---------------------------------------------------------
-# Load rsi_30.csv (SAFE: no error if missing)
+# 🔁 AUTO-GENERATE rsi_30.csv: Keep ONLY symbols with latest RSI < 30
 # ---------------------------------------------------------
-if os.path.exists(RSI30_PATH):
-    log("Loading rsi_30.csv...")
-    rsi30 = pd.read_csv(RSI30_PATH)
-    rsi30['date'] = pd.to_datetime(rsi30['date'])
-else:
-    log("⚠ rsi_30.csv not found → starting with empty list.")
-    rsi30 = pd.DataFrame(columns=['sl', 'symbol', 'date', 'low', 'high', 'rsi'])
+log("🔍 Finding latest record per symbol with RSI < 30...")
 
+# Get latest date for each symbol
+latest_mongo = mongodb.sort_values('date').groupby('symbol').tail(1).reset_index(drop=True)
+
+# Filter: RSI < 30 and RSI is not NaN
+rsi_under_30 = latest_mongo[
+    (latest_mongo['rsi'] < 30) & 
+    (latest_mongo['rsi'].notna())
+].copy()
+
+log(f"✅ Found {len(rsi_under_30)} symbols with latest RSI < 30")
+
+# Prepare DataFrame for rsi_30.csv
+if len(rsi_under_30) > 0:
+    rsi30_auto = rsi_under_30[['symbol', 'date', 'low', 'high', 'rsi']].copy()
+    rsi30_auto = rsi30_auto.sort_values('symbol').reset_index(drop=True)
+    rsi30_auto.insert(0, 'sl', range(1, len(rsi30_auto) + 1))
+else:
+    rsi30_auto = pd.DataFrame(columns=['sl', 'symbol', 'date', 'low', 'high', 'rsi'])
+
+# Save as rsi_30.csv (overwrites previous)
+rsi30_auto.to_csv(RSI30_PATH, index=False)
+log(f"💾 Updated rsi_30.csv with {len(rsi30_auto)} active symbols")
+
+# ---------------------------------------------------------
+# Load the (now guaranteed to exist) rsi_30.csv
+# ---------------------------------------------------------
+log("Loading rsi_30.csv (auto-generated)...")
+rsi30 = pd.read_csv(RSI30_PATH)
+rsi30['date'] = pd.to_datetime(rsi30['date'])
 log(f"mongodb rows: {len(mongodb)}")
 log(f"rsi_30 rows loaded: {len(rsi30)}")
 
@@ -46,33 +79,35 @@ rsi30_final = rsi30.copy()
 
 # If rsi_30 is empty → nothing to process
 if len(rsi30) == 0:
-    log("ℹ No symbols in rsi_30 → skipping processing.")
+    log("ℹ No symbols with RSI < 30 → skipping processing.")
 else:
     # ---------------------------------------------------------
-    # Process each symbol
+    # Process each symbol from rsi_30.csv
     # ---------------------------------------------------------
     for idx, row in rsi30.iterrows():
-
         symbol = row['symbol']
         base_date = row['date']
         base_low = row['low']
         base_high = row['high']
         base_rsi = row['rsi']
 
-        log(f"Processing: {symbol} (RSI={base_rsi})")
+        log(f"Processing: {symbol} | Base Date: {base_date.strftime('%Y-%m-%d')} | RSI={base_rsi:.2f}")
 
-        md = mongodb[mongodb['symbol'] == symbol]
+        md = mongodb[mongodb['symbol'] == symbol].copy()
 
         if md.empty:
             log(f"  ⚠ No mongodb data for {symbol}")
             continue
 
+        # Ensure base_date exists in md
         if base_date not in md['date'].values:
-            log(f"  ⚠ Date mismatch for {symbol}")
+            log(f"  ⚠ Base date {base_date.date()} not found in mongodb for {symbol} → skipping")
             continue
 
+        # Get index of base_date
         start_idx = md[md['date'] == base_date].index[0]
 
+        # Scan future dates only
         for i in range(start_idx + 1, len(md)):
             r = md.loc[i]
             m_rsi = r['rsi']
@@ -80,53 +115,54 @@ else:
             m_date = r['date']
 
             # --------------------------
-            # RULE–A: Delete Condition
+            # RULE–A: DELETE Condition
+            # (RSI increased AND price dropped below base_low)
             # --------------------------
             if m_rsi > base_rsi and m_close < base_low:
-                log(f"  ❌ DELETE {symbol}: rsi↑ & close dropped < low")
+                log(f"  ❌ DELETE {symbol}: RSI↑({m_rsi:.2f}) & close({m_close}) < base_low({base_low})")
                 rsi30_final = rsi30_final[rsi30_final['symbol'] != symbol]
                 break
 
             # --------------------------
             # RULE–C: BUY Condition
+            # (Price breaks above base_high)
             # --------------------------
             if m_close > base_high:
-                log(f"  ✅ BUY SIGNAL {symbol} @ close={m_close}")
+                log(f"  ✅ BUY SIGNAL {symbol} @ {m_date.strftime('%Y-%m-%d')} | close={m_close} > base_high={base_high}")
                 buy_rows.append([
                     m_date.strftime("%Y-%m-%d"),
                     symbol,
                     m_close,
-                    base_low
+                    base_low  # SL = base_low
                 ])
 
             # --------------------------
-            # RULE–D: RSI Exit Condition
+            # RULE–D: EXIT Condition
+            # (RSI rises above 30)
             # --------------------------
             if m_rsi > 30:
-                log(f"  ❌ EXIT {symbol}: RSI>30")
+                log(f"  ❌ EXIT {symbol}: RSI={m_rsi:.2f} > 30")
                 rsi30_final = rsi30_final[rsi30_final['symbol'] != symbol]
                 break
 
 # ---------------------------------------------------------
-# Save BUY signals
+# Save BUY signals (if any)
 # ---------------------------------------------------------
 if buy_rows:
     buy_df = pd.DataFrame(buy_rows, columns=['date', 'symbol', 'close', 'SL'])
     buy_df.insert(0, 'No', range(1, len(buy_df) + 1))
-
     buy_df.to_csv(BUY_PATH, index=False)
-    log(f"💾 BUY signals saved to: {BUY_PATH}")
+    log(f"💾 BUY signals saved to: {BUY_PATH} ({len(buy_df)} signals)")
 else:
-    log("ℹ No BUY signals today.")
+    log("ℹ No BUY signals generated.")
 
 # ---------------------------------------------------------
-# Save updated rsi_30.csv
+# Save updated rsi_30.csv (surviving symbols only)
 # ---------------------------------------------------------
 rsi30_final = rsi30_final.reset_index(drop=True)
 if len(rsi30_final) > 0:
     rsi30_final.insert(0, "sl", rsi30_final.index + 1)
 
 rsi30_final.to_csv(RSI30_PATH, index=False)
-
-log("💾 rsi_30.csv updated successfully!")
-log(f"Final symbols count: {len(rsi30_final)}")
+log(f"💾 rsi_30.csv updated — remaining symbols: {len(rsi30_final)}")
+log("✅ Script completed successfully!")
