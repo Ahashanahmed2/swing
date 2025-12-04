@@ -17,6 +17,8 @@ scripts = [
     "scripts/short_buy.py",
     "scripts/gape.py",
     "scripts/gape_buy.py",
+    "scripts/excellent.py",
+    "scripts/excellent_buy.csv",
     "scripts/rsi_crose_above_30.py",
     "scripts/rsi_diversence.py",
     "scripts/auto_tune_retrain.py",
