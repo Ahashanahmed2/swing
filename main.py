@@ -22,6 +22,7 @@ scripts = [
     "scripts/excellent_buy.csv",
     'scripts/rsi_crose_above_30.py',
     "scripts/rsi_diversence.py",
+    "scripts/profit_loss_generator.py",
     #"scripts/train_model_ppo.py",
     "scripts/generate_signal.py",
     "scripts/backtest_all_signals.py",
