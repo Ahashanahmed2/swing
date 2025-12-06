@@ -135,11 +135,19 @@ else:
                 break
 
 # ---------------------------------------------------------
-# SAVE BUY SIGNALS TO TWO LOCATIONS
+# SAVE BUY SIGNALS TO TWO LOCATIONS (with diff & sorted)
 # ---------------------------------------------------------
 
 if buy_rows:
     buy_df = pd.DataFrame(buy_rows, columns=['date', 'symbol', 'close', 'SL'])
+
+    # ➕ Add 'diff' = close - SL
+    buy_df['diff'] = buy_df['close'] - buy_df['SL']
+
+    # ➕ Sort by 'diff' ascending (smallest gap first)
+    buy_df = buy_df.sort_values('diff').reset_index(drop=True)
+
+    # ➕ Insert 'No' after sorting (so numbering follows sorted order)
     buy_df.insert(0, 'No', range(1, len(buy_df) + 1))
 
     # -------------------------------
@@ -152,8 +160,9 @@ if buy_rows:
     buy_df.to_csv(BUY_PATH_OUTPUT, index=False)
     buy_df.to_csv(BUY_PATH_CSV, index=False)
 
-    log(f"💾 BUY saved: {BUY_PATH_OUTPUT}")
-    log(f"💾 BUY saved: {BUY_PATH_CSV}")
+    log(f"✅ {len(buy_df)} BUY signals generated.")
+    log(f"💾 BUY saved (sorted by diff ↑): {BUY_PATH_OUTPUT}")
+    log(f"💾 BUY saved (sorted by diff ↑): {BUY_PATH_CSV}")
 
 else:
     log("ℹ No BUY signals generated.")
