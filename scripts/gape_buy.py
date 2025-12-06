@@ -66,26 +66,40 @@ for _, last_row in gape_df.iterrows():
         # gape.csv এর row + নতুন ফিল্ড যুক্ত করা
         result_row = last_row.to_dict()
         result_row.update({
-           'low_candle_date': low_candle_date,
-           'candle_count': candle_count + 1,
-           'SL': SL
+            'low_candle_date': low_candle_date,
+            'candle_count': candle_count + 1,
+            'SL': SL
         })
         results.append(result_row)
 
-# আউটপুট ডিরেক্টরি তৈরি করা যদি না থাকে
+# -------------------------------
+# আউটপুট ডিরেক্টরি তৈরি করা
+# -------------------------------
 os.makedirs(os.path.dirname(output_file1), exist_ok=True)
 os.makedirs(os.path.dirname(output_file2), exist_ok=True)
 
-# ফলাফল CSV তে লেখা (SL ascending, তারপর candle_count ascending)
+# -------------------------------
+# আগের gape_buy.csv থাকলে ডিলিট করা
+# -------------------------------
+if os.path.exists(output_file1):
+    os.remove(output_file1)
+
+if os.path.exists(output_file2):
+    os.remove(output_file2)
+
+# -------------------------------
+# আউটপুট CSV লেখা
+# -------------------------------
 if results:
     df = pd.DataFrame(results)
     df = df.sort_values(by=['SL', 'candle_count'], ascending=[True, True]).reset_index(drop=True)
 
-    # ✅ ascending sort হওয়ার পর নতুন row_id যুক্ত করা
+    # নতুন row_id
     df.insert(0, 'row_id', range(1, len(df) + 1))
 
     df.to_csv(output_file1, index=False)
     df.to_csv(output_file2, index=False)
+
     print(f"✅ Output saved to {output_file1} and {output_file2}")
 else:
     print("⚠️ কোনো মিল পাওয়া যায়নি, আউটপুট ফাইল তৈরি হয়নি।")
