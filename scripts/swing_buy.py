@@ -12,11 +12,12 @@ os.makedirs(os.path.dirname(output_path1), exist_ok=True)
 os.makedirs(os.path.dirname(output_path2), exist_ok=True)
 
 # ---------------------------------------------------------
-# Clear old results
+# Clear old results (with consistent columns)
 # ---------------------------------------------------------
-empty_df = pd.DataFrame(columns=["no", "date", "symbol", "buy", "SL"])
-empty_df.to_csv(output_path1, index=False, newline='')  # ← newline=''
-empty_df.to_csv(output_path2, index=False, newline='')
+empty_cols = ["no", "date", "symbol", "buy", "SL", "diff"]
+empty_df = pd.DataFrame(columns=empty_cols)
+empty_df.to_csv(output_path1, index=False)
+empty_df.to_csv(output_path2, index=False)
 
 # ---------------------------------------------------------
 # Load & validate
@@ -42,12 +43,13 @@ results = []
 # ---------------------------------------------------------
 # Per-symbol latest pattern check
 # ---------------------------------------------------------
-for symbol, group in df.groupby("symbol", sort=False):  # ← sort=False
+for symbol, group in df.groupby("symbol", sort=False):
     group = group.sort_values("date").reset_index(drop=True)
     if len(group) < 5:
         continue
 
-    A, B, C, D, E = [group.iloc[-i] for i in range(1, 6)]  # clean & pythonic
+    # Get last 5 bars: A (latest), B, C, D, E (oldest)
+    A, B, C, D, E = [group.iloc[-i] for i in range(1, 6)]
 
     buy = SL = None
 
@@ -71,18 +73,31 @@ for symbol, group in df.groupby("symbol", sort=False):  # ← sort=False
 
     if buy is not None:
         results.append({
-            "no": len(results) + 1,
-            "date": A["date"].strftime("%Y-%m-%d"),
+            "date": A["date"],
             "symbol": symbol,
             "buy": round(buy, 4),
             "SL": round(SL, 4)
         })
 
 # ---------------------------------------------------------
-# Save
+# Create DataFrame, add diff, sort, then number
 # ---------------------------------------------------------
-result_df = pd.DataFrame(results)
-result_df.to_csv(output_path1, index=False, newline='')  # ← newline=''
-result_df.to_csv(output_path2, index=False, newline='')
+if results:
+    result_df = pd.DataFrame(results)
+    result_df["diff"] = (result_df["buy"] - result_df["SL"]).round(4)
+    # Sort by diff ascending → smallest gap first
+    result_df = result_df.sort_values("diff").reset_index(drop=True)
+    # Add 'no' after sorting
+    result_df.insert(0, "no", range(1, len(result_df) + 1))
+    # Format date
+    result_df["date"] = result_df["date"].dt.strftime("%Y-%m-%d")
+else:
+    result_df = pd.DataFrame(columns=["no", "date", "symbol", "buy", "SL", "diff"])
 
-print(f"✅ swing_buy.csv updated with {len(results)} signals.")
+# ---------------------------------------------------------
+# Save (both paths)
+# ---------------------------------------------------------
+result_df.to_csv(output_path1, index=False)
+result_df.to_csv(output_path2, index=False)
+
+print(f"✅ swing_buy.csv updated with {len(result_df)} signals (sorted by diff ↑).")
