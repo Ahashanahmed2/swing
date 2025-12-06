@@ -4,6 +4,7 @@ import os
 # ---------------------------------------------------------
 # Paths
 # ---------------------------------------------------------
+
 RSI30_PATH = "./csv/rsi_30.csv"
 MONGO_PATH = "./csv/mongodb.csv"
 BUY_PATH_OUTPUT = "./output/ai_signal/rsi_30_buy.csv"
@@ -15,12 +16,14 @@ os.makedirs("./csv/", exist_ok=True)
 # ---------------------------------------------------------
 # Helper: Print log
 # ---------------------------------------------------------
+
 def log(msg):
     print("🔹", msg)
 
 # ---------------------------------------------------------
 # Load mongodb.csv (must exist)
 # ---------------------------------------------------------
+
 log("Loading mongodb.csv...")
 if not os.path.exists(MONGO_PATH):
     raise FileNotFoundError(f"❌ Required file not found: {MONGO_PATH}")
@@ -39,12 +42,13 @@ mongodb = mongodb.sort_values(['symbol', 'date']).reset_index(drop=True)
 # ---------------------------------------------------------
 # 🔁 AUTO-GENERATE rsi_30.csv: Keep ONLY symbols with latest RSI < 30
 # ---------------------------------------------------------
+
 log("🔍 Finding latest record per symbol with RSI < 30...")
 
 latest_mongo = mongodb.sort_values('date').groupby('symbol').tail(1).reset_index(drop=True)
 
 rsi_under_30 = latest_mongo[
-    (latest_mongo['rsi'] < 30) & 
+    (latest_mongo['rsi'] < 30) &
     (latest_mongo['rsi'].notna())
 ].copy()
 
@@ -63,9 +67,11 @@ log(f"💾 Updated rsi_30.csv with {len(rsi30_auto)} active symbols")
 # ---------------------------------------------------------
 # Load rsi_30.csv
 # ---------------------------------------------------------
+
 log("Loading rsi_30.csv (auto-generated)...")
 rsi30 = pd.read_csv(RSI30_PATH)
 rsi30['date'] = pd.to_datetime(rsi30['date'])
+
 log(f"mongodb rows: {len(mongodb)}")
 log(f"rsi_30 rows loaded: {len(rsi30)}")
 
@@ -75,6 +81,7 @@ rsi30_final = rsi30.copy()
 # ---------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------
+
 if len(rsi30) == 0:
     log("ℹ No symbols with RSI < 30 → skipping processing.")
 else:
@@ -130,24 +137,31 @@ else:
 # ---------------------------------------------------------
 # SAVE BUY SIGNALS TO TWO LOCATIONS
 # ---------------------------------------------------------
+
 if buy_rows:
     buy_df = pd.DataFrame(buy_rows, columns=['date', 'symbol', 'close', 'SL'])
     buy_df.insert(0, 'No', range(1, len(buy_df) + 1))
 
-    # Save to output/ai_signal
-    buy_df.to_csv(BUY_PATH_OUTPUT, index=False)
+    # -------------------------------
+    # DELETE OLD ./csv/rsi_30_buy.csv
+    # -------------------------------
+    if os.path.exists(BUY_PATH_CSV):
+        os.remove(BUY_PATH_CSV)
 
-    # Save to csv/
+    # Save to both paths
+    buy_df.to_csv(BUY_PATH_OUTPUT, index=False)
     buy_df.to_csv(BUY_PATH_CSV, index=False)
 
     log(f"💾 BUY saved: {BUY_PATH_OUTPUT}")
     log(f"💾 BUY saved: {BUY_PATH_CSV}")
+
 else:
     log("ℹ No BUY signals generated.")
 
 # ---------------------------------------------------------
 # Save updated rsi_30.csv
 # ---------------------------------------------------------
+
 rsi30_final = rsi30_final.reset_index(drop=True)
 
 COLUMNS = ['sl', 'symbol', 'date', 'low', 'high', 'rsi']
@@ -155,8 +169,10 @@ if len(rsi30_final) == 0:
     rsi30_final = pd.DataFrame(columns=COLUMNS)
 else:
     rsi30_final = rsi30_final.reindex(columns=COLUMNS)
-    rsi30_final['sl'] = range(1, len(rsi30_final) + 1)
+
+rsi30_final['sl'] = range(1, len(rsi30_final) + 1)
 
 rsi30_final.to_csv(RSI30_PATH, index=False)
 log(f"💾 rsi_30.csv updated — remaining symbols: {len(rsi30_final)}")
+
 log("✅ Script completed successfully!")
