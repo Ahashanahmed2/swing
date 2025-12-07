@@ -1,105 +1,106 @@
 import pandas as pd
 import os
 
-# ইনপুট ফাইল পাথ
+# Paths
 gape_file = "./csv/gape.csv"
 mongodb_file = "./csv/mongodb.csv"
-
-# আউটপুট ফাইল পাথ
 output_file1 = "./output/ai_signal/gape_buy.csv"
 output_file2 = "./csv/gape_buy.csv"
 
-# ডেটা পড়া
-gape_df = pd.read_csv(gape_file)
-mongodb_df = pd.read_csv(mongodb_file)
-
-results = []
-
-for _, last_row in gape_df.iterrows():
-    symbol = last_row['symbol']
-    Arow_date = last_row['last_row_date']
-    lastrowhigh = last_row['last_row_high']
-    lastrowlow = last_row['last_row_low']
-    lastrowclose = last_row['last_row_close']
-
-    # mongodb.csv থেকে ওই symbol এর ডেটা
-    mongodata = mongodb_df[mongodb_df['symbol'] == symbol].sort_values(by='date')
-
-    # ওই তারিখের আগের row গুলো
-    prevrows = mongodata[mongodata['date'] < Arow_date]
-    if prevrows.empty:
-        continue
-
-    # শেষ আগের row
-    prevrow = prevrows.iloc[-1]
-    Browdate = prevrow['date']
-
-    # শর্ত মিলানো
-    if (lastrowlow > prevrow['low']) and (lastrowclose > prevrow['high']):
-        # pre_candle খুঁজে বের করা
-        pre_candle = None
-        for i in range(len(prevrows)-1, -1, -1):  # শেষ থেকে লুপ
-            row = prevrows.iloc[i]
-            if row['low'] <= lastrowhigh <= row['high'] or row['low'] <= lastrowlow <= row['high']:
-                pre_candle = row
-                break
-
-        if pre_candle is None:
-            continue
-
-        pre_candle_date = pre_candle['date']
-
-        # pre_candle ও last_row এর মাঝে যত row আছে
-        between_rows = mongodata[(mongodata['date'] > pre_candle_date) & (mongodata['date'] < Arow_date)]
-        if between_rows.empty:
-            continue
-
-        # low_candle বের করা (যার low সবচেয়ে কম)
-        low_candle = between_rows.loc[between_rows['low'].idxmin()]
-        low_candle_date = low_candle['date']
-        SL = low_candle['low']
-
-        # low_candle ও last_row এর মাঝে কতগুলো candle আছে
-        candles_between = mongodata[(mongodata['date'] > low_candle_date) & (mongodata['date'] < Arow_date)]
-        candle_count = len(candles_between)
-
-        # gape.csv এর row + নতুন ফিল্ড যুক্ত করা
-        result_row = last_row.to_dict()
-        result_row.update({
-            'low_candle_date': low_candle_date,
-            'candle_count': candle_count + 1,
-            'SL': SL
-        })
-        results.append(result_row)
-
-# -------------------------------
-# আউটপুট ডিরেক্টরি তৈরি করা
-# -------------------------------
+# Ensure dirs
 os.makedirs(os.path.dirname(output_file1), exist_ok=True)
 os.makedirs(os.path.dirname(output_file2), exist_ok=True)
 
-# -------------------------------
-# আগের gape_buy.csv থাকলে ডিলিট করা
-# -------------------------------
-if os.path.exists(output_file1):
-    os.remove(output_file1)
+# Remove old files
+for f in [output_file1, output_file2]:
+    if os.path.exists(f):
+        os.remove(f)
 
-if os.path.exists(output_file2):
-    os.remove(output_file2)
+# Load and clean
+gape_df = pd.read_csv(gape_file)
+mongodb_df = pd.read_csv(mongodb_file)
 
-# -------------------------------
-# আউটপুট CSV লেখা
-# -------------------------------
+# Convert dates
+gape_df['last_row_date'] = pd.to_datetime(gape_df['last_row_date'], errors='coerce')
+mongodb_df['date'] = pd.to_datetime(mongodb_df['date'], errors='coerce')
+mongodb_df = mongodb_df.dropna(subset=['date'])
+
+results = []
+
+for _, r in gape_df.iterrows():
+    symbol = str(r['symbol']).strip().upper()
+    date = r['last_row_date']
+    last_row_close = r['last_row_close']
+    last_row_high = r['last_row_high']
+    last_row_low = r['last_row_low']
+
+    if pd.isna(date) or pd.isna(last_row_close):
+        continue
+
+    # MongoDB data for symbol
+    sym_data = mongodb_df[mongodb_df['symbol'] == symbol].sort_values('date')
+    if sym_data.empty:
+        continue
+
+    # Rows before signal date
+    prev_rows = sym_data[sym_data['date'] < date]
+    if prev_rows.empty:
+        continue
+
+    prev_row = prev_rows.iloc[-1]
+
+    # Signal condition
+    if not (last_row_low > prev_row['low'] and last_row_close > prev_row['high']):
+        continue
+
+    # Find pre-candle (zone touch)
+    pre_candle = None
+    for i in range(len(prev_rows)-1, -1, -1):
+        row = prev_rows.iloc[i]
+        if (row['low'] <= last_row_high <= row['high']) or (row['low'] <= last_row_low <= row['high']):
+            pre_candle = row
+            break
+    if pre_candle is None:
+        continue
+
+    # Candles between pre_candle and signal date
+    between = sym_data[
+        (sym_data['date'] > pre_candle['date']) & 
+        (sym_data['date'] < date)
+    ]
+    if between.empty:
+        continue
+
+    # SL = lowest low in between
+    low_candle = between.loc[between['low'].idxmin()]
+    SL_price = low_candle['low']
+
+    # ✅ CRITICAL: rename 'last_row_close' → 'buy'
+    results.append({
+        'symbol': symbol,
+        'date': date.date(),    # date-only (YYYY-MM-DD)
+        'buy': last_row_close,  # ← renamed! (used as buy price)
+        'SL': SL_price,         # price, not %
+    })
+
+# Build DataFrame
 if results:
     df = pd.DataFrame(results)
-    df = df.sort_values(by=['SL', 'candle_count'], ascending=[True, True]).reset_index(drop=True)
-
-    # নতুন row_id
+    df = df.sort_values(['SL', 'symbol'], ascending=[True, True]).reset_index(drop=True)
     df.insert(0, 'row_id', range(1, len(df) + 1))
 
-    df.to_csv(output_file1, index=False)
-    df.to_csv(output_file2, index=False)
-
-    print(f"✅ Output saved to {output_file1} and {output_file2}")
+    # Ensure numeric
+    df['buy'] = pd.to_numeric(df['buy'], errors='coerce')
+    df['SL'] = pd.to_numeric(df['SL'], errors='coerce')
 else:
-    print("⚠️ কোনো মিল পাওয়া যায়নি, আউটপুট ফাইল তৈরি হয়নি।")
+    df = pd.DataFrame(columns=['row_id', 'symbol', 'date', 'buy', 'SL'])
+
+# Save
+df.to_csv(output_file1, index=False)
+df.to_csv(output_file2, index=False)
+
+print(f"✅ Successfully saved {len(df)} rows to gape_buy.csv")
+print("📁 Columns: row_id, symbol, date, buy, SL")
+if not df.empty:
+    print("\n📋 Sample:")
+    print(df.head(3)[['row_id','symbol','date','buy','SL']].to_string(index=False))
