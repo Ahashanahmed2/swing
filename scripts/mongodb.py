@@ -99,9 +99,22 @@ if not csv_df.empty:
     print("💾 Appended new data to existing CSV.")
 
 # -------------------------------------------------------------------
-# Step 5: Indicators (ATR Added)
+# Step 5: Indicators (ATR safe)
 # -------------------------------------------------------------------
 def apply_indicators(group):
+
+    # If data <14 rows → skip indicators to avoid IndexError
+    if len(group) < 14:
+        group['bb_upper'] = np.nan
+        group['bb_middle'] = np.nan
+        group['bb_lower'] = np.nan
+        group['macd'] = np.nan
+        group['macd_signal'] = np.nan
+        group['macd_hist'] = np.nan
+        group['rsi'] = np.nan
+        group['atr'] = np.nan
+        return group
+
     # Bollinger Bands
     bb = ta.volatility.BollingerBands(close=group['close'], window=20)
     group['bb_upper'] = bb.bollinger_hband()
@@ -117,7 +130,7 @@ def apply_indicators(group):
     # RSI
     group['rsi'] = ta.momentum.RSIIndicator(close=group['close']).rsi()
 
-    # ATR (NEW)
+    # ATR — Safe (no IndexError)
     atr = ta.volatility.AverageTrueRange(
         high=group['high'],
         low=group['low'],
