@@ -48,7 +48,7 @@ def send_email() -> None:
     )
 
     for pdf in pdfs:
-        if pdf.stat().st_size > 25 * 1024 * 1024:   # 25 MB
+        if pdf.stat().st_size > 45 * 1024 * 1024:   # 25 MB
             print(f"⚠️  Skipping large file: {pdf.name}")
             continue
         msg.add_attachment(
@@ -58,7 +58,7 @@ def send_email() -> None:
             filename=pdf.name,
         )
 
-    with smtplib.SMTP_SSL("smtp.mail.yahoo.com", 587, timeout=60) as smtp:
+    with smtplib.SMTP_SSL("smtp.mail.yahoo.com", 465, timeout=60) as smtp:
         smtp.login(EMAIL_USER, EMAIL_PASS)
         smtp.send_message(msg)
 
