@@ -106,7 +106,7 @@ print(f"✅ Loaded {len(mongodb)} rows from mongodb.csv")
 
 
 # ---------------------------------------------------------
-# Profit–Loss Calculator (with SL & 10% target)
+# Profit–Loss Calculator (with SL & 10% target + buy-SL diff + Reference)
 # ---------------------------------------------------------
 results = []
 remove_trade_ids = []
@@ -125,6 +125,7 @@ for _, row in trade_df.iterrows():
 
     SL_value = buy * (1 - SL_percent / 100)
     profit_target = buy * 1.10  # 10% profit target
+    buy_sl_diff = buy - SL_value  # absolute price difference (for sorting)
 
     # Filter and sort symbol data
     df_sym = mongodb[mongodb["symbol"] == symbol].copy()
@@ -151,15 +152,16 @@ for _, row in trade_df.iterrows():
     for i, r in future_rows.iterrows():
         close = r["close"]
         cur_date = r["date"].date()
-        diff = int(i - buy_idx)
+        diff_days = (cur_date - buy_date).days  # ✅ Now actual calendar days
 
         # 🔴 Stop-Loss hit
         if close < SL_value:
             loss_percent = ((buy - close) / buy) * 100
             results.append([
-                None, symbol, buy_date, buy,
+                None, symbol, buy_date, buy, SL_value,
                 cur_date, close,
-                round(loss_percent, 2), np.nan, diff
+                round(loss_percent, 2), np.nan,
+                diff_days, ref, round(buy_sl_diff, 4)
             ])
             remove_trade_ids.append(trade_id)
             hit = True
@@ -169,9 +171,10 @@ for _, row in trade_df.iterrows():
         if close >= profit_target:
             profit_percent = ((close - buy) / buy) * 100
             results.append([
-                None, symbol, buy_date, buy,
+                None, symbol, buy_date, buy, SL_value,
                 cur_date, close,
-                np.nan, round(profit_percent, 2), diff
+                np.nan, round(profit_percent, 2),
+                diff_days, ref, round(buy_sl_diff, 4)
             ])
             remove_trade_ids.append(trade_id)
             hit = True
@@ -182,20 +185,28 @@ for _, row in trade_df.iterrows():
 
 
 # ---------------------------------------------------------
-# Save profit-loss.csv
+# Save profit-loss.csv (with Reference, buy_sl_diff, sorted by buy_sl_diff ASC)
 # ---------------------------------------------------------
 if results:
     out = pd.DataFrame(results, columns=[
-        "no", "symbol", "date", "buy",
+        "no", "symbol", "buy_date", "buy", "SL_value",
         "sell_date", "sell",
-        "loss", "profit", "diff"
+        "loss_pct", "profit_pct",
+        "days_held", "Reference", "buy_sl_diff"
     ])
     out["no"] = range(1, len(out) + 1)
+
     # Ensure numeric types
-    out["loss"] = pd.to_numeric(out["loss"], errors="coerce")
-    out["profit"] = pd.to_numeric(out["profit"], errors="coerce")
+    out["loss_pct"] = pd.to_numeric(out["loss_pct"], errors="coerce")
+    out["profit_pct"] = pd.to_numeric(out["profit_pct"], errors="coerce")
+    out["buy_sl_diff"] = pd.to_numeric(out["buy_sl_diff"], errors="coerce")
+
+    # ✅ Sort by buy_sl_diff (ascending) — as per your request
+    out = out.sort_values("buy_sl_diff", ascending=True).reset_index(drop=True)
+    out["no"] = range(1, len(out) + 1)  # renumber after sort
+
     out.to_csv(profit_loss_path, index=False)
-    print(f"✅ Saved {len(out)} exit records to {profit_loss_path}")
+    print(f"✅ Saved {len(out)} exit records (sorted by buy_sl_diff ASC) to {profit_loss_path}")
 else:
     print("⚠️ No exits triggered. profit-loss.csv not generated.")
 
