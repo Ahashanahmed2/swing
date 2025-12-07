@@ -11,106 +11,100 @@ output_path2 = './csv/short_buy.csv'
 os.makedirs(os.path.dirname(output_path1), exist_ok=True)
 os.makedirs(os.path.dirname(output_path2), exist_ok=True)
 
-# -------------------------------
-# আগের short_buy.csv ডিলিট করা
-# -------------------------------
-if os.path.exists(output_path1):
-    os.remove(output_path1)
-
-if os.path.exists(output_path2):
-    os.remove(output_path2)
+# Delete old files
+for path in [output_path1, output_path2]:
+    if os.path.exists(path):
+        os.remove(path)
 
 # Read data
 rsi_df = pd.read_csv(rsi_path)
 mongo_df = pd.read_csv(mongo_path)
 
-# কলাম নাম fix
+# Clean column names
 rsi_df.columns = rsi_df.columns.str.replace(" ", "_")
 
-# Group mongodb data by symbol
+# Ensure MongoDB date is datetime
+mongo_df['date'] = pd.to_datetime(mongo_df['date'], errors='coerce')
+mongo_df = mongo_df.dropna(subset=['date'])
 mongo_groups = mongo_df.groupby('symbol')
 
 output_rows = []
 
-# Iterate through RSI symbols
 for _, rsi_row in rsi_df.iterrows():
-    symbol = rsi_row['symbol']
+    symbol = str(rsi_row['symbol']).strip().upper()
     last_high = rsi_row['last_row_high']
-    last_row_date = rsi_row['last_row_date']
+    last_row_date = pd.to_datetime(rsi_row['last_row_date'], errors='coerce')
     last_row_low = rsi_row['last_row_low']
-    last_row_rsi = rsi_row['last_row_rsi']
-    second_row_date = rsi_row['second_row_date']
-    second_row_low = rsi_row['second_row_low']
-    second_row_rsi = rsi_row['second_row_rsi']
 
-    if symbol not in mongo_groups.groups:
+    # Skip if critical data missing
+    if pd.isna(last_row_date) or symbol not in mongo_groups.groups:
         continue
 
-    symbol_group = mongo_groups.get_group(symbol).sort_values(by='date')
-
+    symbol_group = mongo_groups.get_group(symbol).sort_values('date')
     last_row = symbol_group.iloc[-1]
 
-    if last_row['close'] > last_high:
+    # Condition 1: breakout above last_high
+    if not (last_row['close'] > last_high):
+        continue
 
-        prev_rows = symbol_group[symbol_group['date'] < last_row_date]
-        if prev_rows.empty:
-            continue
+    # Condition 2: get previous row before last_row_date
+    prev_rows = symbol_group[symbol_group['date'] < last_row_date]
+    if prev_rows.empty:
+        continue
+    prev_row = prev_rows.iloc[-1]
 
-        prev_row = prev_rows.iloc[-1]
+    # Condition 3: higher low + breakout over prior high
+    if not (last_row_low > prev_row['low'] and last_row['close'] > prev_row['high']):
+        continue
 
-        if (last_row_low > prev_row['low']) and (last_row['close'] > prev_row['high']):
+    # Find pre-candle (touching last_high or last_row_low zone)
+    pre_candle = None
+    for i in range(len(prev_rows)-1, -1, -1):
+        row = prev_rows.iloc[i]
+        if (row['low'] <= last_high <= row['high']) or (row['low'] <= last_row_low <= row['high']):
+            pre_candle = row
+            break
+    if pre_candle is None:
+        continue
 
-            pre_candle = None
-            for i in range(len(prev_rows)-1, -1, -1):
-                row = prev_rows.iloc[i]
-                if row['low'] <= last_high <= row['high'] or row['low'] <= last_row_low <= row['high']:
-                    pre_candle = row
-                    break
+    # Find lowest low between pre_candle and last_row_date → SL price
+    between_rows = symbol_group[
+        (symbol_group['date'] > pre_candle['date']) & 
+        (symbol_group['date'] < last_row_date)
+    ]
+    if between_rows.empty:
+        continue
 
-            if pre_candle is None:
-                continue
+    low_candle = between_rows.loc[between_rows['low'].idxmin()]
+    SL_price = low_candle['low']
+    buy_price = last_row['close']  # entry = close of breakout day
 
-            pre_candle_date = pre_candle['date']
+    output_rows.append({
+        'symbol': symbol,
+        'date': last_row['date'].date(),      # date-only (YYYY-MM-DD)
+        'last_row_close': buy_price,          # → will be used as 'buy'
+        'SL': SL_price,                       # → price, not %
+    })
 
-            between_rows = symbol_group[(symbol_group['date'] > pre_candle_date) & (symbol_group['date'] < last_row_date)]
-            if between_rows.empty:
-                continue
-
-            low_candle = between_rows.loc[between_rows['low'].idxmin()]
-            low_candle_date = low_candle['date']
-            SL = low_candle['low']
-
-            candles_between = symbol_group[(symbol_group['date'] > low_candle_date) & (symbol_group['date'] < last_row_date)]
-            candle_count = len(candles_between)
-
-            output_rows.append({
-                'symbol': symbol,
-                'date': last_row['date'],
-                'close': last_row['close'],
-                'low': last_row['low'],
-                'high': last_row['high'],
-                'last_row_date': last_row_date,
-                'last_row_low': last_row_low,
-                'last_row_high': last_high,
-                'last_row_rsi': last_row_rsi,
-                'second_row_date': second_row_date,
-                'second_row_low': second_row_low,
-                'second_row_rsi': second_row_rsi,
-                'pre_candle_date': pre_candle_date,
-                'low_candle_date': low_candle_date,
-                'candle_count': candle_count + 1,
-                'SL': SL
-            })
-
-# Create DataFrame
-output_df = pd.DataFrame(output_rows)
-
-if not output_df.empty:
-    output_df = output_df.sort_values(by=['SL', 'candle_count'], ascending=[True, True]).reset_index(drop=True)
+# Create minimal DataFrame
+if output_rows:
+    output_df = pd.DataFrame(output_rows)
+    output_df = output_df.sort_values(['SL', 'symbol'], ascending=[True, True]).reset_index(drop=True)
     output_df.insert(0, 'id', range(1, len(output_df) + 1))
 
-# Save outputs
+    # Ensure numeric
+    output_df['last_row_close'] = pd.to_numeric(output_df['last_row_close'], errors='coerce')
+    output_df['SL'] = pd.to_numeric(output_df['SL'], errors='coerce')
+else:
+    # Empty but valid 5-col structure
+    output_df = pd.DataFrame(columns=['id', 'symbol', 'date', 'last_row_close', 'SL'])
+
+# Save (both locations)
 output_df.to_csv(output_path1, index=False)
 output_df.to_csv(output_path2, index=False)
 
-print(f"✅ Saved {len(output_rows)} signals to {output_path1} and {output_path2} (sorted by SL and candle_count)")
+print(f"✅ Successfully saved {len(output_df)} rows to short_buy.csv")
+print("📁 Columns: id, symbol, date, last_row_close (→ buy), SL (price)")
+if not output_df.empty:
+    print("\n📋 Sample:")
+    print(output_df.head(3)[['id','symbol','date','last_row_close','SL']].to_string(index=False))
