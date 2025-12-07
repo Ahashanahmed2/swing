@@ -4,7 +4,6 @@ import os
 # ---------------------------------------------------------
 # Paths
 # ---------------------------------------------------------
-
 RSI30_PATH = "./csv/rsi_30.csv"
 MONGO_PATH = "./csv/mongodb.csv"
 BUY_PATH_OUTPUT = "./output/ai_signal/rsi_30_buy.csv"
@@ -16,14 +15,12 @@ os.makedirs("./csv/", exist_ok=True)
 # ---------------------------------------------------------
 # Helper: Print log
 # ---------------------------------------------------------
-
 def log(msg):
     print("🔹", msg)
 
 # ---------------------------------------------------------
 # Load mongodb.csv (must exist)
 # ---------------------------------------------------------
-
 log("Loading mongodb.csv...")
 if not os.path.exists(MONGO_PATH):
     raise FileNotFoundError(f"❌ Required file not found: {MONGO_PATH}")
@@ -42,7 +39,6 @@ mongodb = mongodb.sort_values(['symbol', 'date']).reset_index(drop=True)
 # ---------------------------------------------------------
 # 🔁 AUTO-GENERATE rsi_30.csv: Keep ONLY symbols with latest RSI < 30
 # ---------------------------------------------------------
-
 log("🔍 Finding latest record per symbol with RSI < 30...")
 
 latest_mongo = mongodb.sort_values('date').groupby('symbol').tail(1).reset_index(drop=True)
@@ -67,7 +63,6 @@ log(f"💾 Updated rsi_30.csv with {len(rsi30_auto)} active symbols")
 # ---------------------------------------------------------
 # Load rsi_30.csv
 # ---------------------------------------------------------
-
 log("Loading rsi_30.csv (auto-generated)...")
 rsi30 = pd.read_csv(RSI30_PATH)
 rsi30['date'] = pd.to_datetime(rsi30['date'])
@@ -81,7 +76,6 @@ rsi30_final = rsi30.copy()
 # ---------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------
-
 if len(rsi30) == 0:
     log("ℹ No symbols with RSI < 30 → skipping processing.")
 else:
@@ -127,6 +121,7 @@ else:
                     m_close,
                     base_low
                 ])
+                break  # ⚠️ optional: break after first buy (remove if multi-buy allowed)
 
             # EXIT rule
             if m_rsi > 30:
@@ -135,52 +130,60 @@ else:
                 break
 
 # ---------------------------------------------------------
-# SAVE BUY SIGNALS TO TWO LOCATIONS (with diff & sorted)
+# SAVE BUY SIGNALS (5 columns only: No, date, symbol, buy, SL)
+# Sorted by (buy - SL) ascending
 # ---------------------------------------------------------
-
 if buy_rows:
+    # Create temp DataFrame
     buy_df = pd.DataFrame(buy_rows, columns=['date', 'symbol', 'close', 'SL'])
 
-    # ➕ Add 'diff' = close - SL
+    # Compute diff for sorting (not saved)
     buy_df['diff'] = buy_df['close'] - buy_df['SL']
-
-    # ➕ Sort by 'diff' ascending (smallest gap first)
     buy_df = buy_df.sort_values('diff').reset_index(drop=True)
 
-    # ➕ Insert 'No' after sorting (so numbering follows sorted order)
+    # Rename 'close' → 'buy' and keep only 5 cols
+    buy_df = buy_df.rename(columns={'close': 'buy'})
+    buy_df = buy_df[['date', 'symbol', 'buy', 'SL']].copy()
     buy_df.insert(0, 'No', range(1, len(buy_df) + 1))
 
-    # -------------------------------
-    # DELETE OLD ./csv/rsi_30_buy.csv
-    # -------------------------------
-    if os.path.exists(BUY_PATH_CSV):
-        os.remove(BUY_PATH_CSV)
+    # Ensure numeric
+    buy_df['buy'] = pd.to_numeric(buy_df['buy'], errors='coerce')
+    buy_df['SL'] = pd.to_numeric(buy_df['SL'], errors='coerce')
 
-    # Save to both paths
+    # ✅ DELETE old files
+    for path in [BUY_PATH_OUTPUT, BUY_PATH_CSV]:
+        if os.path.exists(path):
+            os.remove(path)
+
+    # Save
     buy_df.to_csv(BUY_PATH_OUTPUT, index=False)
     buy_df.to_csv(BUY_PATH_CSV, index=False)
 
-    log(f"✅ {len(buy_df)} BUY signals generated.")
-    log(f"💾 BUY saved (sorted by diff ↑): {BUY_PATH_OUTPUT}")
-    log(f"💾 BUY saved (sorted by diff ↑): {BUY_PATH_CSV}")
+    log(f"✅ {len(buy_df)} BUY signals generated (sorted by buy−SL gap ↑).")
+    log(f"📁 Columns: No, date, symbol, buy, SL")
+    log(f"💾 Saved to: {BUY_PATH_CSV}")
 
 else:
     log("ℹ No BUY signals generated.")
 
+    # ✅ Still delete old files if no signals
+    for path in [BUY_PATH_OUTPUT, BUY_PATH_CSV]:
+        if os.path.exists(path):
+            os.remove(path)
+            log(f"🗑️ Deleted old {os.path.basename(path)} (no signals)")
+
 # ---------------------------------------------------------
 # Save updated rsi_30.csv
 # ---------------------------------------------------------
-
 rsi30_final = rsi30_final.reset_index(drop=True)
-
 COLUMNS = ['sl', 'symbol', 'date', 'low', 'high', 'rsi']
+
 if len(rsi30_final) == 0:
     rsi30_final = pd.DataFrame(columns=COLUMNS)
 else:
     rsi30_final = rsi30_final.reindex(columns=COLUMNS)
 
 rsi30_final['sl'] = range(1, len(rsi30_final) + 1)
-
 rsi30_final.to_csv(RSI30_PATH, index=False)
 log(f"💾 rsi_30.csv updated — remaining symbols: {len(rsi30_final)}")
 
