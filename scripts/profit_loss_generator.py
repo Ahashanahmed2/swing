@@ -18,43 +18,67 @@ os.makedirs("./output/ai_signal", exist_ok=True)
 
 
 # ---------------------------------------------------------
-# Helper: Load BUY data
+# Helper: Load BUY data (now with tp & RRR)
 # ---------------------------------------------------------
-def load_file(path, reference, buy_col):
+def load_file(path, reference, buy_col, tp_col="tp", rrr_col="RRR"):
     if not os.path.exists(path):
         print(f"⚠️ File not found: {path}")
-        return pd.DataFrame(columns=["date", "symbol", "buy", "SL", "Reference"])
+        return pd.DataFrame(columns=["date", "symbol", "buy", "SL", "tp", "RRR", "Reference"])
 
     try:
         df = pd.read_csv(path)
     except Exception as e:
         print(f"❌ Error reading {path}: {e}")
-        return pd.DataFrame(columns=["date", "symbol", "buy", "SL", "Reference"])
+        return pd.DataFrame(columns=["date", "symbol", "buy", "SL", "tp", "RRR", "Reference"])
 
-    required_cols = {"symbol", "date", buy_col, "SL"}
-    if not required_cols.issubset(df.columns):
-        missing = required_cols - set(df.columns)
+    cols_needed = {"symbol", "date", buy_col, "SL"}
+    if tp_col in df.columns:
+        cols_needed.add(tp_col)
+    if rrr_col in df.columns:
+        cols_needed.add(rrr_col)
+
+    missing = cols_needed - set(df.columns)
+    if missing:
         print(f"⚠️ Missing columns in {path}: {missing}")
-        return pd.DataFrame(columns=["date", "symbol", "buy", "SL", "Reference"])
 
     df = df.dropna(subset=["symbol", "date"])
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df = df.dropna(subset=["date"])
 
-    return pd.DataFrame({
+    # Build result
+    result = {
         "date": df["date"].dt.date,
         "symbol": df["symbol"].astype(str).str.strip().str.upper(),
         "buy": pd.to_numeric(df[buy_col], errors="coerce"),
         "SL": pd.to_numeric(df["SL"], errors="coerce"),
         "Reference": reference
-    }).dropna(subset=["buy", "SL"])
+    }
+
+    # Add tp & RRR if available
+    if tp_col in df.columns:
+        result["tp"] = pd.to_numeric(df[tp_col], errors="coerce")
+    else:
+        result["tp"] = np.nan
+
+    if rrr_col in df.columns:
+        result["RRR"] = pd.to_numeric(df[rrr_col], errors="coerce")
+    else:
+        result["RRR"] = np.nan
+
+    out_df = pd.DataFrame(result).dropna(subset=["buy", "SL"])
+
+    # Fill missing tp from RRR (if RRR known but tp missing): tp = buy + RRR * (buy - SL)
+    mask = out_df["tp"].isna() & out_df["RRR"].notna()
+    if mask.any():
+        out_df.loc[mask, "tp"] = out_df.loc[mask, "buy"] + out_df.loc[mask, "RRR"] * (out_df.loc[mask, "buy"] - out_df.loc[mask, "SL"])
+
+    return out_df
 
 
 # ---------------------------------------------------------
 # ✅ DSEX-Optimized k Selector (internal only)
 # ---------------------------------------------------------
 def get_dsex_k(market_cap_million, atr_pct):
-    # Convert to crore: 10 million = 1 crore
     market_cap_cr = market_cap_million / 10 if pd.notna(market_cap_million) else 0
     if market_cap_cr >= 5000:      # Large
         return 1.2 if atr_pct < 3.0 else (1.4 if atr_pct <= 5.0 else 1.6)
@@ -65,15 +89,15 @@ def get_dsex_k(market_cap_million, atr_pct):
 
 
 # ---------------------------------------------------------
-# Load signals
+# Load signals (now with tp & RRR)
 # ---------------------------------------------------------
-short_df = load_file(short_path, "short", "last_row_close")
-gape_df = load_file(gape_path, "gape", "last_row_close")
-rsi_df = load_file(rsi_path, "rsi", "close")
-swing_df = load_file(swing_path, "swing", "buy")
+short_df = load_file(short_path, "short", "buy")          # short_buy.csv uses 'buy'
+gape_df = load_file(gape_path, "gape", "buy")             # gape_buy.csv uses 'buy'
+rsi_df = load_file(rsi_path, "rsi", "buy")                # rsi_30_buy.csv now uses 'buy'
+swing_df = load_file(swing_path, "swing", "buy")          # swing_buy.csv uses 'buy'
 
 trade_df = pd.concat([short_df, gape_df, rsi_df, swing_df], ignore_index=True)
-print(f"✅ Loaded {len(trade_df)} trade signals.")
+print(f"✅ Loaded {len(trade_df)} trade signals (with tp & RRR where available).")
 
 if trade_df.empty:
     print("🛑 No valid trade signals. Exiting.")
@@ -82,14 +106,16 @@ if trade_df.empty:
 trade_df = trade_df.reset_index(drop=True)
 trade_df["trade_id"] = trade_df.index
 
+# Save trade_stock.csv (with tp & RRR)
 trade_df_with_no = trade_df.copy()
 trade_df_with_no.insert(0, "no", range(1, len(trade_df_with_no) + 1))
-trade_df_with_no.drop(columns=["trade_id"], inplace=True)
+cols_order = ["no", "date", "symbol", "buy", "SL", "tp", "RRR", "Reference"]
+trade_df_with_no = trade_df_with_no.reindex(columns=cols_order)
 trade_df_with_no.to_csv(trade_stock_path, index=False)
 
 
 # ---------------------------------------------------------
-# Load mongodb.csv (marketCap in million BDT)
+# Load mongodb.csv
 # ---------------------------------------------------------
 if not os.path.exists(mongodb_path):
     raise FileNotFoundError(f"❌ mongodb.csv not found at {mongodb_path}")
@@ -111,13 +137,12 @@ mongodb["date"] = pd.to_datetime(mongodb["date"], errors="coerce")
 for col in ["close", "atr", "marketCap"]:
     mongodb[col] = pd.to_numeric(mongodb[col], errors="coerce")
 mongodb = mongodb.dropna(subset=["symbol", "date", "close", "atr"])
-
 mongodb = mongodb.sort_values(["symbol", "date"]).reset_index(drop=True)
 print(f"✅ Loaded {len(mongodb)} rows (marketCap in million BDT)")
 
 
 # ---------------------------------------------------------
-# Profit–Loss Calculator (only 14 columns in output)
+# Profit–Loss Calculator (using tp, not 10%!)
 # ---------------------------------------------------------
 results = []
 remove_trade_ids = []
@@ -126,13 +151,16 @@ for _, row in trade_df.iterrows():
     symbol = row["symbol"]
     buy_date = row["date"]
     buy = float(row["buy"])
-    sl_input_pct = float(row["SL"])
+    SL_manual = float(row["SL"])
+    tp_val = float(row["tp"]) if pd.notna(row["tp"]) else buy * 1.10  # fallback to 10%
+    rrr_val = float(row["RRR"]) if pd.notna(row["RRR"]) else np.nan
     trade_id = row["trade_id"]
     ref = row["Reference"]
 
-    # Sanitize SL%
-    if sl_input_pct <= 0 or sl_input_pct > 50:
-        sl_input_pct = 5.0
+    # Compute SL_value (from manual SL, not %)
+    SL_value = SL_manual  # ✅ SL is absolute price, not %
+    buy_sl_diff = buy - SL_value
+    sl_pct = ((buy - SL_value) / buy) * 100 if buy > 0 else np.nan
 
     # Get ATR & marketCap
     df_sym = mongodb[mongodb["symbol"] == symbol].copy()
@@ -148,17 +176,10 @@ for _, row in trade_df.iterrows():
     atr = buy_row["atr"]
     market_cap_million = buy_row.get("marketCap", np.nan)
 
-    # Compute ATR% & optimal k (internal)
+    # ATR%
     atr_pct = (atr / buy) * 100 if atr > 0 else 3.0
     k = get_dsex_k(market_cap_million, atr_pct)
-
-    # ✅ atr_sl_pct = (k * atr / buy) * 100
     atr_sl_pct = (k * atr / buy) * 100
-
-    # Use YOUR manual SL for exits
-    SL_value = buy * (1 - sl_input_pct / 100)
-    buy_sl_diff = buy - SL_value
-    profit_target = buy * 1.10
 
     # Future data
     buy_idx = buy_rows.index[0]
@@ -180,23 +201,27 @@ for _, row in trade_df.iterrows():
                 cur_date, close,
                 round(loss_pct, 2), np.nan,
                 diff_days, ref,
-                round(buy_sl_diff, 4), round(sl_input_pct, 2),
-                round(atr_sl_pct, 2)  # ✅ only new column
+                round(buy_sl_diff, 4), round(sl_pct, 2),
+                round(atr_sl_pct, 2),
+                round(tp_val, 4),  # ✅ tp
+                round(rrr_val, 2) if pd.notna(rrr_val) else np.nan  # ✅ RRR
             ])
             remove_trade_ids.append(trade_id)
             hit = True
             break
 
-        # Profit hit
-        if close >= profit_target:
+        # Profit hit (✅ now using tp!)
+        if close >= tp_val:
             profit_pct = ((close - buy) / buy) * 100
             results.append([
                 None, symbol, buy_date, buy, SL_value,
                 cur_date, close,
                 np.nan, round(profit_pct, 2),
                 diff_days, ref,
-                round(buy_sl_diff, 4), round(sl_input_pct, 2),
-                round(atr_sl_pct, 2)  # ✅ only new column
+                round(buy_sl_diff, 4), round(sl_pct, 2),
+                round(atr_sl_pct, 2),
+                round(tp_val, 4),  # ✅ tp
+                round(rrr_val, 2) if pd.notna(rrr_val) else np.nan  # ✅ RRR
             ])
             remove_trade_ids.append(trade_id)
             hit = True
@@ -204,29 +229,32 @@ for _, row in trade_df.iterrows():
 
 
 # ---------------------------------------------------------
-# ✅ Save EXACTLY the columns you requested
+# ✅ Save with tp & RRR (16 columns total)
 # ---------------------------------------------------------
 if results:
     out = pd.DataFrame(results, columns=[
         "no", "symbol", "buy_date", "buy", "SL_value",
         "sell_date", "sell",
         "loss_pct", "profit_pct",
-        "days_held", "Reference", "buy_sl_diff", "sl_pct", "atr_sl_pct"  # ✅ 14 columns
+        "days_held", "Reference", "buy_sl_diff", "sl_pct", "atr_sl_pct",
+        "tp", "RRR"  # ✅ 2 new columns
     ])
     out["no"] = range(1, len(out) + 1)
     out = out.sort_values("buy_sl_diff", ascending=True).reset_index(drop=True)
     out["no"] = range(1, len(out) + 1)
     out.to_csv(profit_loss_path, index=False)
-    print(f"✅ Saved {len(out)} records to {profit_loss_path} (14 columns only)")
+    print(f"✅ Saved {len(out)} records to {profit_loss_path} (16 columns: +tp, +RRR)")
 else:
     print("⚠️ No exits triggered.")
 
 
-# Update trade_stock.csv
+# Update trade_stock.csv (remove exited trades)
 clean_trade = trade_df[~trade_df["trade_id"].isin(remove_trade_ids)].copy()
 clean_trade = clean_trade.drop(columns=["trade_id"])
 if not clean_trade.empty:
     clean_trade.insert(0, "no", range(1, len(clean_trade) + 1))
+cols_order = ["no", "date", "symbol", "buy", "SL", "tp", "RRR", "Reference"]
+clean_trade = clean_trade.reindex(columns=cols_order)
 clean_trade.to_csv(trade_stock_path, index=False)
 
-print("\n🎉 Done — lightweight output with `atr_sl_pct` only.")
+print("\n🎉 Done — now using real 'tp' & 'RRR' from signal files!")
