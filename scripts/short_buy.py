@@ -38,8 +38,12 @@ for _, rsi_row in rsi_df.iterrows():
     if pd.isna(last_row_date) or symbol not in mongo_groups.groups:
         continue
 
-    symbol_group = mongo_groups.get_group(symbol).sort_values('date')
-    last_row = symbol_group.iloc[-1]
+    symbol_group = mongo_groups.get_group(symbol).sort_values('date').reset_index(drop=True)
+    
+    last_row_candidates = symbol_group[symbol_group['date'] == last_row_date]
+    if last_row_candidates.empty:
+        continue
+    last_row = last_row_candidates.iloc[-1]
 
     if not (last_row['close'] > last_high):
         continue
@@ -72,25 +76,72 @@ for _, rsi_row in rsi_df.iterrows():
     SL_price = low_candle['low']
     buy_price = last_row['close']
 
+    # 🔑 Find tp: backward from low_candle
+    tp_price = None
+    try:
+        low_idx = symbol_group[symbol_group['date'] == low_candle['date']].index[0]
+    except IndexError:
+        low_idx = (abs(symbol_group['date'] - low_candle['date'])).idxmin()
+
+    for i in range(low_idx - 1, 1, -1):
+        try:
+            sb = symbol_group.iloc[i - 2]
+            sa = symbol_group.iloc[i - 1]
+            s  = symbol_group.iloc[i]
+        except IndexError:
+            break
+
+        if not (sb['date'] < sa['date'] < s['date'] < low_candle['date']):
+            continue
+
+        if (s['high'] > sa['high']) and (sa['high'] >= sb['high']):
+            tp_price = s['high']
+            break
+
+    # Skip if tp not found
+    if tp_price is None:
+        continue
+
+    # Append raw values (RRR will be computed after DataFrame creation)
     output_rows.append({
         'symbol': symbol,
         'date': last_row['date'].date(),
         'buy': buy_price,
         'SL': SL_price,
+        'tp': tp_price,
     })
 
-# Build standardized DataFrame
+# Build DataFrame
 if output_rows:
     df = pd.DataFrame(output_rows)
-    df = df.sort_values(['SL', 'symbol'], ascending=[True, True]).reset_index(drop=True)
-    df.insert(0, 'No', range(1, len(df) + 1))
     df['buy'] = pd.to_numeric(df['buy'], errors='coerce')
     df['SL'] = pd.to_numeric(df['SL'], errors='coerce')
+    df['tp'] = pd.to_numeric(df['tp'], errors='coerce')
+    
+    # ✅ Calculate RRR
+    df['RRR'] = (df['tp'] - df['buy']) / (df['buy'] - df['SL'])
+    
+    # ✅ Filter: keep only valid, positive RRR (tp > buy > SL)
+    df = df[
+        (df['buy'] > df['SL']) & 
+        (df['tp'] > df['buy']) & 
+        (df['RRR'] > 0)
+    ].reset_index(drop=True)
+    
+    if len(df) == 0:
+        df = pd.DataFrame(columns=['No', 'symbol', 'date', 'buy', 'SL', 'tp', 'RRR'])
+    else:
+        # Sort: highest RRR first → then smallest risk (buy-SL) first
+        df = df.sort_values(['RRR', 'buy', 'SL'], ascending=[False, True, False]).reset_index(drop=True)
+        df.insert(0, 'No', range(1, len(df) + 1))
+        df = df[['No', 'symbol', 'date', 'buy', 'SL', 'tp', 'RRR']]
 else:
-    df = pd.DataFrame(columns=['No', 'symbol', 'date', 'buy', 'SL'])
+    df = pd.DataFrame(columns=['No', 'symbol', 'date', 'buy', 'SL', 'tp', 'RRR'])
 
 # Save
 df.to_csv(output_path1, index=False)
 df.to_csv(output_path2, index=False)
 
-print(f"✅ short_buy.csv saved ({len(df)} rows)")
+print(f"✅ short_buy.csv saved with 'tp' and 'RRR' columns ({len(df)} rows)")
+if len(df) > 0:
+    print(f"📈 Best RRR: {df['RRR'].max():.2f} | Worst RRR: {df['RRR'].min():.2f}")
