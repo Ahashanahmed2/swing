@@ -38,12 +38,15 @@ df["date"] = pd.to_datetime(df["date"], errors="coerce")
 df = df.dropna(subset=["date"])
 df = df.sort_values(["symbol", "date"]).reset_index(drop=True)
 
+# Group by symbol for efficiency
+mongo_groups = df.groupby("symbol", sort=False)
+
 results = []
 
 # ---------------------------------------------------------
-# Per-symbol latest pattern check
+# Per-symbol latest pattern check (5-bar logic)
 # ---------------------------------------------------------
-for symbol, group in df.groupby("symbol", sort=False):
+for symbol, group in mongo_groups:
     group = group.sort_values("date").reset_index(drop=True)
     if len(group) < 5:
         continue
@@ -76,17 +79,17 @@ for symbol, group in df.groupby("symbol", sort=False):
     if buy is None:
         continue
 
-    # 🔑 Find tp: scan BACKWARD from SL_source_row
+    # 🔑 NEW: Find tp — scan BACKWARD from SL_source_row in FULL history (unlimited)
     tp = None
     try:
-        # Find index of SL_source_row in group (match by date)
+        # Find index of SL_source_row in FULL group (not just last 5)
         sl_idx = group[group["date"] == SL_source_row["date"]].index[0]
     except IndexError:
         # Fallback: closest match
         sl_idx = (abs(group["date"] - SL_source_row["date"])).idxmin()
 
-    # Scan backward: need at least 3 rows before sl_idx (sb, sa, s)
-    for i in range(sl_idx - 1, 1, -1):
+    # Scan backward: i = index of candidate 's' (need sb = i-2, sa = i-1, s = i)
+    for i in range(sl_idx - 1, 1, -1):  # unlimited backward
         try:
             sb = group.iloc[i - 2]
             sa = group.iloc[i - 1]
@@ -94,7 +97,7 @@ for symbol, group in df.groupby("symbol", sort=False):
         except IndexError:
             break
 
-        # Ensure time order
+        # Ensure chronological order
         if not (sb["date"] < sa["date"] < s["date"] < SL_source_row["date"]):
             continue
 
@@ -106,7 +109,7 @@ for symbol, group in df.groupby("symbol", sort=False):
     if tp is None:
         continue  # skip if no valid tp
 
-    # Append raw values (RRR will be computed later)
+    # Append
     results.append({
         "date": A["date"],
         "symbol": symbol,
@@ -120,7 +123,6 @@ for symbol, group in df.groupby("symbol", sort=False):
 # ---------------------------------------------------------
 if results:
     result_df = pd.DataFrame(results)
-    # Numeric conversion
     result_df["buy"] = pd.to_numeric(result_df["buy"], errors="coerce")
     result_df["SL"] = pd.to_numeric(result_df["SL"], errors="coerce")
     result_df["tp"] = pd.to_numeric(result_df["tp"], errors="coerce")
