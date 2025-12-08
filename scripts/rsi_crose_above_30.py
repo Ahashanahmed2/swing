@@ -1,232 +1,189 @@
 import pandas as pd
 import os
-import numpy as np
 
 # ---------------------------------------------------------
 # Paths
 # ---------------------------------------------------------
-short_path = "./csv/short_buy.csv"
-gape_path = "./csv/gape_buy.csv"
-rsi_path = "./csv/rsi_30_buy.csv"
-swing_path = "./csv/swing_buy.csv"
 
-mongodb_path = "./csv/mongodb.csv"
-trade_stock_path = "./csv/trade_stock.csv"
-profit_loss_path = "./output/ai_signal/profit-loss.csv"
+RSI30_PATH = "./csv/rsi_30.csv"
+MONGO_PATH = "./csv/mongodb.csv"
+BUY_PATH_OUTPUT = "./output/ai_signal/rsi_30_buy.csv"
+BUY_PATH_CSV = "./csv/rsi_30_buy.csv"
 
-os.makedirs("./output/ai_signal", exist_ok=True)
-
+os.makedirs("./output/ai_signal/", exist_ok=True)
+os.makedirs("./csv/", exist_ok=True)
 
 # ---------------------------------------------------------
-# Helper: Load BUY data
+# Helper: Print log
 # ---------------------------------------------------------
-def load_file(path, reference, buy_col):
-    if not os.path.exists(path):
-        print(f"⚠️ File not found: {path}")
-        return pd.DataFrame(columns=["date", "symbol", "buy", "SL", "Reference"])
 
-    try:
-        df = pd.read_csv(path)
-    except Exception as e:
-        print(f"❌ Error reading {path}: {e}")
-        return pd.DataFrame(columns=["date", "symbol", "buy", "SL", "Reference"])
-
-    required_cols = {"symbol", "date", buy_col, "SL"}
-    if not required_cols.issubset(df.columns):
-        missing = required_cols - set(df.columns)
-        print(f"⚠️ Missing columns in {path}: {missing}")
-        return pd.DataFrame(columns=["date", "symbol", "buy", "SL", "Reference"])
-
-    df = df.dropna(subset=["symbol", "date"])
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df = df.dropna(subset=["date"])
-
-    return pd.DataFrame({
-        "date": df["date"].dt.date,
-        "symbol": df["symbol"].astype(str).str.strip().str.upper(),
-        "buy": pd.to_numeric(df[buy_col], errors="coerce"),
-        "SL": pd.to_numeric(df["SL"], errors="coerce"),
-        "Reference": reference
-    }).dropna(subset=["buy", "SL"])
-
+def log(msg):
+    print("🔹", msg)
 
 # ---------------------------------------------------------
-# ✅ DSEX-Optimized k Selector (internal only)
+# Load mongodb.csv (must exist)
 # ---------------------------------------------------------
-def get_dsex_k(market_cap_million, atr_pct):
-    # Convert to crore: 10 million = 1 crore
-    market_cap_cr = market_cap_million / 10 if pd.notna(market_cap_million) else 0
-    if market_cap_cr >= 5000:      # Large
-        return 1.2 if atr_pct < 3.0 else (1.4 if atr_pct <= 5.0 else 1.6)
-    elif market_cap_cr >= 500:     # Mid
-        return 1.5
-    else:                          # Small
-        return 1.6 if atr_pct < 4.0 else 1.8
 
+log("Loading mongodb.csv...")
+if not os.path.exists(MONGO_PATH):
+    raise FileNotFoundError(f"❌ Required file not found: {MONGO_PATH}")
 
-# ---------------------------------------------------------
-# Load signals — ✅ ALL use "buy" (standardized)
-# ---------------------------------------------------------
-short_df = load_file(short_path, "short", "buy")      # ✅ fixed
-gape_df  = load_file(gape_path,  "gape",  "buy")      # ✅ fixed
-rsi_df   = load_file(rsi_path,   "rsi",   "buy")      # ✅ fixed
-swing_df = load_file(swing_path, "swing", "buy")      # ✅ unchanged
+mongodb = pd.read_csv(MONGO_PATH)
 
-trade_df = pd.concat([short_df, gape_df, rsi_df, swing_df], ignore_index=True)
-print(f"✅ Loaded {len(trade_df)} trade signals.")
+# Ensure required columns exist
+required_cols = {'symbol', 'date', 'low', 'high', 'close', 'rsi'}
+if not required_cols.issubset(mongodb.columns):
+    missing = required_cols - set(mongodb.columns)
+    raise ValueError(f"❌ Missing required columns in mongodb.csv: {missing}")
 
-if trade_df.empty:
-    print("🛑 No valid trade signals. Exiting.")
-    exit()
-
-trade_df = trade_df.reset_index(drop=True)
-trade_df["trade_id"] = trade_df.index
-
-trade_df_with_no = trade_df.copy()
-trade_df_with_no.insert(0, "no", range(1, len(trade_df_with_no) + 1))
-trade_df_with_no.drop(columns=["trade_id"], inplace=True)
-trade_df_with_no.to_csv(trade_stock_path, index=False)
-
+mongodb['date'] = pd.to_datetime(mongodb['date'])
+mongodb = mongodb.sort_values(['symbol', 'date']).reset_index(drop=True)
 
 # ---------------------------------------------------------
-# Load mongodb.csv (marketCap in million BDT)
+# 🔁 AUTO-GENERATE rsi_30.csv: Keep ONLY symbols with latest RSI < 30
 # ---------------------------------------------------------
-if not os.path.exists(mongodb_path):
-    raise FileNotFoundError(f"❌ mongodb.csv not found at {mongodb_path}")
 
-try:
-    mongodb = pd.read_csv(mongodb_path)
-    if mongodb.empty:
-        raise ValueError("mongodb.csv is empty!")
-except Exception as e:
-    raise Exception(f"❌ Failed to load mongodb.csv: {e}")
+log("🔍 Finding latest record per symbol with RSI < 30...")
 
-essential_cols = {"symbol", "date", "close", "atr", "marketCap"}
-missing = essential_cols - set(mongodb.columns)
-if missing:
-    raise ValueError(f"mongodb.csv missing: {missing}")
+latest_mongo = mongodb.sort_values('date').groupby('symbol').tail(1).reset_index(drop=True)
 
-mongodb["symbol"] = mongodb["symbol"].astype(str).str.strip().str.upper()
-mongodb["date"] = pd.to_datetime(mongodb["date"], errors="coerce")
-for col in ["close", "atr", "marketCap"]:
-    mongodb[col] = pd.to_numeric(mongodb[col], errors="coerce")
-mongodb = mongodb.dropna(subset=["symbol", "date", "close", "atr"])
+rsi_under_30 = latest_mongo[
+    (latest_mongo['rsi'] < 30) &
+    (latest_mongo['rsi'].notna())
+].copy()
 
-mongodb = mongodb.sort_values(["symbol", "date"]).reset_index(drop=True)
-print(f"✅ Loaded {len(mongodb)} rows (marketCap in million BDT)")
+log(f"✅ Found {len(rsi_under_30)} symbols with latest RSI < 30")
 
-
-# ---------------------------------------------------------
-# Profit–Loss Calculator — ✅ SL as PRICE (not %)
-# ---------------------------------------------------------
-results = []
-remove_trade_ids = []
-
-for _, row in trade_df.iterrows():
-    symbol = row["symbol"]
-    buy_date = row["date"]
-    buy = float(row["buy"])
-    SL_price = float(row["SL"])  # ✅ SL is price (e.g., 97.2)
-    trade_id = row["trade_id"]
-    ref = row["Reference"]
-
-    # ✅ Use SL as price; fallback only if invalid
-    if SL_price <= 0 or SL_price >= buy:
-        SL_value = buy * 0.95    # 5% stop as fallback
-        sl_input_pct = 5.0
-    else:
-        SL_value = SL_price
-        sl_input_pct = ((buy - SL_value) / buy) * 100  # for output only
-
-    # Get ATR & marketCap
-    df_sym = mongodb[mongodb["symbol"] == symbol].copy()
-    if df_sym.empty:
-        continue
-
-    df_sym["date_only"] = df_sym["date"].dt.date
-    buy_rows = df_sym[df_sym["date_only"] == buy_date]
-    if buy_rows.empty:
-        continue
-
-    buy_row = buy_rows.iloc[0]
-    atr = buy_row["atr"]
-    market_cap_million = buy_row.get("marketCap", np.nan)
-
-    # Compute ATR% & optimal k (internal)
-    atr_pct = (atr / buy) * 100 if atr > 0 else 3.0
-    k = get_dsex_k(market_cap_million, atr_pct)
-
-    # ✅ atr_sl_pct = (k * atr / buy) * 100
-    atr_sl_pct = (k * atr / buy) * 100
-
-    # Use YOUR manual SL for exits
-    buy_sl_diff = buy - SL_value
-    profit_target = buy * 1.10
-
-    # Future data
-    buy_idx = buy_rows.index[0]
-    future_rows = df_sym.loc[df_sym.index > buy_idx].sort_values("date")
-    if future_rows.empty:
-        continue
-
-    for _, r in future_rows.iterrows():
-        close = r["close"]
-        cur_date = r["date"].date()
-        diff_days = (cur_date - buy_date).days
-
-        # SL hit
-        if close < SL_value:
-            loss_pct = ((buy - close) / buy) * 100
-            results.append([
-                None, symbol, buy_date, buy, SL_value,
-                cur_date, close,
-                round(loss_pct, 2), np.nan,
-                diff_days, ref,
-                round(buy_sl_diff, 4), round(sl_input_pct, 2),
-                round(atr_sl_pct, 2)
-            ])
-            remove_trade_ids.append(trade_id)
-            break
-
-        # Profit hit
-        if close >= profit_target:
-            profit_pct = ((close - buy) / buy) * 100
-            results.append([
-                None, symbol, buy_date, buy, SL_value,
-                cur_date, close,
-                np.nan, round(profit_pct, 2),
-                diff_days, ref,
-                round(buy_sl_diff, 4), round(sl_input_pct, 2),
-                round(atr_sl_pct, 2)
-            ])
-            remove_trade_ids.append(trade_id)
-            break
-
-
-# ---------------------------------------------------------
-# ✅ Save EXACTLY the columns you requested (14 columns)
-# ---------------------------------------------------------
-if results:
-    out = pd.DataFrame(results, columns=[
-        "no", "symbol", "buy_date", "buy", "SL_value",
-        "sell_date", "sell",
-        "loss_pct", "profit_pct",
-        "days_held", "Reference", "buy_sl_diff", "sl_pct", "atr_sl_pct"
-    ])
-    out["no"] = range(1, len(out) + 1)
-    out = out.sort_values("buy_sl_diff", ascending=True).reset_index(drop=True)
-    out["no"] = range(1, len(out) + 1)
-    out.to_csv(profit_loss_path, index=False)
-    print(f"✅ Saved {len(out)} records to {profit_loss_path}")
+if len(rsi_under_30) > 0:
+    rsi30_auto = rsi_under_30[['symbol', 'date', 'low', 'high', 'rsi']].copy()
+    rsi30_auto = rsi30_auto.sort_values('symbol').reset_index(drop=True)
+    rsi30_auto.insert(0, 'sl', range(1, len(rsi30_auto) + 1))
 else:
-    print("⚠️ No exits triggered.")
+    rsi30_auto = pd.DataFrame(columns=['sl', 'symbol', 'date', 'low', 'high', 'rsi'])
 
+rsi30_auto.to_csv(RSI30_PATH, index=False)
+log(f"💾 Updated rsi_30.csv with {len(rsi30_auto)} active symbols")
 
-# Update trade_stock.csv
-clean_trade = trade_df[~trade_df["trade_id"].isin(remove_trade_ids)].copy()
-clean_trade = clean_trade.drop(columns=["trade_id"])
-if not clean_trade.empty:
-    clean_trade.insert(0, "no", range(1, len(clean_trade) + 1))
-clean_trade.to_csv(trade_stock_path, index=False)
+# ---------------------------------------------------------
+# Load rsi_30.csv
+# ---------------------------------------------------------
 
-print("\n🎉 Done — SL treated as price, all BUY files standardized to 'buy' column.")
+log("Loading rsi_30.csv (auto-generated)...")
+rsi30 = pd.read_csv(RSI30_PATH)
+rsi30['date'] = pd.to_datetime(rsi30['date'])
+
+log(f"mongodb rows: {len(mongodb)}")
+log(f"rsi_30 rows loaded: {len(rsi30)}")
+
+buy_rows = []
+rsi30_final = rsi30.copy()
+
+# ---------------------------------------------------------
+# Main loop
+# ---------------------------------------------------------
+
+if len(rsi30) == 0:
+    log("ℹ No symbols with RSI < 30 → skipping processing.")
+else:
+    for idx, row in rsi30.iterrows():
+        symbol = row['symbol']
+        base_date = row['date']
+        base_low = row['low']
+        base_high = row['high']
+        base_rsi = row['rsi']
+        sl = row['sl']
+
+        log(f"Processing: {symbol} | Base Date: {base_date.strftime('%Y-%m-%d')} | RSI={base_rsi:.2f}")
+
+        md = mongodb[mongodb['symbol'] == symbol].copy()
+        if md.empty:
+            log(f"  ⚠ No mongodb data for {symbol}")
+            continue
+
+        if base_date not in md['date'].values:
+            log(f"  ⚠ Base date {base_date.date()} not found in mongodb for {symbol} → skipping")
+            continue
+
+        start_idx = md[md['date'] == base_date].index[0]
+
+        for i in range(start_idx + 1, len(md)):
+            r = md.loc[i]
+            m_rsi = r['rsi']
+            m_close = r['close']
+            m_date = r['date']
+
+            # DELETE rule
+            if m_rsi > base_rsi and m_close < base_low:
+                log(f"  ❌ DELETE {symbol}: RSI↑({m_rsi:.2f}) & close({m_close}) < base_low({base_low})")
+                rsi30_final = rsi30_final[rsi30_final['sl'] != sl]
+                break
+
+            # BUY rule
+            if m_close > base_high:
+                log(f"  ✅ BUY SIGNAL {symbol} @ {m_date.strftime('%Y-%m-%d')}")
+                buy_rows.append([
+                    m_date.strftime("%Y-%m-%d"),
+                    symbol,
+                    m_close,
+                    base_low
+                ])
+
+            # EXIT rule
+            if m_rsi > 30:
+                log(f"  ❌ EXIT {symbol}: RSI={m_rsi:.2f} > 30")
+                rsi30_final = rsi30_final[rsi30_final['sl'] != sl]
+                break
+
+# ---------------------------------------------------------
+# SAVE BUY SIGNALS TO TWO LOCATIONS (with diff & sorted)
+# ---------------------------------------------------------
+
+if buy_rows:
+    buy_df = pd.DataFrame(buy_rows, columns=['date', 'symbol', 'close', 'SL'])
+
+    # ➕ Add 'diff' = close - SL
+    buy_df['diff'] = buy_df['close'] - buy_df['SL']
+
+    # ➕ Sort by 'diff' ascending (smallest gap first)
+    buy_df = buy_df.sort_values('diff').reset_index(drop=True)
+
+    # ➕ Insert 'No' after sorting (so numbering follows sorted order)
+    buy_df.insert(0, 'No', range(1, len(buy_df) + 1))
+
+    # -------------------------------
+    # DELETE OLD ./csv/rsi_30_buy.csv
+    # -------------------------------
+    if os.path.exists(BUY_PATH_CSV):
+        os.remove(BUY_PATH_CSV)
+
+    # Save to both paths
+    buy_df.to_csv(BUY_PATH_OUTPUT, index=False)
+    buy_df.to_csv(BUY_PATH_CSV, index=False)
+
+    log(f"✅ {len(buy_df)} BUY signals generated.")
+    log(f"💾 BUY saved (sorted by diff ↑): {BUY_PATH_OUTPUT}")
+    log(f"💾 BUY saved (sorted by diff ↑): {BUY_PATH_CSV}")
+
+else:
+    log("ℹ No BUY signals generated.")
+
+# ---------------------------------------------------------
+# Save updated rsi_30.csv
+# ---------------------------------------------------------
+
+rsi30_final = rsi30_final.reset_index(drop=True)
+
+COLUMNS = ['sl', 'symbol', 'date', 'low', 'high', 'rsi']
+if len(rsi30_final) == 0:
+    rsi30_final = pd.DataFrame(columns=COLUMNS)
+else:
+    rsi30_final = rsi30_final.reindex(columns=COLUMNS)
+
+rsi30_final['sl'] = range(1, len(rsi30_final) + 1)
+
+rsi30_final.to_csv(RSI30_PATH, index=False)
+log(f"💾 rsi_30.csv updated — remaining symbols: {len(rsi30_final)}")
+
+log("✅ Script completed successfully!")
+
+./csv/rsi_30_buy.csv তে কি কি কলাম আছে
