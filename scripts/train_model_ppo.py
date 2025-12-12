@@ -29,6 +29,7 @@ print(f"✅ Config: Capital = {TOTAL_CAPITAL:,.0f} BDT, Risk = {RISK_PERCENT*100
 # ---------------------------------------------------------
 strategy_metrics_path = "./output/ai_signal/strategy_metrics.csv"
 symbol_ref_path = "./output/ai_signal/symbol_reference_metrics.csv"
+liquidity_path = "./csv/liquidity_system.csv"  # ✅ NEW
 
 strategy_metrics = pd.read_csv(strategy_metrics_path) if os.path.exists(strategy_metrics_path) else pd.DataFrame()
 symbol_ref_metrics = pd.read_csv(symbol_ref_path) if os.path.exists(symbol_ref_path) else pd.DataFrame()
@@ -69,15 +70,33 @@ if not main_df.empty and not symbol_ref_metrics.empty:
         (symbol_ref_metrics['Expectancy (BDT)'] > 100)
     ]
     quality_symbols = high_quality['Symbol'].str.upper().unique().tolist()
-    
-    print(f"🎯 {len(quality_symbols)} high-quality symbols: {quality_symbols[:5]}...")
+    print(f"🎯 {len(quality_symbols)} symbols with >65% Win% & >100 BDT expectancy found")
+
+    # ✅ Add: Liquidity filter (score >= 0.4 = Moderate+)
+    high_liquidity_symbols = []
+    if os.path.exists(liquidity_path):
+        try:
+            liquidity_df = pd.read_csv(liquidity_path)
+            liquidity_df['symbol'] = liquidity_df['symbol'].str.upper()
+            good_liq = liquidity_df[liquidity_df['liquidity_score'] >= 0.4]
+            high_liquidity_symbols = good_liq['symbol'].unique().tolist()
+            print(f"💧 {len(high_liquidity_symbols)} symbols with Moderate+ liquidity")
+        except Exception as e:
+            print(f"⚠️ Failed to load liquidity: {e}")
+
+    # Combine: quality_symbols ∩ high_liquidity_symbols
+    if high_liquidity_symbols:
+        quality_symbols = set(quality_symbols) & set(high_liquidity_symbols)
+        print(f"🌟 Final high-quality symbols (Win%>65, Exp>100, Liq≥Moderate): {len(quality_symbols)}")
 
     # Filter main_df
     main_df['symbol'] = main_df['symbol'].str.upper()
     main_df = main_df[main_df['symbol'].isin(quality_symbols)]
     print(f"✅ Filtered to {len(main_df)} rows ({main_df['symbol'].nunique()} symbols)")
+else:
+    print("⚠️ No system metrics found → using full dataset")
 
-# --- Create Environment — with SYSTEM CONTEXT ---
+# --- Create Environment — with FULL SYSTEM CONTEXT ---
 try:
     env = TradeEnv(
         maindf=main_df,
@@ -86,37 +105,38 @@ try:
         shortbuy_path="./csv/short_buy.csv",
         rsi_diver_path="./csv/rsi_diver.csv",
         rsi_diver_retest_path="./csv/rsi_diver_retest.csv",
-        trade_stock_path="./csv/trade_stock.csv",          # ← your open signals
-        metrics_path=strategy_metrics_path,                # ← strategy metrics
-        symbol_ref_path=symbol_ref_path,                   # ← symbol×strategy metrics
-        config_path=CONFIG_PATH
+        trade_stock_path="./csv/trade_stock.csv",
+        metrics_path=strategy_metrics_path,
+        symbol_ref_path=symbol_ref_path,
+        config_path=CONFIG_PATH,
+        liquidity_path=liquidity_path  # ✅ CRITICAL: Enable liquidity awareness
     )
-    print("✅ Environment initialized with SYSTEM INTELLIGENCE")
+    print("✅ Environment initialized with LIQUIDITY-AWARE SYSTEM INTELLIGENCE")
 except Exception as e:
     print(f"❌ Failed to initialize environment: {e}")
     exit()
 
 env = DummyVecEnv([lambda: env])
 
-# --- ✅ ENHANCED PPO: Swing-Optimized Hyperparameters ---
+# --- ✅ ENHANCED PPO: Liquidity-Optimized Hyperparameters ---
 try:
     model = PPO(
         policy="MlpPolicy",
         env=env,
         verbose=1,
-        learning_rate=2.5e-4,       # ↓ slightly lower for stability
+        learning_rate=2.2e-4,       # ↓ more stable for small market
         n_steps=2048,
-        batch_size=128,             # ↑ larger batch (better gradient est.)
-        n_epochs=15,                # ↑ more epochs per update
-        gamma=0.985,                # ↑ longer horizon (swing trades hold days)
+        batch_size=256,             # ↑ larger batch (better for small data)
+        n_epochs=20,                # ↑ more epochs (prevent underfitting)
+        gamma=0.99,                 # ↑ longer horizon (swing trades)
         gae_lambda=0.95,
-        clip_range=0.15,            # ↓ tighter clipping (more stable)
-        ent_coef=0.005,             # ↓ less entropy (more deterministic)
-        vf_coef=0.6,                # ↑ value function weight (better risk estimation)
-        max_grad_norm=0.5,          # ↓ gradient clipping
+        clip_range=0.12,            # ↓ tighter clipping (more stable)
+        ent_coef=0.001,             # ↓↓ less entropy (more deterministic)
+        vf_coef=0.7,                # ↑↑ better value estimation (critical for risk)
+        max_grad_norm=0.4,          # ↓ gradient clipping
         device='cpu'
     )
-    print("✅ PPO model created with SWING-OPTIMIZED parameters")
+    print("✅ PPO model created with LIQUIDITY-OPTIMIZED parameters")
 except Exception as e:
     print(f"❌ Failed to create PPO model: {e}")
     exit()
@@ -140,7 +160,7 @@ callback = TrainingCallback(check_freq=2000)
 
 # --- 🚀 Train PPO Model ---
 try:
-    print(f"\n🚀 Training PPO (200,000 timesteps) with SYSTEM-OPTIMIZED data...")
+    print(f"\n🚀 Training PPO (200,000 timesteps) with LIQUIDITY-OPTIMIZED data...")
     model.learn(
         total_timesteps=200_000,
         callback=callback,
@@ -152,32 +172,47 @@ except Exception as e:
     print(f"❌ Training failed: {e}")
     exit()
 
-# --- ✅ Save & Report ---
+# --- ✅ Save & LIQUIDITY-AWARE Report ---
 try:
     save_path = './csv/ppo_retrained'
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     model.save(save_path)
     print(f"\n✅ PPO model saved at: {save_path}.zip")
 
-    # 📊 Final report
+    # 📊 Final report with liquidity stats
     if callback.rewards:
-        print("\n" + "="*50)
-        print("📊 PPO TRAINING SUMMARY")
-        print("="*50)
+        # Get liquidity distribution
+        trained_syms = main_df['symbol'].unique()
+        liq_distribution = {}
+        if os.path.exists(liquidity_path):
+            try:
+                liq_df = pd.read_csv(liquidity_path)
+                liq_df['symbol'] = liq_df['symbol'].str.upper()
+                trained_liq = liq_df[liq_df['symbol'].isin(trained_syms)]
+                liq_distribution = trained_liq['liquidity_rating'].value_counts().to_dict()
+            except:
+                pass
+
+        print("\n" + "="*60)
+        print("📊 PPO TRAINING SUMMARY (LIQUIDITY-OPTIMIZED)")
+        print("="*60)
         print(f"📈 Avg Final Reward  : {np.mean(callback.rewards[-5:]):+.3f}")
-        print(f"📉 Min Reward         : {np.min(callback.rewards):+.3f}")
-        print(f"📈 Max Reward         : {np.max(callback.rewards):+.3f}")
-        print(f"🎯 Trained on         : {main_df['symbol'].nunique()} high-quality symbols")
+        print(f"📉 Min/Max Reward     : {np.min(callback.rewards):+.3f} / {np.max(callback.rewards):+.3f}")
+        print(f"🎯 Trained on         : {len(trained_syms)} high-quality symbols")
         if not symbol_ref_metrics.empty:
             top_symbol = symbol_ref_metrics.loc[symbol_ref_metrics['Expectancy (BDT)'].idxmax()]
             print(f"🏆 Top Symbol         : {top_symbol['Symbol']} ({top_symbol['Expectancy (BDT)']:.0f} BDT)")
-        print("="*50)
+        if liq_distribution:
+            print("💧 Liquidity distribution:")
+            for liq, cnt in sorted(liq_distribution.items()):
+                print(f"   • {liq:<10} : {cnt:2d} symbols")
+        print("="*60)
 
 except Exception as e:
     print(f"❌ Failed to save PPO model: {e}")
 
 # --- 🔁 Optional: Auto-test with generate_signals ---
-auto_test = input("\n🧪 Test new model with signal generation? (y/n): ").strip().lower()
+auto_test = input("\n🧪 Test new PPO model with signal generation? (y/n): ").strip().lower()
 if auto_test == 'y':
     try:
         from generate_signals import generate_signals
