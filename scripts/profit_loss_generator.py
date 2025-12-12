@@ -34,6 +34,8 @@ mongodb_path = "./csv/mongodb.csv"
 trade_stock_path = "./csv/trade_stock.csv"
 profit_loss_path = "./output/ai_signal/profit-loss.csv"
 metrics_path = "./output/ai_signal/performance_metrics.csv"
+strategy_metrics_path = "./output/ai_signal/strategy_metrics.csv"
+symbol_ref_metrics_path = "./output/ai_signal/symbol_reference_metrics.csv"
 
 os.makedirs(os.path.dirname(profit_loss_path), exist_ok=True)
 
@@ -168,12 +170,14 @@ for _, row in trade_df.iterrows():
     sl_pct = ((buy - SL_value) / buy) * 100 if buy > 0 else np.nan
 
     df_sym = mongodb[mongodb["symbol"] == symbol]
-    if df_sym.empty: continue
+    if df_sym.empty:
+        continue
 
     df_sym = df_sym.copy()
     df_sym["date_only"] = df_sym["date"].dt.date
     buy_rows = df_sym[df_sym["date_only"] == buy_date]
-    if buy_rows.empty: continue
+    if buy_rows.empty:
+        continue
 
     buy_row = buy_rows.iloc[0]
     atr = buy_row["atr"]
@@ -185,7 +189,8 @@ for _, row in trade_df.iterrows():
 
     buy_idx = buy_rows.index[0]
     future_rows = df_sym.loc[df_sym.index > buy_idx].sort_values("date")
-    if future_rows.empty: continue
+    if future_rows.empty:
+        continue
 
     for _, r in future_rows.iterrows():
         close = r["close"]
@@ -241,8 +246,9 @@ else:
 
 
 # ---------------------------------------------------------
-# ✅ PERFORMANCE METRICS
+# ✅ GLOBAL PERFORMANCE METRICS
 # ---------------------------------------------------------
+global_metrics = {}
 if results:
     profits = [r[8] for r in results if pd.notna(r[8])]
     losses = [abs(r[7]) for r in results if pd.notna(r[7])]
@@ -263,38 +269,182 @@ if results:
         avg_loss_bdt = np.mean(loss_bdt) if loss_bdt else 0
         expectancy_bdt = (win_rate * avg_win_bdt) - ((1 - win_rate) * avg_loss_bdt)
 
-        metrics = pd.DataFrame({
-            "Metric": [
-                "Total Trades", "Wins", "Losses", "Win Rate (%)",
-                "Avg Win (%)", "Avg Loss (%)", "Profit Factor",
-                "Expectancy (%)", "Avg Win (BDT)", "Avg Loss (BDT)", "Expectancy (BDT)"
-            ],
-            "Value": [
-                total, wins, losses_cnt, round(win_rate * 100, 2),
-                round(avg_win, 2), round(avg_loss, 2), round(profit_factor, 2) if np.isfinite(profit_factor) else "∞",
-                round(expectancy_pct, 2), round(avg_win_bdt, 0), round(avg_loss_bdt, 0), round(expectancy_bdt, 2)
-            ]
+        global_metrics = {
+            "Total Trades": total,
+            "Wins": wins,
+            "Losses": losses_cnt,
+            "Win Rate (%)": round(win_rate * 100, 2),
+            "Avg Win (%)": round(avg_win, 2),
+            "Avg Loss (%)": round(avg_loss, 2),
+            "Profit Factor": round(profit_factor, 2) if np.isfinite(profit_factor) else "∞",
+            "Expectancy (%)": round(expectancy_pct, 2),
+            "Avg Win (BDT)": round(avg_win_bdt, 0),
+            "Avg Loss (BDT)": round(avg_loss_bdt, 0),
+            "Expectancy (BDT)": round(expectancy_bdt, 2)
+        }
+
+        metrics_df = pd.DataFrame(list(global_metrics.items()), columns=["Metric", "Value"])
+        metrics_df.to_csv(metrics_path, index=False)
+        print(f"✅ Global metrics saved to {metrics_path}")
+
+
+# ---------------------------------------------------------
+# ✅ STRATEGY-BASED METRICS (by Reference)
+# ---------------------------------------------------------
+strategy_metrics = []
+if results:
+    for ref in ["swing", "gape", "rsi", "short"]:
+        ref_results = [r for r in results if r[10] == ref]  # r[10] = Reference
+        if not ref_results:
+            continue
+
+        profits = [r[8] for r in ref_results if pd.notna(r[8])]
+        losses = [abs(r[7]) for r in ref_results if pd.notna(r[7])]
+        wins, losses_cnt = len(profits), len(losses)
+        total = wins + losses_cnt
+
+        if total == 0:
+            continue
+
+        win_rate = wins / total
+        avg_win = np.mean(profits) if wins else 0
+        avg_loss = np.mean(losses) if losses_cnt else 0
+        profit_factor = (sum(profits) / sum(losses)) if losses_cnt and sum(losses) else np.inf
+        expectancy_pct = (win_rate * avg_win) - ((1 - win_rate) * avg_loss)
+
+        # In BDT
+        profit_bdt = [r[17] * (r[8] / 100) for r in ref_results if pd.notna(r[8])]
+        loss_bdt = [r[17] * (r[7] / 100) for r in ref_results if pd.notna(r[7])]
+        avg_win_bdt = np.mean(profit_bdt) if profit_bdt else 0
+        avg_loss_bdt = np.mean(loss_bdt) if loss_bdt else 0
+        expectancy_bdt = (win_rate * avg_win_bdt) - ((1 - win_rate) * avg_loss_bdt)
+
+        strategy_metrics.append({
+            "Reference": ref.upper(),
+            "Trades": total,
+            "Win%": round(win_rate * 100, 1),
+            "Avg Win (BDT)": round(avg_win_bdt, 0),
+            "Avg Loss (BDT)": round(avg_loss_bdt, 0),
+            "Profit Factor": round(profit_factor, 2) if np.isfinite(profit_factor) else "∞",
+            "Expectancy (BDT)": round(expectancy_bdt, 2)
         })
 
-        metrics.to_csv(metrics_path, index=False)
-        print(f"✅ Performance metrics saved to {metrics_path}")
+    if strategy_metrics:
+        strategy_df = pd.DataFrame(strategy_metrics)
+        strategy_df.to_csv(strategy_metrics_path, index=False)
+        print(f"✅ Strategy-wise metrics saved to {strategy_metrics_path}")
 
-        print("\n" + "="*50)
-        print("📊 TRADING SYSTEM PERFORMANCE")
-        print("="*50)
-        print(f"✅ Win Rate       : {win_rate:.1%} ({wins}/{total})")
-        print(f"📈 Avg Win        : +{avg_win:.2f}%  ({avg_win_bdt:,.0f} BDT)")
-        print(f"📉 Avg Loss       : -{avg_loss:.2f}%  ({avg_loss_bdt:,.0f} BDT)")
-        print(f"💰 Profit Factor  : {profit_factor:.2f}")
-        print(f"🎯 Expectancy     : {expectancy_pct:+.2f}%  ({expectancy_bdt:+.2f} BDT)")
-        print("="*50)
 
-        if expectancy_bdt < 0:
-            print("❗ Warning: Negative expectancy — review strategy!")
-        elif expectancy_bdt > 100:
-            print("🚀 Excellent! Expectancy > 100 BDT/trade.")
-else:
-    print("⚠️ No closed trades → skipping metrics.")
+# ---------------------------------------------------------
+# ✅ SYMBOL × REFERENCE METRICS (2D Win%)
+# ---------------------------------------------------------
+symbol_ref_metrics = []
+if results:
+    symbols = sorted(set(r[1] for r in results))  # r[1] = symbol
+    refs = ["swing", "gape", "rsi", "short"]
+
+    for sym in symbols:
+        for ref in refs:
+            filtered = [r for r in results if r[1] == sym and r[10] == ref]
+            if not filtered:
+                continue
+
+            profits = [r[8] for r in filtered if pd.notna(r[8])]
+            losses = [abs(r[7]) for r in filtered if pd.notna(r[7])]
+            wins, losses_cnt = len(profits), len(losses)
+            total = wins + losses_cnt
+
+            if total == 0:
+                continue
+
+            win_rate = wins / total
+            avg_win = np.mean(profits) if wins else 0
+            avg_loss = np.mean(losses) if losses_cnt else 0
+            profit_factor = (sum(profits) / sum(losses)) if losses_cnt and sum(losses) else np.inf
+
+            # In BDT
+            profit_bdt = [r[17] * (r[8] / 100) for r in filtered if pd.notna(r[8])]
+            loss_bdt = [r[17] * (r[7] / 100) for r in filtered if pd.notna(r[7])]
+            avg_win_bdt = np.mean(profit_bdt) if profit_bdt else 0
+            avg_loss_bdt = np.mean(loss_bdt) if loss_bdt else 0
+            expectancy_bdt = (win_rate * avg_win_bdt) - ((1 - win_rate) * avg_loss_bdt)
+
+            symbol_ref_metrics.append({
+                "Symbol": sym,
+                "Reference": ref.upper(),
+                "Trades": total,
+                "Win%": round(win_rate * 100, 1),
+                "Avg Win (BDT)": round(avg_win_bdt, 0),
+                "Avg Loss (BDT)": round(avg_loss_bdt, 0),
+                "Profit Factor": round(profit_factor, 2) if np.isfinite(profit_factor) else "∞",
+                "Expectancy (BDT)": round(expectancy_bdt, 2)
+            })
+
+    if symbol_ref_metrics:
+        sym_ref_df = pd.DataFrame(symbol_ref_metrics)
+        sym_ref_df.to_csv(symbol_ref_metrics_path, index=False)
+        print(f"✅ Symbol × Strategy metrics saved to {symbol_ref_metrics_path}")
+
+        # Top 10 combos by Expectancy
+        top10 = sorted(symbol_ref_metrics, key=lambda x: x["Expectancy (BDT)"], reverse=True)[:10]
+        if top10:
+            print("\n" + "="*85)
+            print("🔍 TOP SYMBOL × STRATEGY COMBINATIONS (by Expectancy)")
+            print("="*85)
+            print(f"{'Symbol':<10} {'Ref':<8} {'Trades':<8} {'Win%':<8} {'Avg Win':<10} {'Avg Loss':<10} {'Exp (BDT)':<10}")
+            print("-"*85)
+            for r in top10:
+                print(
+                    f"{r['Symbol']:<10} "
+                    f"{r['Reference']:<8} "
+                    f"{r['Trades']:<8} "
+                    f"{r['Win%']:<8.1f} "
+                    f"{r['Avg Win (BDT)']:>+10,.0f} "
+                    f"{r['Avg Loss (BDT)']:>+10,.0f} "
+                    f"{r['Expectancy (BDT)']:+10.2f}"
+                )
+            print("="*85)
+
+
+# ---------------------------------------------------------
+# ✅ PRINT GLOBAL + STRATEGY METRICS
+# ---------------------------------------------------------
+if global_metrics:
+    print("\n" + "="*50)
+    print("📊 GLOBAL PERFORMANCE")
+    print("="*50)
+    print(f"✅ Win Rate       : {global_metrics['Win Rate (%)']:.1f}% ({global_metrics['Wins']}/{global_metrics['Total Trades']})")
+    print(f"📈 Avg Win        : +{global_metrics['Avg Win (%)']:.2f}%  ({global_metrics['Avg Win (BDT)']:,.0f} BDT)")
+    print(f"📉 Avg Loss       : -{global_metrics['Avg Loss (%)']:.2f}%  ({global_metrics['Avg Loss (BDT)']:,.0f} BDT)")
+    print(f"💰 Profit Factor  : {global_metrics['Profit Factor']}")
+    print(f"🎯 Expectancy     : {global_metrics['Expectancy (%)']:+.2f}%  ({global_metrics['Expectancy (BDT)']:+.2f} BDT)")
+    print("="*50)
+
+if strategy_metrics:
+    print("\n" + "="*70)
+    print("🔍 STRATEGY PERFORMANCE (by Reference)")
+    print("="*70)
+    print(f"{'Ref':<8} {'Trades':<8} {'Win%':<8} {'Avg Win':<10} {'Avg Loss':<10} {'PF':<6} {'Exp (BDT)':<10}")
+    print("-"*70)
+    for r in strategy_metrics:
+        print(
+            f"{r['Reference']:<8} "
+            f"{r['Trades']:<8} "
+            f"{r['Win%']:<8.1f} "
+            f"{r['Avg Win (BDT)']:>+10,.0f} "
+            f"{r['Avg Loss (BDT)']:>+10,.0f} "
+            f"{r['Profit Factor']:<6} "
+            f"{r['Expectancy (BDT)']:+10.2f}"
+        )
+    print("="*70)
+
+    best = max(strategy_metrics, key=lambda x: x["Expectancy (BDT)"])
+    worst = min(strategy_metrics, key=lambda x: x["Expectancy (BDT)"])
+    print(f"🌟 Best:  {best['Reference']} → {best['Expectancy (BDT)']:+.2f} BDT/trade")
+    print(f"⚠️  Worst: {worst['Reference']} → {worst['Expectancy (BDT)']:+.2f} BDT/trade")
+
+    if worst["Expectancy (BDT)"] < 0:
+        print(f"\n❗ Action: Consider pausing {worst['Reference']} until optimized.")
 
 
 # ---------------------------------------------------------
@@ -346,6 +496,6 @@ def merge_open_trades(old_path, new_df, exited_ids):
 
 final_trades = merge_open_trades(trade_stock_path, trade_df, remove_trade_ids)
 final_trades.to_csv(trade_stock_path, index=False)
-print(f"✅ Updated trade_stock.csv: {len(final_trades)} open signals.")
+print(f"\n✅ Updated trade_stock.csv: {len(final_trades)} open signals.")
 
-print("\n🎉 SYSTEM READY — Signal + Risk + Sizing + Win% Metrics!")
+print("\n🎉 SYSTEM READY — Global + Strategy + Symbol×Strategy Win% & Expectancy!")
