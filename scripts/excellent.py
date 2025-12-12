@@ -8,24 +8,61 @@ source_path = './csv/liquidity.csv'
 output_path = './output/ai_signal/excellent.csv'
 csv_path = './csv/excellent.csv'
 
-# Ensure the output directory exists
+# Ensure output dirs exist
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
+os.makedirs(os.path.dirname(csv_path), exist_ok=True)
 
 # ---------------------------------------------------------
-# Load CSV
+# 🔒 SAFE LOAD & VALIDATE
 # ---------------------------------------------------------
-df = pd.read_csv(source_path)
+if not os.path.exists(source_path):
+    print(f"❌ Source file not found: {source_path}")
+    exit(1)
+
+try:
+    df = pd.read_csv(source_path)
+    print(f"✅ Loaded {len(df)} rows from {source_path}")
+except Exception as e:
+    print(f"❌ Failed to read {source_path}: {e}")
+    exit(1)
+
+# Validate required column
+if 'liquidity_rating' not in df.columns:
+    print(f"⚠️ 'liquidity_rating' column missing in {source_path} → Columns: {list(df.columns)}")
+    exit(1)
 
 # ---------------------------------------------------------
-# Filter rows where liquidity_rating == 'Excellent'
-# (case-insensitive + safe)
+# ✅ Filter: 'Excellent' (case-insensitive, robust)
 # ---------------------------------------------------------
-filtered = df[df['liquidity_rating'].str.lower() == 'excellent']
+# Handle NaN and non-string values safely
+mask = df['liquidity_rating'].astype(str).str.strip().str.lower() == 'excellent'
+filtered = df[mask].copy()
+
+print(f"✅ Filtered {len(filtered)} / {len(df)} stocks with liquidity_rating = 'Excellent'")
 
 # ---------------------------------------------------------
-# Save to output
+# 🔍 Debug: Show top 5 if none found
 # ---------------------------------------------------------
-filtered.to_csv(output_path, index=False)
-filtered.to_csv(csv_path, index=False)
+if len(filtered) == 0:
+    print("❓ No 'Excellent' stocks found. Top liquidity ratings in data:")
+    top_ratings = df['liquidity_rating'].value_counts().head(5)
+    for rating, count in top_ratings.items():
+        print(f"   • {rating}: {count} stocks")
+    # Optional: Still save empty file (for pipeline continuity)
+    empty_df = pd.DataFrame(columns=df.columns)
+    empty_df.to_csv(output_path, index=False)
+    empty_df.to_csv(csv_path, index=False)
+else:
+    # Save
+    filtered.to_csv(output_path, index=False)
+    filtered.to_csv(csv_path, index=False)
+    print(f"📁 Saved to:\n   → {output_path}\n   → {csv_path}")
 
-print(f"Saved {len(filtered)} rows to {output_path}")
+# ---------------------------------------------------------
+# ✅ Optional: Update system-wide liquidity flag
+# ---------------------------------------------------------
+# For integration with your main system (e.g., trade_stock.csv)
+excellent_symbols = filtered['symbol'].str.upper().tolist()
+with open('./csv/excellent_symbols.txt', 'w') as f:
+    f.write('\n'.join(excellent_symbols))
+print(f"🔖 {len(excellent_symbols)} Excellent symbols saved to ./csv/excellent_symbols.txt")
