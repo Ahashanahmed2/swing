@@ -21,12 +21,37 @@ if os.path.exists(CONFIG_PATH):
 # ---------------------------------------------------------
 strategy_metrics_path = "./output/ai_signal/strategy_metrics.csv"
 symbol_ref_path = "./output/ai_signal/symbol_reference_metrics.csv"
+liquidity_path = "./csv/liquidity_system.csv"  # ✅ NEW
 
 strategy_metrics = pd.read_csv(strategy_metrics_path) if os.path.exists(strategy_metrics_path) else pd.DataFrame()
 symbol_ref_metrics = pd.read_csv(symbol_ref_path) if os.path.exists(symbol_ref_path) else pd.DataFrame()
+liquidity_df = pd.read_csv(liquidity_path) if os.path.exists(liquidity_path) else pd.DataFrame()
 
 # ---------------------------------------------------------
-# SAFE Backtest Function — ENHANCED
+# ✅ DSE-Realistic Slippage Model (based on liquidity)
+# ---------------------------------------------------------
+def get_slippage_factor(liquidity_score):
+    """
+    Liquidity Score → Slippage
+    1.0 (Excellent) → 0.05% slippage
+    0.7 (Good)      → 0.10% slippage
+    0.4 (Moderate)  → 0.25% slippage
+    0.1 (Poor)      → 0.50% slippage
+    0.0 (Avoid)     → 1.00% slippage
+    """
+    if liquidity_score >= 0.9:
+        return 0.0005  # 0.05%
+    elif liquidity_score >= 0.6:
+        return 0.0010  # 0.10%
+    elif liquidity_score >= 0.3:
+        return 0.0025  # 0.25%
+    elif liquidity_score > 0:
+        return 0.0050  # 0.50%
+    else:
+        return 0.0100  # 1.00%
+
+# ---------------------------------------------------------
+# SAFE Backtest Function — LIQUIDITY-OPTIMIZED
 # ---------------------------------------------------------
 def backtest_signals(signal_csv_path,
                      main_df_path='./csv/mongodb.csv',
@@ -47,7 +72,7 @@ def backtest_signals(signal_csv_path,
         print(f"⚠️ Failed to read {signal_csv_path}: {e}")
         return
 
-    # ✅ Normalize column names (handle both 'entrydate' & 'entry_date')
+    # ✅ Normalize column names
     col_map = {
         'entrydate': 'entry_date',
         'buyprice': 'buy_price',
@@ -61,7 +86,6 @@ def backtest_signals(signal_csv_path,
                      'stop_loss', 'signal_type', 'profit', 'confidence',
                      'trend', 'ai_score', 'risk_reward_ratio']
 
-    # Missing column protection
     for col in required_cols:
         if col not in signals.columns:
             signals[col] = None
@@ -88,7 +112,7 @@ def backtest_signals(signal_csv_path,
     processed_symbols = set()
 
     # ---------------------------------------------------------
-    # ✅ ENHANCED Backtest Loop — with SYSTEM METRICS
+    # ✅ LIQUIDITY-AWARE Backtest Loop
     # ---------------------------------------------------------
     for _, row in signals.iterrows():
         symbol = row['symbol']
@@ -100,9 +124,17 @@ def backtest_signals(signal_csv_path,
         buy_price = row['buy_price']
         exit_price = row['exit_target_price']
         stop_loss = row['stop_loss']
-        signal_type = row['signal_type']
 
-        # Get SYSTEM CONTEXT for this symbol
+        # ✅ Get liquidity context
+        liquidity_score = 0.5
+        liquidity_rating = "Moderate"
+        if not liquidity_df.empty:
+            liq_row = liquidity_df[liquidity_df['symbol'].str.upper() == symbol]
+            if not liq_row.empty:
+                liquidity_score = float(liq_row.iloc[0].get('liquidity_score', 0.5))
+                liquidity_rating = str(liq_row.iloc[0].get('liquidity_rating', 'Moderate'))
+
+        # ✅ Get system context
         sys_context = {
             "position_size": 0,
             "exposure_bdt": 0,
@@ -113,7 +145,6 @@ def backtest_signals(signal_csv_path,
             "strategy": "SWING"
         }
 
-        # ✅ Pull from symbol_reference_metrics
         if not symbol_ref_metrics.empty:
             ref_row = symbol_ref_metrics[
                 (symbol_ref_metrics['Symbol'].str.upper() == symbol) &
@@ -140,7 +171,7 @@ def backtest_signals(signal_csv_path,
         risk_actual = 0.0
         rrr_actual = 0.0
 
-        # ✅ Simulate position based on YOUR system
+        # ✅ Simulate position with LIQUIDITY-AWARE slippage
         position_size = int(row.get('position_size', sys_context["position_size"]) or 0)
         if position_size <= 0 and buy_price > 0 and stop_loss < buy_price:
             risk_per_share = buy_price - stop_loss
@@ -152,24 +183,31 @@ def backtest_signals(signal_csv_path,
         exposure_bdt = position_size * buy_price
         risk_bdt = position_size * (buy_price - stop_loss)
 
-        # Scan for TP/SL
+        # ✅ DSE-Realistic Slippage
+        slippage = get_slippage_factor(liquidity_score)
+        buy_price_adj = buy_price * (1 + slippage)  # entry slippage
+        exit_price_adj = exit_price * (1 - slippage)  # TP slippage
+        stop_loss_adj = stop_loss * (1 + slippage)  # SL slippage
+
+        # Scan for TP/SL with adjusted prices
         if not df.empty:
             for _, future_row in df.iterrows():
                 close = future_row['close']
-                if close >= exit_price:
+                # Use adjusted prices for exit
+                if close >= exit_price_adj:
                     outcome = 'TP'
                     exit_day = future_row['date']
-                    exit_price_actual = exit_price
-                    profit_actual = (exit_price - buy_price) * position_size
-                    risk_actual = risk_bdt
+                    exit_price_actual = exit_price_adj
+                    profit_actual = (exit_price_adj - buy_price_adj) * position_size
+                    risk_actual = position_size * (buy_price_adj - stop_loss_adj)
                     rrr_actual = profit_actual / risk_actual if risk_actual > 0 else 0.0
                     break
-                elif close <= stop_loss:
+                elif close <= stop_loss_adj:
                     outcome = 'SL'
                     exit_day = future_row['date']
-                    exit_price_actual = stop_loss
-                    profit_actual = (stop_loss - buy_price) * position_size
-                    risk_actual = risk_bdt
+                    exit_price_actual = stop_loss_adj
+                    profit_actual = (stop_loss_adj - buy_price_adj) * position_size
+                    risk_actual = position_size * (buy_price_adj - stop_loss_adj)
                     rrr_actual = 0.0
                     break
 
@@ -177,17 +215,19 @@ def backtest_signals(signal_csv_path,
             duration_days = (exit_day.date() - entry_date.date()).days
             processed_symbols.add(symbol)
 
-        # ✅ Enrich result with SYSTEM METRICS
+        # ✅ Enrich result with LIQUIDITY metrics
         results.append({
             'symbol': symbol,
             'entry_date': entry_date.date(),
             'exit_date': exit_day.date() if exit_day else None,
-            'signal_type': signal_type,
+            'signal_type': row.get('signal_type', 'Buy'),
             'outcome': outcome,
             'buy_price': float(buy_price),
+            'buy_price_adj': float(buy_price_adj),
             'exit_price_target': float(exit_price),
-            'exit_price_actual': float(exit_price_actual) if exit_price_actual else float(buy_price),
+            'exit_price_actual': float(exit_price_actual) if exit_price_actual else float(buy_price_adj),
             'stop_loss': float(stop_loss),
+            'stop_loss_adj': float(stop_loss_adj),
             'profit_target': float(row.get('profit', 0)),
             'profit_actual': round(profit_actual, 2),
             'risk_actual': round(risk_actual, 2),
@@ -204,7 +244,11 @@ def backtest_signals(signal_csv_path,
             'win_percent': float(sys_context["win_percent"]),
             'expectancy_bdt': float(sys_context["expectancy_bdt"]),
             'rrr_system': float(sys_context["rrr_system"]),
-            'strategy': sys_context["strategy"]
+            'strategy': sys_context["strategy"],
+            # ✅ LIQUIDITY METRICS
+            'liquidity_score': float(liquidity_score),
+            'liquidity_rating': str(liquidity_rating),
+            'slippage_pct': round(slippage * 100, 3)
         })
 
     # ---------------------------------------------------------
@@ -214,20 +258,21 @@ def backtest_signals(signal_csv_path,
     os.makedirs(ai_signal_dir, exist_ok=True)
 
     date_str = os.path.splitext(os.path.basename(signal_csv_path))[0]
-
     result_path = os.path.join(result_dir, f"{date_str}_backtest.csv")
-    ai_signal_path = os.path.join(ai_signal_dir, "profit-loss.csv")  # ← reuse your system's format
+    ai_signal_path = os.path.join(ai_signal_dir, "profit-loss.csv")
 
     df_result = pd.DataFrame(results)
     if not df_result.empty:
-        df_result = df_result.sort_values(by=['expectancy_bdt', 'win_percent', 'rrr_system'], 
-                                          ascending=[False, False, False])
+        df_result = df_result.sort_values(
+            ['expectancy_bdt', 'win_percent', 'rrr_system', 'liquidity_score'],
+            ascending=[False, False, False, False]
+        )
 
         df_result.to_csv(result_path, index=False)
         print(f"✅ Backtest complete for {date_str} → {len(df_result)} trades")
         print(f"📁 Saved to: {result_path}")
 
-        # 🔁 Append to profit-loss.csv (for your main system)
+        # 🔁 Append to profit-loss.csv
         if os.path.exists(ai_signal_path):
             existing = pd.read_csv(ai_signal_path)
             combined = pd.concat([existing, df_result], ignore_index=True)
@@ -235,6 +280,19 @@ def backtest_signals(signal_csv_path,
             combined = df_result.copy()
         combined.to_csv(ai_signal_path, index=False)
         print(f"🔁 Updated: {ai_signal_path}")
+
+        # ✅ Save liquidity-aware metrics
+        liq_metrics_path = os.path.join(ai_signal_dir, "liquidity_performance.csv")
+        liq_summary = df_result.groupby('liquidity_rating').agg({
+            'outcome': lambda x: (x == 'TP').sum() / len(x) * 100,
+            'expectancy_bdt': 'mean',
+            'rrr_actual': 'mean',
+            'symbol': 'count'
+        }).round(2)
+        liq_summary.columns = ['Win%', 'Avg Expectancy (BDT)', 'Avg RRR', 'Trades']
+        liq_summary.to_csv(liq_metrics_path)
+        print(f"💧 Liquidity performance saved: {liq_metrics_path}")
+
     else:
         print("⚠️ No valid trades to save.")
 
@@ -251,7 +309,7 @@ def backtest_signals(signal_csv_path,
         print(f"✂️ Updated signal file: {signal_csv_path}")
 
     # ---------------------------------------------------------
-    # ✅ ENHANCED Summary — with SYSTEM METRICS
+    # ✅ LIQUIDITY-AWARE Summary
     # ---------------------------------------------------------
     if not df_result.empty:
         tp = len(df_result[df_result['outcome'] == 'TP'])
@@ -263,27 +321,42 @@ def backtest_signals(signal_csv_path,
         avg_expectancy = df_result['expectancy_bdt'].mean()
         avg_win_pct = df_result['win_percent'].mean()
         avg_rrr = df_result['rrr_actual'].replace([np.inf, -np.inf], 0).mean()
+        avg_slippage = df_result['slippage_pct'].mean()
 
-        print("\n" + "="*60)
-        print("📊 BACKTEST SUMMARY (SYSTEM-OPTIMIZED)")
-        print("="*60)
+        print("\n" + "="*70)
+        print("📊 BACKTEST SUMMARY (LIQUIDITY-OPTIMIZED)")
+        print("="*70)
         print(f"✅ TP: {tp:2d} | ❌ SL: {sl:2d} | ⏳ HOLD: {hold:2d} | 🎯 Accuracy: {accuracy:5.1f}%")
         print(f"💰 Avg Expectancy  : {avg_expectancy:7.1f} BDT/trade")
         print(f"📈 Avg Win%        : {avg_win_pct:6.1f}%")
         print(f"⚖️  Avg RRR         : {avg_rrr:6.2f}")
         print(f"🧮 Avg Position    : {df_result['position_size'].mean():7.0f} shares")
+        print(f"💧 Avg Slippage    : {avg_slippage:5.3f}%")
+
+        # Liquidity-wise performance
+        print("\n💧 Liquidity-wise Performance:")
+        for liq in ['Excellent', 'Good', 'Moderate', 'Poor', 'Avoid']:
+            liq_data = df_result[df_result['liquidity_rating'] == liq]
+            if len(liq_data) > 0:
+                liq_tp = len(liq_data[liq_data['outcome'] == 'TP'])
+                liq_total = len(liq_data)
+                liq_acc = (liq_tp / liq_total) * 100
+                liq_exp = liq_data['expectancy_bdt'].mean()
+                print(f"   • {liq:<10} : {liq_acc:5.1f}% Win | {liq_exp:6.0f} BDT Exp | {liq_total:2d} trades")
 
         # Top 3 performers
         top3 = df_result.nlargest(3, 'expectancy_bdt')
         print("\n🏆 Top 3 High-Expectancy Trades:")
         for _, r in top3.iterrows():
-            print(f"   • {r['symbol']:10} | Exp: {r['expectancy_bdt']:5.0f} BDT | Win%: {r['win_percent']:4.0f}% | RRR: {r['rrr_actual']:3.1f}")
+            print(f"   • {r['symbol']:10} | Exp: {r['expectancy_bdt']:5.0f} BDT | Win%: {r['win_percent']:4.0f}% | Liq: {r['liquidity_rating']}")
 
-        print("="*60)
+        print("="*70)
 
-        # 🔔 Alert if expectancy < 0
+        # 🔔 Alerts
         if avg_expectancy < 0:
             print("\n❗ Warning: Negative expectancy — review strategy parameters!")
+        elif avg_slippage > 0.3:
+            print(f"\n⚠️ High slippage ({avg_slippage:.3f}%) — consider liquidity filter!")
         elif avg_expectancy > 100:
             print("\n🚀 Excellent! Expectancy > 100 BDT/trade.")
 
@@ -318,6 +391,6 @@ def run_backtest_on_all_signals(signal_dir='./csv/all_signal',
 # AUTO EXECUTE
 # ---------------------------------------------------------
 if __name__ == "__main__":
-    print("🚀 Starting SYSTEM-OPTIMIZED Backtest...")
+    print("🚀 Starting LIQUIDITY-OPTIMIZED Backtest...")
     run_backtest_on_all_signals()
     print("\n🎉 All backtests completed!")
