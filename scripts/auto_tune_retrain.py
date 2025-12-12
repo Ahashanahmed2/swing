@@ -11,6 +11,7 @@ import json
 main_df_path = './csv/mongodb.csv'
 backtest_dir = './csv/backtest_result'
 model_path = './csv/dqn_retrained'
+liquidity_path = './csv/liquidity_system.csv'  # ✅ NEW
 
 # ---------------------------------------------------------
 # 🔧 Load config (for risk context)
@@ -92,7 +93,6 @@ sl_symbols = bt_df[bt_df['outcome'] == 'SL']['symbol'].value_counts()
 # ✅ Get symbols with HIGH EXPECTANCY (BDT) from your system
 high_expectancy_symbols = []
 if not symbol_ref_metrics.empty:
-    # Filter only high-expectancy combos (>100 BDT)
     good_syms = symbol_ref_metrics[symbol_ref_metrics['Expectancy (BDT)'] > 100]
     high_expectancy_symbols = good_syms['Symbol'].str.upper().unique().tolist()
     print(f"🎯 {len(high_expectancy_symbols)} symbols with >100 BDT expectancy found")
@@ -104,8 +104,22 @@ if not symbol_ref_metrics.empty:
     high_win_symbols = good_win['Symbol'].str.upper().unique().tolist()
     print(f"✅ {len(high_win_symbols)} symbols with >65% Win% found")
 
-# 🔍 Combine: Only symbols that are in BOTH high expectancy AND high win%
+# ✅ Get symbols with MODERATE+ Liquidity (liquidity_score >= 0.4)
+high_liquidity_symbols = []
+if os.path.exists(liquidity_path):
+    try:
+        liquidity_df = pd.read_csv(liquidity_path)
+        liquidity_df['symbol'] = liquidity_df['symbol'].str.upper()
+        good_liq = liquidity_df[liquidity_df['liquidity_score'] >= 0.4]
+        high_liquidity_symbols = good_liq['symbol'].unique().tolist()
+        print(f"💧 {len(high_liquidity_symbols)} symbols with Moderate+ liquidity (score ≥ 0.4)")
+    except Exception as e:
+        print(f"⚠️ Failed to load liquidity_system.csv: {e}")
+
+# 🔍 Combine: quality_symbols = Win%>65 ∩ Exp>100 ∩ Liq≥Moderate
 quality_symbols = set(high_expectancy_symbols) & set(high_win_symbols)
+if high_liquidity_symbols:
+    quality_symbols = quality_symbols & set(high_liquidity_symbols)
 print(f"🌟 {len(quality_symbols)} high-quality symbols: {list(quality_symbols)[:5]}...")
 
 # ---------------------------------------------------------
@@ -121,15 +135,14 @@ if quality_symbols:
 blacklist = sl_symbols[sl_symbols >= 3].index.tolist()
 filtered_df = filtered_df[~filtered_df['symbol'].isin(blacklist)]
 
-# 3. Keep only fast TP symbols (TP ≤ 3 days) — from backtest
+# 3. Keep only fast TP symbols (TP ≤ 3 days)
 fast_tp = bt_df[(bt_df['outcome'] == 'TP') & (bt_df['duration_days'] <= 3)]
 fast_tp_symbols = fast_tp['symbol'].unique().tolist()
 if fast_tp_symbols:
     filtered_df = filtered_df[filtered_df['symbol'].isin(fast_tp_symbols)]
 
-# ✅ Add SYSTEM FEATURES to observation (for better learning)
+# ✅ Add SYSTEM FEATURES to observation
 if not filtered_df.empty:
-    # Add expectancy & win% as features
     def add_system_features(row):
         sym = row['symbol']
         win_pct = 50.0
@@ -156,7 +169,7 @@ if filtered_df.empty:
     exit()
 
 # ---------------------------------------------------------
-# Prepare RL Environment — with SYSTEM CONTEXT
+# Prepare RL Environment — with FULL SYSTEM CONTEXT
 # ---------------------------------------------------------
 env = TradeEnv(
     maindf=filtered_df,
@@ -165,15 +178,16 @@ env = TradeEnv(
     shortbuy_path="./csv/short_buy.csv",
     rsi_diver_path="./csv/rsi_diver.csv",
     rsi_diver_retest_path="./csv/rsi_diver_retest.csv",
-    trade_stock_path="./csv/trade_stock.csv",          # ← your open signals
-    metrics_path=strategy_metrics_path,                # ← strategy metrics
-    symbol_ref_path=symbol_ref_path,                   # ← symbol×strategy metrics
-    config_path=CONFIG_PATH
+    trade_stock_path="./csv/trade_stock.csv",
+    metrics_path=strategy_metrics_path,
+    symbol_ref_path=symbol_ref_path,
+    config_path=CONFIG_PATH,
+    liquidity_path=liquidity_path  # ✅ CRITICAL: Enable liquidity awareness
 )
 env = DummyVecEnv([lambda: env])
 
 # ---------------------------------------------------------
-# Load or create model
+# Load or create model — DQN-OPTIMIZED
 # ---------------------------------------------------------
 if os.path.exists(model_path + ".zip"):
     model = DQN.load(model_path, env=env, device='cpu')
@@ -184,26 +198,26 @@ else:
         env=env,
         verbose=1,
         learning_rate=3e-4,
-        buffer_size=100000,       # ↑ increased for more experience
-        learning_starts=2000,     # ↑ more warmup
-        batch_size=256,           # ↑ larger batch
-        tau=0.005,                # ↓ softer target update
-        gamma=0.98,               # ↑ longer horizon (for swing trades)
-        train_freq=8,             # ↓ less frequent training (more stable)
-        target_update_interval=1000,
-        exploration_fraction=0.2, # ↓ faster convergence
+        buffer_size=100000,
+        learning_starts=2000,
+        batch_size=256,
+        tau=0.005,
+        gamma=0.98,
+        train_freq=8,
+        target_update_interval=500,   # ✅ Optimized for DSE (faster target sync)
+        exploration_fraction=0.3,      # ✅ More exploration
         exploration_final_eps=0.02,
         device='cpu'
     )
-    print("🆕 Created new model with Swing-Optimized params")
+    print("🆕 Created new model with DSE-Optimized DQN params")
 
 # ---------------------------------------------------------
-# 🚀 TRAINING with EARLY STOPPING & LOGGING
+# 🚀 TRAINING with LIQUIDITY-AWARE LOGGING
 # ---------------------------------------------------------
-print(f"\n🚀 Retraining DQN with {len(filtered_df)} rows of SYSTEM-OPTIMIZED data...")
+print(f"\n🚀 Retraining DQN with {len(filtered_df)} rows of LIQUIDITY-OPTIMIZED data...")
 print("   🔁 200,000 timesteps (≈ 15-20 mins)")
 
-# Custom callback for logging
+# Custom callback
 from stable_baselines3.common.callbacks import BaseCallback
 
 class LogCallback(BaseCallback):
@@ -229,28 +243,46 @@ model.learn(
 )
 
 # ---------------------------------------------------------
-# ✅ Save & Report
+# ✅ Save & LIQUIDITY-AWARE Report
 # ---------------------------------------------------------
 model.save(model_path)
 print(f"\n✅ Model saved at {model_path}.zip")
 
-# 📊 Training summary
+# 📊 Training summary with liquidity stats
 if hasattr(model, 'ep_info_buffer') and model.ep_info_buffer:
     rewards = [ep['r'] for ep in model.ep_info_buffer]
-    print("\n" + "="*50)
-    print("📊 TRAINING SUMMARY")
-    print("="*50)
-    print(f"📈 Avg Episode Reward   : {np.mean(rewards):+.3f}")
-    print(f"📉 Min Episode Reward   : {np.min(rewards):+.3f}")
-    print(f"📈 Max Episode Reward   : {np.max(rewards):+.3f}")
-    print(f"🎯 Top symbols trained  : {list(quality_symbols)[:5]}")
-    print("="*50)
+    
+    # Get liquidity distribution of trained symbols
+    trained_syms = filtered_df['symbol'].unique()
+    liq_distribution = {}
+    if os.path.exists(liquidity_path):
+        try:
+            liq_df = pd.read_csv(liquidity_path)
+            liq_df['symbol'] = liq_df['symbol'].str.upper()
+            trained_liq = liq_df[liq_df['symbol'].isin(trained_syms)]
+            liq_distribution = trained_liq['liquidity_rating'].value_counts().to_dict()
+        except:
+            pass
 
-# 🔁 Optional: Auto-generate signals after training
-auto_signal = input("\n🔄 Generate signals with new model? (y/n): ").strip().lower()
+    print("\n" + "="*60)
+    print("📊 DQN TRAINING SUMMARY (LIQUIDITY-OPTIMIZED)")
+    print("="*60)
+    print(f"📈 Avg Episode Reward   : {np.mean(rewards):+.3f}")
+    print(f"📉 Min/Max Reward        : {np.min(rewards):+.3f} / {np.max(rewards):+.3f}")
+    print(f"🧮 Trained on           : {len(trained_syms)} symbols")
+    print(f"🎯 Top symbols          : {list(quality_symbols)[:5]}")
+    if liq_distribution:
+        print("💧 Liquidity distribution:")
+        for liq, cnt in sorted(liq_distribution.items()):
+            print(f"   • {liq:<10} : {cnt:2d} symbols")
+    print("="*60)
+
+# 🔁 Optional: Auto-generate signals
+auto_signal = input("\n🔄 Generate signals with new DQN model? (y/n): ").strip().lower()
 if auto_signal == 'y':
     try:
         from generate_signals import generate_signals
+        print("\n🔍 Generating signals with new DQN model...\n")
         generate_signals()
     except Exception as e:
         print(f"⚠️ Signal generation failed: {e}")
