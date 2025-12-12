@@ -35,7 +35,7 @@ def liquidity_rating_adjusted(row):
     bucket = None
     thresholds = []
 
-    # DSE-adjusted thresholds (same as yours — excellent!)
+    # DSE-adjusted thresholds
     if price <= 5:
         bucket = "1-5"
         thresholds = [(80, 200_000, 0.8, "Excellent", 1.0),
@@ -109,21 +109,20 @@ latestdf[['liquidity_rating', 'liquidity_score', 'price_bucket']] = latestdf.app
 
 # ---------------------------------------------------------
 # ✅ INTEGRATE WITH YOUR SYSTEM:
-#    → Add to trade_stock.csv (via merge)
-#    → Use in signal filtering
+#    → liquidity.csv uses original column names
+#    → liquidity_system.csv ready for trade_stock.csv merge
 # ---------------------------------------------------------
-# Save liquidity data for system use
 os.makedirs("./csv", exist_ok=True)
 os.makedirs("./output/ai_signal", exist_ok=True)
 
-# Final output (for human)
+# Final output (for human) — ✅ ORIGINAL COLUMN NAMES
 finaldf = latestdf[['symbol', 'close', 'Avolume', 'value', 'TR', 'liquidity_rating', 'liquidity_score', 'price_bucket']].copy()
-finaldf.columns = ['symbol', 'price', 'Avolume', 'Avalue', 'TR(%)', 'rating', 'score', 'bucket']
-finaldf = finaldf.sort_values('score', ascending=False).reset_index(drop=True)
+finaldf.columns = ['symbol', 'price', 'Avolume', 'Avalue', 'TR(%)', 'liquidity_rating', 'liquidity_score', 'price_bucket']
+finaldf = finaldf.sort_values('liquidity_score', ascending=False).reset_index(drop=True)
 finaldf.insert(0, 'No', range(1, len(finaldf)+1))
 
 finaldf.to_csv("./csv/liquidity.csv", index=False)
-print("✅ liquidity.csv saved (human-readable)")
+print("✅ liquidity.csv saved (with original column names)")
 
 # ✅ SYSTEM INTELLIGENCE FILE (for trade_stock.csv merge)
 system_liquidity = latestdf[['symbol', 'liquidity_rating', 'liquidity_score', 'price_bucket']].copy()
@@ -147,7 +146,7 @@ if os.path.exists(trade_stock_path):
 print(f"\n📊 Total stocks processed: {len(latestdf)}")
 print("\n📈 Liquidity Rating Distribution:")
 print(latestdf['liquidity_rating'].value_counts())
-print("\n🔢 Avg Liquidity Score: {:.2f}".format(latestdf['liquidity_score'].mean()))
+print(f"\n🔢 Avg Liquidity Score: {latestdf['liquidity_score'].mean():.2f}")
 
 # 🔔 Alert if too many "Avoid"
 avoid_count = (latestdf['liquidity_rating'] == 'Avoid').sum()
