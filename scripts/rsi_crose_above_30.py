@@ -1,10 +1,26 @@
 import pandas as pd
 import os
+import json
+import numpy as np
+
+# ---------------------------------------------------------
+# 🔧 Load config.json (only 2 params)
+# ---------------------------------------------------------
+CONFIG_PATH = "./config.json"
+try:
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    TOTAL_CAPITAL = float(config.get("total_capital", 500000))
+    RISK_PERCENT = float(config.get("risk_percent", 0.01))
+    print(f"✅ Config: capital={TOTAL_CAPITAL:,.0f} BDT, risk={RISK_PERCENT*100:.1f}% per trade")
+except Exception as e:
+    print(f"⚠️ Config load failed → using defaults: 5,00,000 BDT, 1% risk")
+    TOTAL_CAPITAL = 500000
+    RISK_PERCENT = 0.01
 
 # ---------------------------------------------------------
 # Path
 # ---------------------------------------------------------
-
 RSI30_PATH = "./csv/rsi_30.csv"
 MONGO_PATH = "./csv/mongodb.csv"
 BUY_PATH_OUTPUT = "./output/ai_signal/rsi_30_buy.csv"
@@ -16,21 +32,18 @@ os.makedirs("./csv/", exist_ok=True)
 # ---------------------------------------------------------
 # Helper: Print log
 # ---------------------------------------------------------
-
 def log(msg):
     print("🔹", msg)
 
 # ---------------------------------------------------------
-# Load mongodb.csv (must exist)
+# Load mongodb.csv
 # ---------------------------------------------------------
-
 log("Loading mongodb.csv...")
 if not os.path.exists(MONGO_PATH):
     raise FileNotFoundError(f"❌ Required file not found: {MONGO_PATH}")
 
 mongodb = pd.read_csv(MONGO_PATH)
 
-# Ensure required columns exist
 required_cols = {'symbol', 'date', 'low', 'high', 'close', 'rsi'}
 if not required_cols.issubset(mongodb.columns):
     missing = required_cols - set(mongodb.columns)
@@ -42,9 +55,7 @@ mongodb = mongodb.sort_values(['symbol', 'date']).reset_index(drop=True)
 # ---------------------------------------------------------
 # 🔁 AUTO-GENERATE rsi_30.csv: Keep ONLY symbols with latest RSI < 30
 # ---------------------------------------------------------
-
 log("🔍 Finding latest record per symbol with RSI < 30...")
-
 latest_mongo = mongodb.sort_values('date').groupby('symbol').tail(1).reset_index(drop=True)
 
 rsi_under_30 = latest_mongo[
@@ -67,7 +78,6 @@ log(f"💾 Updated rsi_30.csv with {len(rsi30_auto)} active symbols")
 # ---------------------------------------------------------
 # Load rsi_30.csv
 # ---------------------------------------------------------
-
 log("Loading rsi_30.csv (auto-generated)...")
 rsi30 = pd.read_csv(RSI30_PATH)
 rsi30['date'] = pd.to_datetime(rsi30['date'])
@@ -81,7 +91,6 @@ rsi30_final = rsi30.copy()
 # ---------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------
-
 if len(rsi30) == 0:
     log("ℹ No symbols with RSI < 30 → skipping processing.")
 else:
@@ -126,7 +135,7 @@ else:
                     'symbol': symbol,
                     'buy': m_close,
                     'SL': base_low,
-                    'base_date': base_date  # 🔑 store for tp search
+                    'base_date': base_date
                 })
 
             # EXIT rule
@@ -136,15 +145,17 @@ else:
                 break
 
 # ---------------------------------------------------------
-# SAVE BUY SIGNALS (with tp, RRR, diff & sorted)
+# ✅ ADD POSITION SIZING → then SAVE BUY SIGNALS
 # ---------------------------------------------------------
-
 if buy_rows:
     buy_df = pd.DataFrame(buy_rows)
 
     tp_list = []
     diff_list = []
     rrr_list = []
+    position_size_list = []
+    exposure_bdt_list = []
+    actual_risk_bdt_list = []
 
     for _, row in buy_df.iterrows():
         symbol = row['symbol']
@@ -182,18 +193,38 @@ if buy_rows:
         diff = buy_price - SL_price
         diff_list.append(round(diff, 4))
 
-        if tp is not None and buy_price > SL_price and tp > buy_price:
+        # ✅ Position sizing (DSE-compliant)
+        risk_per_trade = TOTAL_CAPITAL * RISK_PERCENT
+        risk_per_share = diff
+        position_size = 0
+        exposure_bdt = 0
+        actual_risk_bdt = 0
+
+        if tp is not None and buy_price > SL_price and tp > buy_price and risk_per_share > 0:
             rrr = (tp - buy_price) / diff
             tp_list.append(round(tp, 4))
             rrr_list.append(round(rrr, 2))
+            
+            # 🔑 DSE position sizing
+            position_size = int(risk_per_trade / risk_per_share)
+            position_size = max(1, position_size)  # min 1 share
+            exposure_bdt = position_size * buy_price
+            actual_risk_bdt = position_size * risk_per_share
         else:
             tp_list.append(None)
             rrr_list.append(None)
+
+        position_size_list.append(position_size)
+        exposure_bdt_list.append(round(exposure_bdt, 2))
+        actual_risk_bdt_list.append(round(actual_risk_bdt, 2))
 
     # Add columns
     buy_df['tp'] = tp_list
     buy_df['diff'] = diff_list
     buy_df['RRR'] = rrr_list
+    buy_df['position_size'] = position_size_list
+    buy_df['exposure_bdt'] = exposure_bdt_list
+    buy_df['actual_risk_bdt'] = actual_risk_bdt_list
 
     # ✅ Filter valid signals
     buy_df = buy_df.dropna(subset=['tp', 'RRR']).reset_index(drop=True)
@@ -204,36 +235,48 @@ if buy_rows:
         buy_df = buy_df.sort_values(['RRR', 'diff'], ascending=[False, True]).reset_index(drop=True)
         buy_df.insert(0, 'No', range(1, len(buy_df) + 1))
 
-        # Format & final columns
+        # Format & final columns (with position info)
         buy_df['date'] = buy_df['date'].dt.strftime("%Y-%m-%d")
-        buy_df = buy_df[['No', 'date', 'symbol', 'buy', 'SL', 'tp', 'diff', 'RRR']]
+        buy_df = buy_df[[
+            'No', 'date', 'symbol', 'buy', 'SL', 'tp',
+            'position_size', 'exposure_bdt', 'actual_risk_bdt',
+            'diff', 'RRR'
+        ]]
     else:
-        buy_df = pd.DataFrame(columns=['No', 'date', 'symbol', 'buy', 'SL', 'tp', 'diff', 'RRR'])
+        buy_df = pd.DataFrame(columns=[
+            'No', 'date', 'symbol', 'buy', 'SL', 'tp',
+            'position_size', 'exposure_bdt', 'actual_risk_bdt',
+            'diff', 'RRR'
+        ])
 
 else:
-    buy_df = pd.DataFrame(columns=['No', 'date', 'symbol', 'buy', 'SL', 'tp', 'diff', 'RRR'])
+    buy_df = pd.DataFrame(columns=[
+        'No', 'date', 'symbol', 'buy', 'SL', 'tp',
+        'position_size', 'exposure_bdt', 'actual_risk_bdt',
+        'diff', 'RRR'
+    ])
 
 # -------------------------------
-# DELETE OLD FILES
+# DELETE OLD FILES & SAVE
 # -------------------------------
 for f in [BUY_PATH_CSV, BUY_PATH_OUTPUT]:
     if os.path.exists(f):
         os.remove(f)
 
-# Save
 buy_df.to_csv(BUY_PATH_OUTPUT, index=False)
 buy_df.to_csv(BUY_PATH_CSV, index=False)
 
 if len(buy_df) > 0:
-    log(f"✅ {len(buy_df)} BUY signals saved (with tp & RRR).")
+    log(f"✅ {len(buy_df)} BUY signals saved (with tp, RRR & position sizing).")
     log(f"📈 Max RRR: {buy_df['RRR'].max():.2f} | Avg RRR: {buy_df['RRR'].mean():.2f}")
+    log(f"💰 Avg position: {buy_df['position_size'].mean():.0f} shares | Max: {buy_df['position_size'].max()}")
+    log(f"🎯 Avg actual risk: {buy_df['actual_risk_bdt'].mean():,.0f} BDT (target: {TOTAL_CAPITAL*RISK_PERCENT:,.0f})")
 else:
     log("ℹ No valid BUY signals (tp/RRR missing or invalid).")
 
 # ---------------------------------------------------------
 # Save updated rsi_30.csv
 # ---------------------------------------------------------
-
 rsi30_final = rsi30_final.reset_index(drop=True)
 COLUMNS = ['sl', 'symbol', 'date', 'low', 'high', 'rsi']
 if len(rsi30_final) == 0:
