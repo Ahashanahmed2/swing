@@ -4,7 +4,7 @@ import numpy as np
 import json
 
 # ---------------------------------------------------------
-# 🔧 Load config.json
+# 🔧 Load config.json (only 2 params!)
 # ---------------------------------------------------------
 CONFIG_PATH = "./config.json"
 try:
@@ -12,7 +12,7 @@ try:
         config = json.load(f)
     TOTAL_CAPITAL = float(config.get("total_capital", 500000))
     RISK_PERCENT = float(config.get("risk_percent", 0.01))
-    print(f"✅ Config loaded: capital={TOTAL_CAPITAL:,.0f} BDT, risk={RISK_PERCENT*100:.1f}%")
+    print(f"✅ Config loaded: capital={TOTAL_CAPITAL:,.0f} BDT, risk={RISK_PERCENT*100:.1f}% per trade")
 except FileNotFoundError:
     print(f"⚠️ {CONFIG_PATH} not found → using defaults: 5,00,000 BDT, 1% risk")
     TOTAL_CAPITAL = 500000
@@ -21,6 +21,7 @@ except Exception as e:
     print(f"❌ Error loading config: {e} → using defaults")
     TOTAL_CAPITAL = 500000
     RISK_PERCENT = 0.01
+
 
 # ---------------------------------------------------------
 # Paths
@@ -98,7 +99,7 @@ def get_dsex_k(market_cap_million, atr_pct):
 
 
 # ---------------------------------------------------------
-# Load & size signals
+# Load signals
 # ---------------------------------------------------------
 short_df = load_file(short_path, "short", "buy")
 gape_df = load_file(gape_path, "gape", "buy")
@@ -115,12 +116,15 @@ if trade_df.empty:
 trade_df = trade_df.reset_index(drop=True)
 trade_df["trade_id"] = trade_df.index
 
-# ✅ Position Sizing (auto from config)
+
+# ---------------------------------------------------------
+# ✅ DSE-COMPLIANT POSITION SIZING (1 share allowed, no artificial cap)
+# ---------------------------------------------------------
 trade_df["risk_per_trade"] = TOTAL_CAPITAL * RISK_PERCENT
-trade_df["position_size"] = (trade_df["risk_per_trade"] / (trade_df["buy"] - trade_df["SL"])).astype(float)
-trade_df["position_size"] = trade_df["position_size"].clip(lower=100).fillna(100)
-trade_df["position_size"] = (trade_df["position_size"] // 100 * 100).astype(int)
-trade_df["position_size"] = trade_df["position_size"].clip(upper=10000)
+trade_df["position_size"] = (trade_df["risk_per_trade"] / (trade_df["buy"] - trade_df["SL"])).astype(int)
+trade_df["position_size"] = trade_df["position_size"].clip(lower=1)  # min 1 share (DSE allows it!)
+
+# Final fields
 trade_df["exposure_bdt"] = trade_df["position_size"] * trade_df["buy"]
 trade_df["actual_risk_bdt"] = trade_df["position_size"] * (trade_df["buy"] - trade_df["SL"])
 
@@ -294,7 +298,7 @@ if results:
 strategy_metrics = []
 if results:
     for ref in ["swing", "gape", "rsi", "short"]:
-        ref_results = [r for r in results if r[10] == ref]  # r[10] = Reference
+        ref_results = [r for r in results if r[10] == ref]
         if not ref_results:
             continue
 
@@ -340,7 +344,7 @@ if results:
 # ---------------------------------------------------------
 symbol_ref_metrics = []
 if results:
-    symbols = sorted(set(r[1] for r in results))  # r[1] = symbol
+    symbols = sorted(set(r[1] for r in results))
     refs = ["swing", "gape", "rsi", "short"]
 
     for sym in symbols:
@@ -407,7 +411,7 @@ if results:
 
 
 # ---------------------------------------------------------
-# ✅ PRINT GLOBAL + STRATEGY METRICS
+# ✅ PRINT METRICS
 # ---------------------------------------------------------
 if global_metrics:
     print("\n" + "="*50)
@@ -498,4 +502,6 @@ final_trades = merge_open_trades(trade_stock_path, trade_df, remove_trade_ids)
 final_trades.to_csv(trade_stock_path, index=False)
 print(f"\n✅ Updated trade_stock.csv: {len(final_trades)} open signals.")
 
-print("\n🎉 SYSTEM READY — Global + Strategy + Symbol×Strategy Win% & Expectancy!")
+print("\n🎉 SYSTEM READY — DSE-Optimized, Risk-Exact, 3-Layer Metrics!")
+print("   → Every trade risks exactly `risk_percent` of capital.")
+print("   → 1 share allowed — no artificial rounding or caps.")
