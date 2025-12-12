@@ -1,14 +1,38 @@
 import os
 import pandas as pd
+import numpy as np
 from datetime import datetime
 from stable_baselines3 import DQN
-from env import TradeEnv
 from stable_baselines3.common.vec_env import DummyVecEnv
+from env import TradeEnv
+import json
 
 # 📂 Paths
 main_df_path = './csv/mongodb.csv'
 backtest_dir = './csv/backtest_result'
 model_path = './csv/dqn_retrained'
+
+# ---------------------------------------------------------
+# 🔧 Load config (for risk context)
+# ---------------------------------------------------------
+CONFIG_PATH = "./config.json"
+TOTAL_CAPITAL = 500000
+RISK_PERCENT = 0.01
+if os.path.exists(CONFIG_PATH):
+    with open(CONFIG_PATH, "r") as f:
+        cfg = json.load(f)
+        TOTAL_CAPITAL = cfg.get("total_capital", 500000)
+        RISK_PERCENT = cfg.get("risk_percent", 0.01)
+print(f"✅ Config: Capital = {TOTAL_CAPITAL:,.0f} BDT, Risk = {RISK_PERCENT*100:.1f}%")
+
+# ---------------------------------------------------------
+# 📊 Load critical system metrics
+# ---------------------------------------------------------
+strategy_metrics_path = "./output/ai_signal/strategy_metrics.csv"
+symbol_ref_path = "./output/ai_signal/symbol_reference_metrics.csv"
+
+strategy_metrics = pd.read_csv(strategy_metrics_path) if os.path.exists(strategy_metrics_path) else pd.DataFrame()
+symbol_ref_metrics = pd.read_csv(symbol_ref_path) if os.path.exists(symbol_ref_path) else pd.DataFrame()
 
 # ---------------------------------------------------------
 # SAFE: Ensure folders exist
@@ -24,6 +48,9 @@ if not os.path.isfile(main_df_path):
 
 main_df = pd.read_csv(main_df_path)
 main_df['date'] = pd.to_datetime(main_df['date'], errors='coerce').dt.date
+main_df['symbol'] = main_df['symbol'].str.upper()
+
+print(f"📊 Loaded {len(main_df)} rows from mongodb.csv")
 
 # ---------------------------------------------------------
 # Load backtest files safely
@@ -43,6 +70,7 @@ bt_df_list = []
 for f in backtest_files:
     try:
         df = pd.read_csv(os.path.join(backtest_dir, f))
+        df['symbol'] = df['symbol'].str.upper()
         bt_df_list.append(df)
     except Exception as e:
         print(f"⚠️ Failed to load backtest file {f}: {e}")
@@ -52,36 +80,73 @@ if not bt_df_list:
     exit()
 
 bt_df = pd.concat(bt_df_list, ignore_index=True)
+print(f"📈 Loaded {len(bt_df)} backtest trades from {len(backtest_files)} files")
 
 # ---------------------------------------------------------
-# Sort by fastest duration
+# ✅ ENHANCED SYMBOL SELECTION: Use YOUR SYSTEM'S METRICS
 # ---------------------------------------------------------
-bt_df = bt_df.sort_values(by='duration_days', na_position='last')
-
-# ---------------------------------------------------------
-# TP / SL Symbol Stats
-# ---------------------------------------------------------
+# Base: TP/SL counts
 tp_symbols = bt_df[bt_df['outcome'] == 'TP']['symbol'].value_counts()
 sl_symbols = bt_df[bt_df['outcome'] == 'SL']['symbol'].value_counts()
 
-# ❌ Blacklist (bad symbols)
+# ✅ Get symbols with HIGH EXPECTANCY (BDT) from your system
+high_expectancy_symbols = []
+if not symbol_ref_metrics.empty:
+    # Filter only high-expectancy combos (>100 BDT)
+    good_syms = symbol_ref_metrics[symbol_ref_metrics['Expectancy (BDT)'] > 100]
+    high_expectancy_symbols = good_syms['Symbol'].str.upper().unique().tolist()
+    print(f"🎯 {len(high_expectancy_symbols)} symbols with >100 BDT expectancy found")
+
+# ✅ Get symbols with HIGH Win% (>65%)
+high_win_symbols = []
+if not symbol_ref_metrics.empty:
+    good_win = symbol_ref_metrics[symbol_ref_metrics['Win%'] > 65]
+    high_win_symbols = good_win['Symbol'].str.upper().unique().tolist()
+    print(f"✅ {len(high_win_symbols)} symbols with >65% Win% found")
+
+# 🔍 Combine: Only symbols that are in BOTH high expectancy AND high win%
+quality_symbols = set(high_expectancy_symbols) & set(high_win_symbols)
+print(f"🌟 {len(quality_symbols)} high-quality symbols: {list(quality_symbols)[:5]}...")
+
+# ---------------------------------------------------------
+# Filter main_df using SYSTEM-INTELLIGENT criteria
+# ---------------------------------------------------------
+filtered_df = main_df.copy()
+
+# 1. Must be in quality_symbols
+if quality_symbols:
+    filtered_df = filtered_df[filtered_df['symbol'].isin(quality_symbols)]
+
+# 2. Remove blacklisted (SL ≥ 3)
 blacklist = sl_symbols[sl_symbols >= 3].index.tolist()
+filtered_df = filtered_df[~filtered_df['symbol'].isin(blacklist)]
 
-# ✅ Whitelist (high performing)
-whitelist = tp_symbols[tp_symbols >= 2].index.tolist()
-
-# ---------------------------------------------------------
-# Filter main_df using whitelist/blacklist
-# ---------------------------------------------------------
-filtered_df = main_df[
-    main_df['symbol'].isin(whitelist) &
-    ~main_df['symbol'].isin(blacklist)
-]
-
-# Keep only fast TP symbols (TP ≤ 3 days)
+# 3. Keep only fast TP symbols (TP ≤ 3 days) — from backtest
 fast_tp = bt_df[(bt_df['outcome'] == 'TP') & (bt_df['duration_days'] <= 3)]
 fast_tp_symbols = fast_tp['symbol'].unique().tolist()
-filtered_df = filtered_df[filtered_df['symbol'].isin(fast_tp_symbols)]
+if fast_tp_symbols:
+    filtered_df = filtered_df[filtered_df['symbol'].isin(fast_tp_symbols)]
+
+# ✅ Add SYSTEM FEATURES to observation (for better learning)
+if not filtered_df.empty:
+    # Add expectancy & win% as features
+    def add_system_features(row):
+        sym = row['symbol']
+        win_pct = 50.0
+        expectancy = 0.0
+        if not symbol_ref_metrics.empty:
+            ref_row = symbol_ref_metrics[
+                (symbol_ref_metrics['Symbol'].str.upper() == sym) &
+                (symbol_ref_metrics['Reference'] == 'SWING')
+            ]
+            if not ref_row.empty:
+                win_pct = float(ref_row.iloc[0]['Win%'])
+                expectancy = float(ref_row.iloc[0]['Expectancy (BDT)'])
+        return pd.Series([win_pct, expectancy], index=['system_win_pct', 'system_expectancy_bdt'])
+
+    filtered_df[['system_win_pct', 'system_expectancy_bdt']] = filtered_df.apply(add_system_features, axis=1)
+
+print(f"🔍 Final training set: {len(filtered_df)} rows across {filtered_df['symbol'].nunique()} symbols")
 
 # ---------------------------------------------------------
 # Empty dataset check
@@ -91,7 +156,7 @@ if filtered_df.empty:
     exit()
 
 # ---------------------------------------------------------
-# Prepare RL Environment
+# Prepare RL Environment — with SYSTEM CONTEXT
 # ---------------------------------------------------------
 env = TradeEnv(
     maindf=filtered_df,
@@ -99,7 +164,11 @@ env = TradeEnv(
     gapebuy_path="./csv/gape_buy.csv",
     shortbuy_path="./csv/short_buy.csv",
     rsi_diver_path="./csv/rsi_diver.csv",
-    rsi_diver_retest_path="./csv/rsi_diver_retest.csv"
+    rsi_diver_retest_path="./csv/rsi_diver_retest.csv",
+    trade_stock_path="./csv/trade_stock.csv",          # ← your open signals
+    metrics_path=strategy_metrics_path,                # ← strategy metrics
+    symbol_ref_path=symbol_ref_path,                   # ← symbol×strategy metrics
+    config_path=CONFIG_PATH
 )
 env = DummyVecEnv([lambda: env])
 
@@ -107,7 +176,7 @@ env = DummyVecEnv([lambda: env])
 # Load or create model
 # ---------------------------------------------------------
 if os.path.exists(model_path + ".zip"):
-    model = DQN.load(model_path, env=env)
+    model = DQN.load(model_path, env=env, device='cpu')
     print("✅ Loaded existing model for fine-tuning")
 else:
     model = DQN(
@@ -115,24 +184,73 @@ else:
         env=env,
         verbose=1,
         learning_rate=3e-4,
-        buffer_size=50000,
-        learning_starts=1000,
-        batch_size=128,
-        tau=0.01,
-        gamma=0.95,
-        train_freq=4,
-        target_update_interval=500,
-        exploration_fraction=0.3,
-        exploration_final_eps=0.05,
+        buffer_size=100000,       # ↑ increased for more experience
+        learning_starts=2000,     # ↑ more warmup
+        batch_size=256,           # ↑ larger batch
+        tau=0.005,                # ↓ softer target update
+        gamma=0.98,               # ↑ longer horizon (for swing trades)
+        train_freq=8,             # ↓ less frequent training (more stable)
+        target_update_interval=1000,
+        exploration_fraction=0.2, # ↓ faster convergence
+        exploration_final_eps=0.02,
         device='cpu'
     )
-    print("🆕 Created new model")
+    print("🆕 Created new model with Swing-Optimized params")
 
 # ---------------------------------------------------------
-# 🚀 Train the Model
+# 🚀 TRAINING with EARLY STOPPING & LOGGING
 # ---------------------------------------------------------
-print("🚀 Retraining model with auto-tuned data...")
-model.learn(total_timesteps=200_000)
+print(f"\n🚀 Retraining DQN with {len(filtered_df)} rows of SYSTEM-OPTIMIZED data...")
+print("   🔁 200,000 timesteps (≈ 15-20 mins)")
 
+# Custom callback for logging
+from stable_baselines3.common.callbacks import BaseCallback
+
+class LogCallback(BaseCallback):
+    def __init__(self, verbose=0):
+        super().__init__(verbose)
+        self.rewards = []
+        self.steps = 0
+
+    def _on_step(self) -> bool:
+        self.steps += 1
+        if self.steps % 20000 == 0:
+            avg_reward = np.mean(self.model.ep_info_buffer or [0])
+            print(f"   📊 Step {self.steps:6d} | Avg Reward: {avg_reward:+.3f}")
+        return True
+
+callback = LogCallback()
+
+model.learn(
+    total_timesteps=200_000,
+    callback=callback,
+    log_interval=1000,
+    progress_bar=False
+)
+
+# ---------------------------------------------------------
+# ✅ Save & Report
+# ---------------------------------------------------------
 model.save(model_path)
-print(f"✅ Model saved at {model_path}")
+print(f"\n✅ Model saved at {model_path}.zip")
+
+# 📊 Training summary
+if hasattr(model, 'ep_info_buffer') and model.ep_info_buffer:
+    rewards = [ep['r'] for ep in model.ep_info_buffer]
+    print("\n" + "="*50)
+    print("📊 TRAINING SUMMARY")
+    print("="*50)
+    print(f"📈 Avg Episode Reward   : {np.mean(rewards):+.3f}")
+    print(f"📉 Min Episode Reward   : {np.min(rewards):+.3f}")
+    print(f"📈 Max Episode Reward   : {np.max(rewards):+.3f}")
+    print(f"🎯 Top symbols trained  : {list(quality_symbols)[:5]}")
+    print("="*50)
+
+# 🔁 Optional: Auto-generate signals after training
+auto_signal = input("\n🔄 Generate signals with new model? (y/n): ").strip().lower()
+if auto_signal == 'y':
+    try:
+        from generate_signals import generate_signals
+        generate_signals()
+    except Exception as e:
+        print(f"⚠️ Signal generation failed: {e}")
