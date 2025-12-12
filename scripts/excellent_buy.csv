@@ -2,62 +2,126 @@ import pandas as pd
 import os
 
 # ---------------------------------------------------------
-# Load CSV files
+# Load files safely
 # ---------------------------------------------------------
-excellent = pd.read_csv("./csv/excellent.csv")
-mongodb = pd.read_csv("./csv/mongodb.csv")
+excellent_path = "./csv/excellent.csv"
+mongodb_path = "./csv/mongodb.csv"
 
-excellent['date'] = pd.to_datetime(excellent['date'])
+if not os.path.exists(excellent_path):
+    print(f"❌ {excellent_path} not found → skipping.")
+    exit()
+
+excellent = pd.read_csv(excellent_path)
+mongodb = pd.read_csv(mongodb_path)
+
+# ✅ Ensure 'symbol' exists in excellent
+if 'symbol' not in excellent.columns:
+    print("❌ 'symbol' column missing in excellent.csv")
+    exit()
+
+# Normalize symbol
+excellent['symbol'] = excellent['symbol'].str.upper()
+mongodb['symbol'] = mongodb['symbol'].str.upper()
 mongodb['date'] = pd.to_datetime(mongodb['date'])
-
-# Sort mongodb
 mongodb = mongodb.sort_values(['symbol', 'date']).reset_index(drop=True)
 
 results = []
 
-# ---------------------------------------------------------
-# Process each excellent row
-# ---------------------------------------------------------
+print(f"🔍 Processing {len(excellent)} excellent-liquidity symbols...")
+
 for idx, row in excellent.iterrows():
-    sym = row['symbol']
-    date = row['date']
-
-    # Filter mongodb for this symbol
-    df = mongodb[mongodb['symbol'] == sym].reset_index(drop=True)
-
-    # Check if date exists
-    if date not in df['date'].values:
+    symbol = row['symbol']
+    
+    # Get symbol data
+    sym_data = mongodb[mongodb['symbol'] == symbol].copy()
+    if len(sym_data) < 5:  # need at least 5 bars
         continue
 
-    # Index of A
-    A_index = df.index[df['date'] == date][0]
-
-    # Need previous 2 rows: B, C
-    if A_index - 1 < 0 or A_index - 2 < 0:
+    sym_data = sym_data.sort_values('date').reset_index(drop=True)
+    A = sym_data.iloc[-1]  # latest bar
+    
+    # ✅ Full 5-bar swing logic (from your original system)
+    try:
+        B = sym_data.iloc[-2]
+        C = sym_data.iloc[-3]
+        D = sym_data.iloc[-4]
+        E = sym_data.iloc[-5]
+    except IndexError:
         continue
 
-    A = df.loc[A_index]
-    B = df.loc[A_index - 1]
-    C = df.loc[A_index - 2]
+    # 🔑 Logic 1: A.close > B.high + descending structure
+    if (
+        A['close'] > B['high'] and
+        B['low'] < C['low'] and
+        B['high'] < C['high'] and
+        C['high'] < D['high'] and
+        C['low'] < D['low']
+    ):
+        # ✅ Add system context (from your main system)
+        signal = row.to_dict()
+        signal.update({
+            'date': A['date'].strftime('%Y-%m-%d'),
+            'buy': A['close'],
+            'SL': B['low'],
+            'base_date': B['date'].strftime('%Y-%m-%d'),
+            'logic_used': '5-bar swing (Logic 1)',
+            'volume_ratio': round(A['volume'] / sym_data['volume'].tail(5).mean(), 2),
+            'rsi': A.get('RSI', 50)
+        })
+        results.append(signal)
 
-    # Conditions
-    cond1 = A['close'] > B['high']
-    cond2 = B['low'] <= C['low']
-
-    # If both conditions true → take excellent.csv row
-    if cond1 and cond2:
-        results.append(row)   # <-- original excellent row stored
+    # 🔑 Logic 2: stricter pattern
+    elif (
+        A['close'] > B['high'] and
+        B['high'] < C['high'] and
+        B['low'] > C['low'] and
+        C['high'] < D['high'] and
+        C['low'] < D['low'] and
+        D['high'] < E['high'] and
+        D['low'] < E['low']
+    ):
+        signal = row.to_dict()
+        signal.update({
+            'date': A['date'].strftime('%Y-%m-%d'),
+            'buy': A['close'],
+            'SL': C['low'],
+            'base_date': C['date'].strftime('%Y-%m-%d'),
+            'logic_used': '5-bar swing (Logic 2)',
+            'volume_ratio': round(A['volume'] / sym_data['volume'].tail(5).mean(), 2),
+            'rsi': A.get('RSI', 50)
+        })
+        results.append(signal)
 
 # ---------------------------------------------------------
-# Save output
+# ✅ Filter: Only high-conviction signals
 # ---------------------------------------------------------
-output_df = pd.DataFrame(results)
+final_signals = []
+for sig in results:
+    # ✅ RSI filter (from your system)
+    if sig.get('rsi', 50) > 70:  # overbought
+        continue
+    # ✅ Volume confirmation
+    if sig.get('volume_ratio', 1.0) < 0.8:
+        continue
+    final_signals.append(sig)
 
-os.makedirs("./csv", exist_ok=True)
-os.makedirs("./output/ai_signal", exist_ok=True)
-
-output_df.to_csv("./csv/excellent_buy.csv", index=False)
-output_df.to_csv("./output/ai_signal/excellent_buy.csv", index=False)
-
-print("✅ excellent_buy.csv generated successfully!")
-print("Total signals:", len(output_df))
+# ---------------------------------------------------------
+# Save
+# ---------------------------------------------------------
+if final_signals:
+    output_df = pd.DataFrame(final_signals)
+    
+    # Keep only relevant columns (extend as needed)
+    cols = ['symbol', 'date', 'buy', 'SL', 'logic_used', 'volume_ratio', 'rsi', 'liquidity_rating']
+    output_df = output_df[[c for c in cols if c in output_df.columns]]
+    
+    os.makedirs("./csv", exist_ok=True)
+    os.makedirs("./output/ai_signal", exist_ok=True)
+    
+    output_df.to_csv("./csv/excellent_buy.csv", index=False)
+    output_df.to_csv("./output/ai_signal/excellent_buy.csv", index=False)
+    
+    print(f"✅ {len(output_df)} high-conviction signals saved.")
+    print(f"   📈 Avg RSI: {output_df['rsi'].mean():.1f} | Avg Volume Ratio: {output_df['volume_ratio'].mean():.2f}")
+else:
+    print("⚠️ No high-conviction signals found.")
