@@ -16,13 +16,35 @@ class TradeEnv(gym.Env):
                  trade_stock_path="./csv/trade_stock.csv",
                  metrics_path="./output/ai_signal/strategy_metrics.csv",
                  symbol_ref_path="./output/ai_signal/symbol_reference_metrics.csv",
-                 liquidity_path="./csv/liquidity_system.csv",  # ✅ NEW
+                 liquidity_path="./csv/liquidity_system.csv",
                  config_path="./config.json"):
 
         super(TradeEnv, self).__init__()
 
+        # ✅ CRITICAL: Fill NaN BEFORE processing
         self.maindf = maindf.copy().reset_index(drop=True)
-        self.maindf['date'] = pd.to_datetime(self.maindf['date'])
+        self.maindf = self.maindf.fillna({
+            'open': self.maindf['close'],
+            'high': self.maindf['close'],
+            'low': self.maindf['close'],
+            'volume': 0,
+            'value': 0,
+            'trades': 0,
+            'change': 0,
+            'marketCap': 0,
+            'RSI': 50,
+            'bb_upper': self.maindf['close'],
+            'bb_middle': self.maindf['close'],
+            'bb_lower': self.maindf['close'],
+            'macd': 0,
+            'macd_signal': 0,
+            'macd_hist': 0,
+            'zigzag': 0,
+            'Hammer': 'FALSE',
+            'BullishEngulfing': 'FALSE',
+            'MorningStar': 'FALSE'
+        })
+        self.maindf['date'] = pd.to_datetime(self.maindf['date'], errors='coerce')
         self.maindf['symbol'] = self.maindf['symbol'].str.upper()
 
         # --- Load signal files ---
@@ -36,14 +58,14 @@ class TradeEnv(gym.Env):
         self.trade_stock_df = self._safe_load(trade_stock_path, ['symbol', 'date', 'position_size', 'RRR'])
         self.strategy_metrics = self._safe_load(metrics_path, ['Reference', 'Win%'])
         self.symbol_ref_metrics = self._safe_load(symbol_ref_path, ['Symbol', 'Reference', 'Win%', 'Expectancy (BDT)'])
-        self.liquidity_df = self._safe_load(liquidity_path, ['symbol', 'liquidity_score'])  # ✅ NEW
+        self.liquidity_df = self._safe_load(liquidity_path, ['symbol', 'liquidity_score'])
 
         # Load config
         self._load_config(config_path)
 
         # Environment state
-        self.cash = self.TOTAL_CAPITAL  # ✅ Start with full capital
-        self.positions = {}  # {symbol: {'shares': int, 'avg_price': float, 'sl': float, 'tp': float}}
+        self.cash = self.TOTAL_CAPITAL
+        self.positions = {}
         self.current_step = 0
         self.total_steps = len(self.maindf) - 1
         self.last_obs = None
@@ -61,9 +83,11 @@ class TradeEnv(gym.Env):
             'portfolio_exposure_ratio', 'unrealized_pnl_pct'
         ]
 
-        obs_dim = len(self.base_features) + len(self.pattern_cols) + len(self.sys_features)
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
-        self.action_space = spaces.Discrete(3)  # 0: Hold, 1: Buy, 2: Sell (all)
+        self.obs_dim = len(self.base_features) + len(self.pattern_cols) + len(self.sys_features)
+        print(f"✅ TradeEnv initialized with observation size = {self.obs_dim}")
+
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self.obs_dim,), dtype=np.float32)
+        self.action_space = spaces.Discrete(3)
 
     def _safe_load(self, path, required_cols):
         try:
@@ -88,13 +112,11 @@ class TradeEnv(gym.Env):
                 self.RISK_PERCENT = cfg.get("risk_percent", 0.01)
 
     def _get_open_signal(self, symbol, date):
-        """✅ Get TODAY'S open signal from trade_stock.csv"""
         if self.trade_stock_df.empty:
             return None
 
-        # Find signal for this symbol ON THIS DATE
         signals = self.trade_stock_df[
-            (self.trade_stock_df['symbol'] == symbol) &
+            (self.trade_stock_df['symbol'].str.upper() == symbol.upper()) &
             (pd.to_datetime(self.trade_stock_df['date']).dt.date == date.date())
         ]
         return signals.iloc[0] if not signals.empty else None
@@ -121,7 +143,7 @@ class TradeEnv(gym.Env):
         # --- Symbol performance ---
         if not self.symbol_ref_metrics.empty:
             ref_row = self.symbol_ref_metrics[
-                (self.symbol_ref_metrics['Symbol'].str.upper() == symbol) &
+                (self.symbol_ref_metrics['Symbol'].str.upper() == symbol.upper()) &
                 (self.symbol_ref_metrics['Reference'] == 'SWING')
             ]
             if not ref_row.empty:
@@ -130,7 +152,7 @@ class TradeEnv(gym.Env):
 
         # --- Liquidity ---
         if not self.liquidity_df.empty:
-            liq_row = self.liquidity_df[self.liquidity_df['symbol'].str.upper() == symbol]
+            liq_row = self.liquidity_df[self.liquidity_df['symbol'].str.upper() == symbol.upper()]
             if not liq_row.empty:
                 context['liquidity_score'] = float(liq_row.iloc[0].get('liquidity_score', 0.5))
 
@@ -141,41 +163,67 @@ class TradeEnv(gym.Env):
         # Unrealized PnL
         if symbol in self.positions:
             pos = self.positions[symbol]
-            current_price = self.maindf.iloc[self.current_step]['close']
+            current_price = self.maindf.iloc[min(self.current_step, len(self.maindf)-1)]['close']
             unrealized = (current_price - pos['avg_price']) / pos['avg_price'] * 100
             context['unrealized_pnl_pct'] = unrealized
 
         return context
 
     def get_obs(self):
-        row = self.maindf.iloc[self.current_step]
-        symbol = row.get('symbol', '')
+        # ✅ CRITICAL: Fill row-level NaN first
+        row = self.maindf.iloc[self.current_step].fillna(0)
+        symbol = str(row.get('symbol', '')).upper()
         date = row.get('date', pd.Timestamp.now())
 
         # Base features
         obs = []
         for col in self.base_features:
             val = row.get(col, 0)
-            obs.append(float(val))
+            try:
+                obs.append(float(val))
+            except (ValueError, TypeError):
+                obs.append(0.0)
 
         # Pattern flags
         for col in self.pattern_cols:
-            val = row.get(col, 0)
-            obs.append(1.0 if str(val).upper() == 'TRUE' else 0.0)
+            val = str(row.get(col, 'FALSE')).upper()
+            obs.append(1.0 if val == 'TRUE' else 0.0)
 
         # System intelligence
         sys_ctx = self._get_system_context(symbol, date)
         for col in self.sys_features:
-            obs.append(float(sys_ctx[col]))
+            val = sys_ctx.get(col, 0.0)
+            try:
+                obs.append(float(val))
+            except (ValueError, TypeError):
+                obs.append(0.0)
+
+        # ✅ CRITICAL: Validate observation size
+        if len(obs) != self.obs_dim:
+            print(f"❗ Obs length mismatch: got {len(obs)}, expected {self.obs_dim}")
+            print("Base features:", len(self.base_features))
+            print("Pattern cols:", len(self.pattern_cols))
+            print("Sys features:", len(self.sys_features))
+            # Pad or truncate to fix
+            if len(obs) < self.obs_dim:
+                obs.extend([0.0] * (self.obs_dim - len(obs)))
+            else:
+                obs = obs[:self.obs_dim]
 
         obs_array = np.array(obs, dtype=np.float32)
-        return np.nan_to_num(obs_array, nan=0.0, posinf=0.0, neginf=0.0)
+        # Final NaN cleanup
+        obs_array = np.nan_to_num(obs_array, nan=0.0, posinf=0.0, neginf=0.0)
+        return obs_array
 
     def step(self, action):
+        # ✅ CRITICAL: Handle empty dataframe
+        if self.current_step >= len(self.maindf):
+            return self.last_obs, 0.0, True, False, {}
+
         row = self.maindf.iloc[self.current_step]
-        symbol = row['symbol']
-        price = row['close']
-        date = row['date']
+        symbol = str(row.get('symbol', '')).upper()
+        price = float(row.get('close', 0))
+        date = row.get('date', pd.Timestamp.now())
 
         reward = 0.0
         info = {}
@@ -184,13 +232,12 @@ class TradeEnv(gym.Env):
         signal = self._get_open_signal(symbol, date)
         sys_ctx = self._get_system_context(symbol, date)
 
-        # --- ✅ DSE-REALISTIC EXECUTION: Use SUGGESTED position_size ---
-        if action == 1 and signal is not None:  # Buy signal + action=Buy
+        # --- ✅ DSE-REALISTIC EXECUTION ---
+        if action == 1 and signal is not None:
             suggested_shares = int(signal.get('position_size', 0))
             cost = suggested_shares * price
 
-            if self.cash >= cost and suggested_shares > 0:
-                # Open new position
+            if self.cash >= cost and suggested_shares > 0 and price > 0:
                 self.positions[symbol] = {
                     'shares': suggested_shares,
                     'avg_price': price,
@@ -199,18 +246,17 @@ class TradeEnv(gym.Env):
                 }
                 self.cash -= cost
 
-                # ✅ Reward = scaled by expectancy & liquidity
                 bonus = (
-                    sys_ctx['expectancy_bdt'] * 0.001 +   # 0.1% per BDT
-                    sys_ctx['liquidity_score'] * 0.5 +    # up to +0.5
-                    (sys_ctx['win_pct_symbol'] - 50) * 0.01  # +0.1% per 1% Win% above 50
+                    sys_ctx['expectancy_bdt'] * 0.001 +
+                    sys_ctx['liquidity_score'] * 0.5 +
+                    (sys_ctx['win_pct_symbol'] - 50) * 0.01
                 )
-                reward = 1.0 + bonus
+                reward = 1.0 + max(-1.0, min(3.0, bonus))  # clip bonus
 
             else:
-                reward = -2.0  # punish missed opportunity
+                reward = -2.0
 
-        elif action == 2 and symbol in self.positions:  # Sell all
+        elif action == 2 and symbol in self.positions:
             pos = self.positions[symbol]
             proceeds = pos['shares'] * price
             profit = proceeds - (pos['shares'] * pos['avg_price'])
@@ -218,40 +264,43 @@ class TradeEnv(gym.Env):
             self.cash += proceeds
             del self.positions[symbol]
 
-            # ✅ Reward based on outcome
             if profit > 0:
-                reward = profit * (1 + 0.001 * sys_ctx['expectancy_bdt'])
+                reward = profit * (1 + 0.001 * max(0, sys_ctx['expectancy_bdt']))
             else:
-                reward = profit * 2.0  # punish loss more
+                reward = profit * 2.0
 
-        # --- Auto-exit on SL/TP (DSE-realistic) ---
+        # --- Auto-exit on SL/TP ---
         if symbol in self.positions:
             pos = self.positions[symbol]
-            if price <= pos['sl']:
-                # SL hit — auto sell
+            sl_price = pos['sl']
+            tp_price = pos['tp']
+
+            if price <= sl_price and sl_price > 0:
                 shares = pos['shares']
                 proceeds = shares * price
                 self.cash += proceeds
                 del self.positions[symbol]
-                reward += -1.0  # additional penalty for SL
+                reward += -1.0
                 info['exit_reason'] = 'SL'
-            elif price >= pos['tp']:
-                # TP hit — auto sell
+            elif price >= tp_price and tp_price > 0:
                 shares = pos['shares']
                 proceeds = shares * price
                 self.cash += proceeds
                 del self.positions[symbol]
-                reward += +0.5  # bonus for TP
+                reward += +0.5
                 info['exit_reason'] = 'TP'
 
         # Step forward
         self.current_step += 1
         done = self.current_step >= self.total_steps
 
-        # Final portfolio value
+        # Portfolio value
+        if self.current_step < len(self.maindf):
+            current_price = self.maindf.iloc[self.current_step]['close']
+        else:
+            current_price = price
         portfolio_value = self.cash + sum(
-            p['shares'] * self.maindf.iloc[min(self.current_step, len(self.maindf)-1)]['close']
-            for p in self.positions.values()
+            p['shares'] * current_price for p in self.positions.values()
         )
         info['portfolio_value'] = portfolio_value
         info['positions'] = len(self.positions)
@@ -271,9 +320,13 @@ class TradeEnv(gym.Env):
         return self.last_obs, {}
 
     def render(self):
+        if self.current_step >= len(self.maindf):
+            print("[ENV] Done")
+            return
+
         r = self.maindf.iloc[self.current_step]
-        symbol = r['symbol']
-        price = r['close']
+        symbol = r.get('symbol', 'N/A')
+        price = float(r.get('close', 0))
         portfolio_value = self.cash + sum(p['shares'] * price for p in self.positions.values())
         pnl = portfolio_value - self.TOTAL_CAPITAL
         pos_str = ", ".join([f"{s}: {p['shares']}" for s, p in self.positions.items()])
