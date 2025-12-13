@@ -4,7 +4,7 @@ on:
   push:
     branches: [ master ]
   schedule:
-    - cron: "* 11 * * 4"  # Every Thursday 6:00 PM Malaysia Time (UTC+8 => UTC 11:45AM)
+    - cron: "* * * * *"  # Every Thursday 6:00 PM Malaysia Time (UTC+8 => UTC 11:45AM)
 
   workflow_dispatch:  # ম্যানুয়ালি চালাতে পারবে
 
