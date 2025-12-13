@@ -11,7 +11,7 @@ import os
 scripts = [
     "scripts/mongodb.py",
     #"scripts/swing_High_Low.py",
-    #"scripts/swing_buy.py",
+    "scripts/swing_buy.py",
     "scripts/liquidly.py",
     "scripts/orderblock.py",
     "scripts/rsi_diver.py",
