@@ -1,222 +1,395 @@
+import gymnasium as gym
 import os
-import pandas as pd
 import numpy as np
-import warnings
-from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv
-from stable_baselines3.common.callbacks import BaseCallback
-from env import TradeEnv
+import pandas as pd
+from gymnasium import spaces
 import json
 
-# ⚠️ FutureWarning অফ
-warnings.simplefilter(action='ignore', category=FutureWarning)
+class TradeEnv(gym.Env):
+    metadata = {"render_modes": ["human"]}
 
-# ---------------------------------------------------------
-# 🔧 Load config (for risk context)
-# ---------------------------------------------------------
-CONFIG_PATH = "./config.json"
-TOTAL_CAPITAL = 500000
-RISK_PERCENT = 0.01
-if os.path.exists(CONFIG_PATH):
-    with open(CONFIG_PATH, "r") as f:
-        cfg = json.load(f)
-        TOTAL_CAPITAL = cfg.get("total_capital", 500000)
-        RISK_PERCENT = cfg.get("risk_percent", 0.01)
-print(f"✅ Config: Capital = {TOTAL_CAPITAL:,.0f} BDT, Risk = {RISK_PERCENT*100:.1f}%")
+    def __init__(self,
+                 maindf,
+                 gape_path="./csv/gape.csv",
+                 gapebuy_path="./csv/gape_buy.csv",
+                 shortbuy_path="./csv/short_buy.csv",
+                 rsi_diver_path="./csv/rsi_diver.csv",
+                 rsi_diver_retest_path="./csv/rsi_diver_retest.csv",
+                 trade_stock_path="./csv/trade_stock.csv",
+                 metrics_path="./output/ai_signal/strategy_metrics.csv",
+                 symbol_ref_path="./output/ai_signal/symbol_reference_metrics.csv",
+                 liquidity_path="./csv/liquidity_system.csv",
+                 config_path="./config.json"):
 
-# ---------------------------------------------------------
-# 📊 Load system intelligence files
-# ---------------------------------------------------------
-strategy_metrics_path = "./output/ai_signal/strategy_metrics.csv"
-symbol_ref_path = "./output/ai_signal/symbol_reference_metrics.csv"
-liquidity_path = "./csv/liquidity_system.csv"  # ✅ NEW
+        super(TradeEnv, self).__init__()
 
-strategy_metrics = pd.read_csv(strategy_metrics_path) if os.path.exists(strategy_metrics_path) else pd.DataFrame()
-symbol_ref_metrics = pd.read_csv(symbol_ref_path) if os.path.exists(symbol_ref_path) else pd.DataFrame()
+        # ✅ 1. Clean maindf
+        self.maindf = maindf.copy().reset_index(drop=True)
+        self.maindf = self.maindf.fillna({
+            'open': self.maindf['close'],
+            'high': self.maindf['close'],
+            'low': self.maindf['close'],
+            'volume': 0,
+            'value': 0,
+            'trades': 0,
+            'change': 0,
+            'marketCap': 0,
+            'RSI': 50,
+            'bb_upper': self.maindf['close'],
+            'bb_middle': self.maindf['close'],
+            'bb_lower': self.maindf['close'],
+            'macd': 0,
+            'macd_signal': 0,
+            'macd_hist': 0,
+            'zigzag': 0,
+            'Hammer': 'FALSE',
+            'BullishEngulfing': 'FALSE',
+            'MorningStar': 'FALSE'
+        })
+        self.maindf['date'] = pd.to_datetime(self.maindf['date'], errors='coerce')
+        self.maindf['symbol'] = self.maindf['symbol'].str.strip().str.upper()
+        self.maindf = self.maindf.dropna(subset=['date', 'symbol', 'close'])
 
-# --- Helper Function ---
-def load_csv_safe(path, required_columns=None):
-    try:
-        if os.path.exists(path):
-            df = pd.read_csv(path)
-            print(f"✅ Loaded: {path} ({len(df)} rows)")
-            if required_columns:
-                for col in required_columns:
+        # ✅ 2. Load signal files
+        self.gape_df = self._safe_load(gape_path, ['symbol'])
+        self.gapebuy_df = self._safe_load(gapebuy_path, ['symbol', 'date'])
+        self.shortbuy_df = self._safe_load(shortbuy_path, ['symbol', 'date'])
+        self.rsi_diver_df = self._safe_load(rsi_diver_path, ['symbol'])
+        self.rsi_diver_retest_df = self._safe_load(rsi_diver_retest_path, ['symbol'])
+
+        # ✅ 3. Load SYSTEM INTELLIGENCE files
+        self.trade_stock_df = self._load_and_clean_trade_stock(trade_stock_path)
+        self.strategy_metrics = self._safe_load(metrics_path, ['Reference', 'Win%'])
+        self.symbol_ref_metrics = self._safe_load(symbol_ref_path, ['Symbol', 'Reference', 'Win%', 'Expectancy (BDT)'])
+        self.liquidity_df = self._safe_load(liquidity_path, ['symbol', 'liquidity_score'])
+
+        # ✅ 4. Load config
+        self._load_config(config_path)
+
+        # ✅ 5. Env state
+        self.cash = float(self.TOTAL_CAPITAL)
+        self.positions = {}
+        self.current_step = 0
+        self.total_steps = max(0, len(self.maindf) - 1)
+        self.last_obs = None
+
+        # ✅ 6. Observation schema
+        self.base_features = [
+            'open', 'high', 'low', 'close', 'volume', 'value', 'trades', 'change', 'marketCap',
+            'RSI', 'bb_upper', 'bb_middle', 'bb_lower',
+            'macd', 'macd_signal', 'macd_hist', 'zigzag'
+        ]  # 17
+        self.pattern_cols = ['Hammer', 'BullishEngulfing', 'MorningStar']  # 3
+        self.sys_features = [
+            'has_signal_today', 'position_size_suggested', 'rrr_signal',
+            'win_pct_symbol', 'expectancy_bdt', 'liquidity_score',
+            'portfolio_exposure_ratio', 'unrealized_pnl_pct'
+        ]  # 8
+
+        self.obs_dim = len(self.base_features) + len(self.pattern_cols) + len(self.sys_features)
+        print(f"✅ TradeEnv initialized with observation size = {self.obs_dim}")
+
+        self.observation_space = spaces.Box(
+            low=-np.inf, high=np.inf, shape=(self.obs_dim,), dtype=np.float32
+        )
+        self.action_space = spaces.Discrete(3)  # 0: Hold, 1: Buy, 2: Sell
+
+    def _safe_load(self, path, required_cols):
+        try:
+            if os.path.exists(path) and os.path.getsize(path) > 0:
+                df = pd.read_csv(path, low_memory=False)
+                df.columns = df.columns.str.strip()
+                for col in required_cols:
                     if col not in df.columns:
                         df[col] = 0
-            return df
-        else:
-            print(f"⚠️ File not found: {path}")
-    except Exception as e:
-        print(f"❌ Failed to load {path}: {e}")
-    return pd.DataFrame()
-
-# --- Load Datasets ---
-required_cols = ['RSI', 'confidence', 'ai_score', 'duration_days', 'close', 'symbol', 'date']
-main_df = load_csv_safe('./csv/mongodb.csv', required_columns=required_cols)
-gape_df = load_csv_safe('./csv/gape.csv')
-gapebuy_df = load_csv_safe('./csv/gape_buy.csv')
-shortbuy_df = load_csv_safe('./csv/short_buy.csv')
-rsi_diver_df = load_csv_safe('./csv/rsi_diver.csv')
-rsi_diver_retest_df = load_csv_safe('./csv/rsi_diver_retest.csv')
-
-# --- ✅ ENHANCED DATA FILTERING: Use YOUR SYSTEM'S METRICS ---
-if not main_df.empty and not symbol_ref_metrics.empty:
-    print("\n🔍 Optimizing training data using system metrics...")
-
-    # Get symbols with: Win% > 65% AND Expectancy > 100 BDT
-    high_quality = symbol_ref_metrics[
-        (symbol_ref_metrics['Win%'] > 65) &
-        (symbol_ref_metrics['Expectancy (BDT)'] > 100)
-    ]
-    quality_symbols = high_quality['Symbol'].str.upper().unique().tolist()
-    print(f"🎯 {len(quality_symbols)} symbols with >65% Win% & >100 BDT expectancy found")
-
-    # ✅ Add: Liquidity filter (score >= 0.4 = Moderate+)
-    high_liquidity_symbols = []
-    if os.path.exists(liquidity_path):
-        try:
-            liquidity_df = pd.read_csv(liquidity_path)
-            liquidity_df['symbol'] = liquidity_df['symbol'].str.upper()
-            good_liq = liquidity_df[liquidity_df['liquidity_score'] >= 0.4]
-            high_liquidity_symbols = good_liq['symbol'].unique().tolist()
-            print(f"💧 {len(high_liquidity_symbols)} symbols with Moderate+ liquidity")
+                return df
         except Exception as e:
-            print(f"⚠️ Failed to load liquidity: {e}")
+            print(f"⚠️ Failed to load {path}: {e}")
+        return pd.DataFrame(columns=required_cols)
 
-    # Combine: quality_symbols ∩ high_liquidity_symbols
-    if high_liquidity_symbols:
-        quality_symbols = set(quality_symbols) & set(high_liquidity_symbols)
-        print(f"🌟 Final high-quality symbols (Win%>65, Exp>100, Liq≥Moderate): {len(quality_symbols)}")
+    def _load_and_clean_trade_stock(self, path):
+        df = self._safe_load(path, ['symbol', 'date', 'buy', 'SL', 'tp', 'RRR', 'position_size'])
 
-    # Filter main_df
-    main_df['symbol'] = main_df['symbol'].str.upper()
-    main_df = main_df[main_df['symbol'].isin(quality_symbols)]
-    print(f"✅ Filtered to {len(main_df)} rows ({main_df['symbol'].nunique()} symbols)")
-else:
-    print("⚠️ No system metrics found → using full dataset")
+        # Standardize cols
+        df['symbol'] = df['symbol'].str.strip().str.upper()
+        df['date'] = pd.to_datetime(df['date'], errors='coerce')
 
-# --- Create Environment — with FULL SYSTEM CONTEXT ---
-try:
-    env = TradeEnv(
-        maindf=main_df,
-        gape_path="./csv/gape.csv",
-        gapebuy_path="./csv/gape_buy.csv",
-        shortbuy_path="./csv/short_buy.csv",
-        rsi_diver_path="./csv/rsi_diver.csv",
-        rsi_diver_retest_path="./csv/rsi_diver_retest.csv",
-        trade_stock_path="./csv/trade_stock.csv",
-        metrics_path=strategy_metrics_path,
-        symbol_ref_path=symbol_ref_path,
-        config_path=CONFIG_PATH,
-        liquidity_path=liquidity_path  # ✅ CRITICAL: Enable liquidity awareness
-    )
-    print("✅ Environment initialized with LIQUIDITY-AWARE SYSTEM INTELLIGENCE")
-except Exception as e:
-    print(f"❌ Failed to initialize environment: {e}")
-    exit()
+        # Critical: Remove rows with missing buy/SL/tp
+        original_len = len(df)
+        df = df.dropna(subset=['buy', 'SL', 'tp', 'position_size'])
+        if len(df) < original_len:
+            print(f"🧹 Cleaned {original_len - len(df)} invalid rows from {path} (missing buy/SL/tp/position_size)")
 
-env = DummyVecEnv([lambda: env])
+        # Convert & sanitize numeric cols
+        for col in ['buy', 'SL', 'tp', 'RRR', 'position_size']:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            df[col] = df[col].fillna(0).clip(lower=0)
 
-# --- ✅ ENHANCED PPO: Liquidity-Optimized Hyperparameters ---
-try:
-    model = PPO(
-        policy="MlpPolicy",
-        env=env,
-        verbose=1,
-        learning_rate=2.2e-4,       # ↓ more stable for small market
-        n_steps=2048,
-        batch_size=256,             # ↑ larger batch (better for small data)
-        n_epochs=20,                # ↑ more epochs (prevent underfitting)
-        gamma=0.99,                 # ↑ longer horizon (swing trades)
-        gae_lambda=0.95,
-        clip_range=0.12,            # ↓ tighter clipping (more stable)
-        ent_coef=0.001,             # ↓↓ less entropy (more deterministic)
-        vf_coef=0.7,                # ↑↑ better value estimation (critical for risk)
-        max_grad_norm=0.4,          # ↓ gradient clipping
-        device='cpu'
-    )
-    print("✅ PPO model created with LIQUIDITY-OPTIMIZED parameters")
-except Exception as e:
-    print(f"❌ Failed to create PPO model: {e}")
-    exit()
+        # Enforce valid logic: SL < buy < tp
+        mask = (df['SL'] < df['buy']) & (df['buy'] < df['tp']) & (df['RRR'] > 0) & (df['position_size'] > 0)
+        invalid = (~mask).sum()
+        if invalid > 0:
+            print(f"🧹 Removed {invalid} rows with invalid SL/buy/tp or RRR ≤ 0")
+            df = df[mask].copy()
 
-# --- 📊 Custom Callback for Monitoring ---
-class TrainingCallback(BaseCallback):
-    def __init__(self, check_freq=2000, verbose=1):
-        super().__init__(verbose)
-        self.check_freq = check_freq
-        self.rewards = []
+        return df.reset_index(drop=True)
 
-    def _on_step(self) -> bool:
-        if self.n_calls % self.check_freq == 0:
-            if len(self.model.ep_info_buffer) > 0:
-                avg_reward = np.mean([ep['r'] for ep in self.model.ep_info_buffer])
-                self.rewards.append(avg_reward)
-                print(f"   📊 Step {self.num_timesteps:6d} | Avg Reward: {avg_reward:+.3f}")
-        return True
-
-callback = TrainingCallback(check_freq=2000)
-
-# --- 🚀 Train PPO Model ---
-try:
-    print(f"\n🚀 Training PPO (200,000 timesteps) with LIQUIDITY-OPTIMIZED data...")
-    model.learn(
-        total_timesteps=200_000,
-        callback=callback,
-        log_interval=1000,
-        progress_bar=False
-    )
-    print("✅ PPO Training complete")
-except Exception as e:
-    print(f"❌ Training failed: {e}")
-    exit()
-
-# --- ✅ Save & LIQUIDITY-AWARE Report ---
-try:
-    save_path = './csv/ppo_retrained'
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    model.save(save_path)
-    print(f"\n✅ PPO model saved at: {save_path}.zip")
-
-    # 📊 Final report with liquidity stats
-    if callback.rewards:
-        # Get liquidity distribution
-        trained_syms = main_df['symbol'].unique()
-        liq_distribution = {}
-        if os.path.exists(liquidity_path):
+    def _load_config(self, config_path):
+        self.TOTAL_CAPITAL = 500000.0
+        self.RISK_PERCENT = 0.01
+        if os.path.exists(config_path):
             try:
-                liq_df = pd.read_csv(liquidity_path)
-                liq_df['symbol'] = liq_df['symbol'].str.upper()
-                trained_liq = liq_df[liq_df['symbol'].isin(trained_syms)]
-                liq_distribution = trained_liq['liquidity_rating'].value_counts().to_dict()
-            except:
-                pass
+                with open(config_path) as f:
+                    cfg = json.load(f)
+                    self.TOTAL_CAPITAL = float(cfg.get("total_capital", 500000))
+                    self.RISK_PERCENT = float(cfg.get("risk_percent", 0.01))
+            except Exception as e:
+                print(f"⚠️ Config load error: {e}")
 
-        print("\n" + "="*60)
-        print("📊 PPO TRAINING SUMMARY (LIQUIDITY-OPTIMIZED)")
-        print("="*60)
-        print(f"📈 Avg Final Reward  : {np.mean(callback.rewards[-5:]):+.3f}")
-        print(f"📉 Min/Max Reward     : {np.min(callback.rewards):+.3f} / {np.max(callback.rewards):+.3f}")
-        print(f"🎯 Trained on         : {len(trained_syms)} high-quality symbols")
-        if not symbol_ref_metrics.empty:
-            top_symbol = symbol_ref_metrics.loc[symbol_ref_metrics['Expectancy (BDT)'].idxmax()]
-            print(f"🏆 Top Symbol         : {top_symbol['Symbol']} ({top_symbol['Expectancy (BDT)']:.0f} BDT)")
-        if liq_distribution:
-            print("💧 Liquidity distribution:")
-            for liq, cnt in sorted(liq_distribution.items()):
-                print(f"   • {liq:<10} : {cnt:2d} symbols")
-        print("="*60)
+    def _get_open_signal(self, symbol, date):
+        if self.trade_stock_df.empty:
+            return None
 
-except Exception as e:
-    print(f"❌ Failed to save PPO model: {e}")
+        # Date-aware exact match
+        try:
+            target_date = pd.Timestamp(date).date()
+        except:
+            return None
 
-# --- 🔁 Optional: Auto-test with generate_signals ---
-auto_test = input("\n🧪 Test new PPO model with signal generation? (y/n): ").strip().lower()
-if auto_test == 'y':
-    try:
-        from generate_signals import generate_signals
-        print("\n🔍 Generating signals with new PPO model...\n")
-        generate_signals()
-    except Exception as e:
-        print(f"⚠️ Signal test failed: {e}")
+        signal_row = self.trade_stock_df[
+            (self.trade_stock_df['symbol'] == symbol) &
+            (self.trade_stock_df['date'].dt.date == target_date)
+        ]
+
+        if signal_row.empty:
+            return None
+
+        s = signal_row.iloc[0].to_dict()
+
+        # Final safety: ensure all critical fields are valid numbers
+        for k in ['buy', 'SL', 'tp', 'RRR', 'position_size']:
+            val = s.get(k, 0)
+            if pd.isna(val) or not np.isfinite(val):
+                return None  # ← Skip signal if ANY critical field is bad
+
+        # Enforce types & bounds
+        return {
+            'buy': float(s['buy']),
+            'SL': float(s['SL']),
+            'tp': float(s['tp']),
+            'RRR': float(max(0.1, s['RRR'])),  # min RRR = 0.1
+            'position_size': int(max(1, round(s['position_size']))),
+        }
+
+    def _get_system_context(self, symbol, date):
+        ctx = {
+            'has_signal_today': 0,
+            'position_size_suggested': 0,
+            'rrr_signal': 0.0,
+            'win_pct_symbol': 50.0,
+            'expectancy_bdt': 0.0,
+            'liquidity_score': 0.5,
+            'portfolio_exposure_ratio': 0.0,
+            'unrealized_pnl_pct': 0.0
+        }
+
+        # Signal?
+        signal = self._get_open_signal(symbol, date)
+        if signal:
+            ctx.update({
+                'has_signal_today': 1,
+                'position_size_suggested': signal['position_size'],
+                'rrr_signal': signal['RRR']
+            })
+
+        # Symbol metrics?
+        if not self.symbol_ref_metrics.empty:
+            ref = self.symbol_ref_metrics[
+                (self.symbol_ref_metrics['Symbol'] == symbol) &
+                (self.symbol_ref_metrics['Reference'] == 'SWING')
+            ]
+            if not ref.empty:
+                row = ref.iloc[0]
+                ctx['win_pct_symbol'] = float(np.clip(row.get('Win%', 50.0), 0, 100))
+                ctx['expectancy_bdt'] = float(row.get('Expectancy (BDT)', 0.0))
+
+        # Liquidity?
+        if not self.liquidity_df.empty:
+            liq = self.liquidity_df[self.liquidity_df['symbol'] == symbol]
+            if not liq.empty:
+                ctx['liquidity_score'] = float(np.clip(liq.iloc[0].get('liquidity_score', 0.5), 0, 1))
+
+        # Portfolio context
+        total_exposed = sum(p['shares'] * p['avg_price'] for p in self.positions.values())
+        ctx['portfolio_exposure_ratio'] = float(np.clip(total_exposed / self.TOTAL_CAPITAL, 0, 1))
+
+        if symbol in self.positions:
+            pos = self.positions[symbol]
+            current_price = float(self.maindf.iloc[min(self.current_step, len(self.maindf)-1)]['close'])
+            avg_price = pos['avg_price']
+            if avg_price > 0:
+                ctx['unrealized_pnl_pct'] = (current_price - avg_price) / avg_price * 100
+
+        return ctx
+
+    def get_obs(self):
+        if self.current_step >= len(self.maindf):
+            # Return zero obs if out of bounds (fallback)
+            return np.zeros(self.obs_dim, dtype=np.float32)
+
+        row = self.maindf.iloc[self.current_step]
+        symbol = str(row.get('symbol', 'UNKNOWN')).upper()
+        date = row.get('date', pd.Timestamp.now())
+
+        obs = []
+
+        # Base features (17)
+        for col in self.base_features:
+            val = row.get(col, 0)
+            try:
+                obs.append(float(val))
+            except (ValueError, TypeError):
+                obs.append(0.0)
+
+        # Patterns (3)
+        for col in self.pattern_cols:
+            val = str(row.get(col, 'FALSE')).upper()
+            obs.append(1.0 if val == 'TRUE' else 0.0)
+
+        # System context (8)
+        sys_ctx = self._get_system_context(symbol, date)
+        for col in self.sys_features:
+            val = sys_ctx.get(col, 0.0)
+            obs.append(float(val))
+
+        # Final safety
+        obs = np.array(obs, dtype=np.float32)
+        obs = np.nan_to_num(obs, nan=0.0, posinf=0.0, neginf=0.0)
+
+        if len(obs) != self.obs_dim:
+            print(f"❗ Obs length fix: {len(obs)} → {self.obs_dim}")
+            if len(obs) < self.obs_dim:
+                obs = np.pad(obs, (0, self.obs_dim - len(obs)), constant_values=0.0)
+            else:
+                obs = obs[:self.obs_dim]
+
+        return obs
+
+    def step(self, action):
+        if self.current_step >= len(self.maindf):
+            obs = self.last_obs if self.last_obs is not None else np.zeros(self.obs_dim, dtype=np.float32)
+            return obs, 0.0, True, False, {"terminated": True}
+
+        row = self.maindf.iloc[self.current_step]
+        symbol = str(row.get('symbol', 'N/A')).upper()
+        price = float(row.get('close', 0.0))
+        date = row.get('date', pd.Timestamp.now())
+
+        reward = 0.0
+        info = {}
+
+        # Get signal
+        signal = self._get_open_signal(symbol, date)
+
+        # --- ACTION: BUY (1) ---
+        if action == 1 and signal:
+            shares = signal['position_size']
+            cost = shares * price
+
+            if shares > 0 and cost > 0 and self.cash >= cost and price >= signal['buy'] * 0.99:
+                # Valid entry
+                self.positions[symbol] = {
+                    'shares': shares,
+                    'avg_price': price,
+                    'sl': signal['SL'],
+                    'tp': signal['tp']
+                }
+                self.cash -= cost
+
+                # Reward: positive + system boost
+                bonus = (
+                    min(2.0, signal['RRR'] * 0.2) +  # RRR bonus
+                    (sys_ctx := self._get_system_context(symbol, date))['liquidity_score'] * 0.3 +
+                    (sys_ctx['win_pct_symbol'] - 50) * 0.01
+                )
+                reward = 1.0 + np.clip(bonus, -0.5, 2.0)
+            else:
+                reward = -1.5  # Invalid buy attempt
+
+        # --- ACTION: SELL (2) ---
+        elif action == 2 and symbol in self.positions:
+            pos = self.positions[symbol]
+            proceeds = pos['shares'] * price
+            profit = proceeds - (pos['shares'] * pos['avg_price'])
+
+            self.cash += proceeds
+            del self.positions[symbol]
+
+            # Reward based on outcome
+            if profit > 0:
+                reward = 1.0 + profit / self.TOTAL_CAPITAL * 100  # scaled profit
+            else:
+                reward = -1.0 + profit / self.TOTAL_CAPITAL * 200  # penalize loss more
+
+        # --- Auto-exit: SL/TP ---
+        if symbol in self.positions:
+            pos = self.positions[symbol]
+            sl, tp = pos['sl'], pos['tp']
+            if price <= sl and sl > 0:
+                proceeds = pos['shares'] * price
+                self.cash += proceeds
+                del self.positions[symbol]
+                reward += -1.0
+                info['exit'] = 'SL'
+            elif price >= tp and tp > 0:
+                proceeds = pos['shares'] * price
+                self.cash += proceeds
+                del self.positions[symbol]
+                reward += +0.8
+                info['exit'] = 'TP'
+
+        # Step forward
+        self.current_step += 1
+        done = self.current_step >= self.total_steps
+
+        # Portfolio value
+        current_price = price
+        if self.current_step < len(self.maindf):
+            current_price = float(self.maindf.iloc[self.current_step]['close'])
+        portfolio_value = self.cash + sum(
+            p['shares'] * current_price for p in self.positions.values()
+        )
+        info.update({
+            'portfolio_value': float(portfolio_value),
+            'cash': float(self.cash),
+            'positions': len(self.positions),
+            'symbol': symbol,
+            'price': price,
+            'step': self.current_step
+        })
+
+        obs = self.get_obs() if not done else (self.last_obs if self.last_obs is not None else np.zeros(self.obs_dim))
+        self.last_obs = obs
+
+        return np.array(obs, dtype=np.float32), float(np.clip(reward, -5, 5)), done, False, info
+
+    def reset(self, *, seed=None, options=None):
+        super().reset(seed=seed)
+        self.cash = float(self.TOTAL_CAPITAL)
+        self.positions = {}
+        self.current_step = 0
+        self.last_obs = self.get_obs()
+        return self.last_obs, {}
+
+    def render(self):
+        if self.current_step >= len(self.maindf):
+            print("⏹️ Env terminated.")
+            return
+
+        r = self.maindf.iloc[self.current_step]
+        symbol = r.get('symbol', 'N/A')
+        price = float(r.get('close', 0))
+        pv = self.cash + sum(p['shares'] * price for p in self.positions.values())
+        pnl = pv - self.TOTAL_CAPITAL
+        pos_str = ", ".join([f"{s}×{p['shares']}" for s, p in self.positions.items()])
+        print(f"[{symbol:10}] 💰 Cash: {self.cash:8.0f} | 📈 PnL: {pnl:+7.0f} | 📦 Pos: {pos_str or '—'}")
