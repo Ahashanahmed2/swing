@@ -4,7 +4,7 @@ import os
 
 
 # Ensure the output directory exists
-os.makedirs('./output/ai_signal', exist_ok=True)
+#os.makedirs('./output/ai_signal', #exist_ok=True)
 
 # Load and prepare data
 df = pd.read_csv('./csv/mongodb.csv')
@@ -72,4 +72,4 @@ for symbol, group in df.groupby('symbol'):
 # Save output
 output_df = pd.DataFrame(divergence_dict.values())
 output_df.to_csv('./csv/rsi_diver.csv', index=False)
-output_df.to_csv('./output/ai_signal/rsi_diver.csv', index=False)
+#output_df.to_csv('./output/ai_signal/#rsi_diver.csv', index=False)
