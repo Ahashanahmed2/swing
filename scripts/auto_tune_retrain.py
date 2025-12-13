@@ -11,7 +11,7 @@ import json
 main_df_path = './csv/mongodb.csv'
 backtest_dir = './csv/backtest_result'
 model_path = './csv/dqn_retrained'
-liquidity_path = './csv/liquidity_system.csv'  # ✅ NEW
+liquidity_path = './csv/liquidity_system.csv'
 
 # ---------------------------------------------------------
 # 🔧 Load config (for risk context)
@@ -19,12 +19,18 @@ liquidity_path = './csv/liquidity_system.csv'  # ✅ NEW
 CONFIG_PATH = "./config.json"
 TOTAL_CAPITAL = 500000
 RISK_PERCENT = 0.01
+TEST_MODE = False  # ✅ NEW: Set to True for safe first run
+
 if os.path.exists(CONFIG_PATH):
     with open(CONFIG_PATH, "r") as f:
         cfg = json.load(f)
         TOTAL_CAPITAL = cfg.get("total_capital", 500000)
         RISK_PERCENT = cfg.get("risk_percent", 0.01)
-print(f"✅ Config: Capital = {TOTAL_CAPITAL:,.0f} BDT, Risk = {RISK_PERCENT*100:.1f}%")
+        TEST_MODE = cfg.get("test_mode", False)  # ✅ Enable test mode from config
+
+print(f"✅ Config: Capital = {TOTAL_CAPITAL:,.00f} BDT, Risk = {RISK_PERCENT*100:.1f}%")
+if TEST_MODE:
+    print("🧪 TEST MODE: Training on top 5 symbols only")
 
 # ---------------------------------------------------------
 # 📊 Load critical system metrics
@@ -41,17 +47,47 @@ symbol_ref_metrics = pd.read_csv(symbol_ref_path) if os.path.exists(symbol_ref_p
 os.makedirs(backtest_dir, exist_ok=True)
 
 # ---------------------------------------------------------
-# Load MongoDB main_df safely
+# Load MongoDB main_df safely — ✅ WITH NaN HANDLING
 # ---------------------------------------------------------
 if not os.path.isfile(main_df_path):
     print(f"❌ MongoDB CSV missing → {main_df_path}")
     exit()
 
-main_df = pd.read_csv(main_df_path)
+try:
+    main_df = pd.read_csv(main_df_path)
+    print(f"✅ Loaded {len(main_df)} rows from {main_df_path}")
+except Exception as e:
+    print(f"❌ Failed to load {main_df_path}: {e}")
+    exit()
+
+# ✅ CRITICAL: Fill NaN BEFORE processing
+main_df = main_df.fillna({
+    'open': main_df['close'],
+    'high': main_df['close'],
+    'low': main_df['close'],
+    'volume': 0,
+    'value': 0,
+    'trades': 0,
+    'change': 0,
+    'marketCap': 0,
+    'RSI': 50,
+    'bb_upper': main_df['close'],
+    'bb_middle': main_df['close'],
+    'bb_lower': main_df['close'],
+    'macd': 0,
+    'macd_signal': 0,
+    'macd_hist': 0,
+    'zigzag': 0,
+    'Hammer': 'FALSE',
+    'BullishEngulfing': 'FALSE',
+    'MorningStar': 'FALSE'
+})
+
 main_df['date'] = pd.to_datetime(main_df['date'], errors='coerce').dt.date
 main_df['symbol'] = main_df['symbol'].str.upper()
+main_df = main_df.dropna(subset=['date', 'symbol', 'close'])
 
-print(f"📊 Loaded {len(main_df)} rows from mongodb.csv")
+print(f"🧹 Cleaned to {len(main_df)} rows (NaN removed)")
 
 # ---------------------------------------------------------
 # Load backtest files safely
@@ -81,30 +117,25 @@ if not bt_df_list:
     exit()
 
 bt_df = pd.concat(bt_df_list, ignore_index=True)
-print(f"📈 Loaded {len(bt_df)} backtest trades from {len(backtest_files)} files")
+bt_df = bt_df.dropna(subset=['symbol', 'outcome'])
+print(f"📈 Loaded {len(bt_df)} clean backtest trades")
 
 # ---------------------------------------------------------
-# ✅ ENHANCED SYMBOL SELECTION: Use YOUR SYSTEM'S METRICS
+# ✅ ENHANCED SYMBOL SELECTION
 # ---------------------------------------------------------
-# Base: TP/SL counts
 tp_symbols = bt_df[bt_df['outcome'] == 'TP']['symbol'].value_counts()
 sl_symbols = bt_df[bt_df['outcome'] == 'SL']['symbol'].value_counts()
 
-# ✅ Get symbols with HIGH EXPECTANCY (BDT) from your system
 high_expectancy_symbols = []
 if not symbol_ref_metrics.empty:
     good_syms = symbol_ref_metrics[symbol_ref_metrics['Expectancy (BDT)'] > 100]
     high_expectancy_symbols = good_syms['Symbol'].str.upper().unique().tolist()
-    print(f"🎯 {len(high_expectancy_symbols)} symbols with >100 BDT expectancy found")
 
-# ✅ Get symbols with HIGH Win% (>65%)
 high_win_symbols = []
 if not symbol_ref_metrics.empty:
     good_win = symbol_ref_metrics[symbol_ref_metrics['Win%'] > 65]
     high_win_symbols = good_win['Symbol'].str.upper().unique().tolist()
-    print(f"✅ {len(high_win_symbols)} symbols with >65% Win% found")
 
-# ✅ Get symbols with MODERATE+ Liquidity (liquidity_score >= 0.4)
 high_liquidity_symbols = []
 if os.path.exists(liquidity_path):
     try:
@@ -112,49 +143,50 @@ if os.path.exists(liquidity_path):
         liquidity_df['symbol'] = liquidity_df['symbol'].str.upper()
         good_liq = liquidity_df[liquidity_df['liquidity_score'] >= 0.4]
         high_liquidity_symbols = good_liq['symbol'].unique().tolist()
-        print(f"💧 {len(high_liquidity_symbols)} symbols with Moderate+ liquidity (score ≥ 0.4)")
     except Exception as e:
-        print(f"⚠️ Failed to load liquidity_system.csv: {e}")
+        print(f"⚠️ Failed to load liquidity: {e}")
 
-# 🔍 Combine: quality_symbols = Win%>65 ∩ Exp>100 ∩ Liq≥Moderate
 quality_symbols = set(high_expectancy_symbols) & set(high_win_symbols)
 if high_liquidity_symbols:
     quality_symbols = quality_symbols & set(high_liquidity_symbols)
-print(f"🌟 {len(quality_symbols)} high-quality symbols: {list(quality_symbols)[:5]}...")
+
+# ✅ TEST MODE: Use only top 5 symbols for first run
+if TEST_MODE and len(quality_symbols) > 5:
+    top_syms = symbol_ref_metrics.sort_values('Expectancy (BDT)', ascending=False)['Symbol'].str.upper().head(5)
+    quality_symbols = set([s for s in top_syms if s in quality_symbols])
+    print(f"🧪 TEST MODE: Using {len(quality_symbols)} symbols: {list(quality_symbols)}")
+
+print(f"🌟 {len(quality_symbols)} high-quality symbols selected")
 
 # ---------------------------------------------------------
-# Filter main_df using SYSTEM-INTELLIGENT criteria
+# Filter main_df
 # ---------------------------------------------------------
 filtered_df = main_df.copy()
 
-# 1. Must be in quality_symbols
 if quality_symbols:
     filtered_df = filtered_df[filtered_df['symbol'].isin(quality_symbols)]
 
-# 2. Remove blacklisted (SL ≥ 3)
 blacklist = sl_symbols[sl_symbols >= 3].index.tolist()
 filtered_df = filtered_df[~filtered_df['symbol'].isin(blacklist)]
 
-# 3. Keep only fast TP symbols (TP ≤ 3 days)
 fast_tp = bt_df[(bt_df['outcome'] == 'TP') & (bt_df['duration_days'] <= 3)]
 fast_tp_symbols = fast_tp['symbol'].unique().tolist()
 if fast_tp_symbols:
     filtered_df = filtered_df[filtered_df['symbol'].isin(fast_tp_symbols)]
 
-# ✅ Add SYSTEM FEATURES to observation
-if not filtered_df.empty:
+# Add system features
+if not filtered_df.empty and not symbol_ref_metrics.empty:
     def add_system_features(row):
-        sym = row['symbol']
+        sym = row['symbol'].upper()
         win_pct = 50.0
         expectancy = 0.0
-        if not symbol_ref_metrics.empty:
-            ref_row = symbol_ref_metrics[
-                (symbol_ref_metrics['Symbol'].str.upper() == sym) &
-                (symbol_ref_metrics['Reference'] == 'SWING')
-            ]
-            if not ref_row.empty:
-                win_pct = float(ref_row.iloc[0]['Win%'])
-                expectancy = float(ref_row.iloc[0]['Expectancy (BDT)'])
+        ref_row = symbol_ref_metrics[
+            (symbol_ref_metrics['Symbol'].str.upper() == sym) &
+            (symbol_ref_metrics['Reference'] == 'SWING')
+        ]
+        if not ref_row.empty:
+            win_pct = float(ref_row.iloc[0].get('Win%', 50.0))
+            expectancy = float(ref_row.iloc[0].get('Expectancy (BDT)', 0.0))
         return pd.Series([win_pct, expectancy], index=['system_win_pct', 'system_expectancy_bdt'])
 
     filtered_df[['system_win_pct', 'system_expectancy_bdt']] = filtered_df.apply(add_system_features, axis=1)
@@ -169,120 +201,117 @@ if filtered_df.empty:
     exit()
 
 # ---------------------------------------------------------
-# Prepare RL Environment — with FULL SYSTEM CONTEXT
+# ✅ ROBUST ENVIRONMENT CREATION (with error fallback)
 # ---------------------------------------------------------
-env = TradeEnv(
-    maindf=filtered_df,
-    gape_path="./csv/gape.csv",
-    gapebuy_path="./csv/gape_buy.csv",
-    shortbuy_path="./csv/short_buy.csv",
-    rsi_diver_path="./csv/rsi_diver.csv",
-    rsi_diver_retest_path="./csv/rsi_diver_retest.csv",
-    trade_stock_path="./csv/trade_stock.csv",
-    metrics_path=strategy_metrics_path,
-    symbol_ref_path=symbol_ref_path,
-    config_path=CONFIG_PATH,
-    liquidity_path=liquidity_path  # ✅ CRITICAL: Enable liquidity awareness
-)
-env = DummyVecEnv([lambda: env])
+env = None
+try:
+    env = TradeEnv(
+        maindf=filtered_df,
+        gape_path="./csv/gape.csv",
+        gapebuy_path="./csv/gape_buy.csv",
+        shortbuy_path="./csv/short_buy.csv",
+        rsi_diver_path="./csv/rsi_diver.csv",
+        rsi_diver_retest_path="./csv/rsi_diver_retest.csv",
+        trade_stock_path="./csv/trade_stock.csv",
+        metrics_path=strategy_metrics_path,
+        symbol_ref_path=symbol_ref_path,
+        config_path=CONFIG_PATH,
+        liquidity_path=liquidity_path
+    )
+    env = DummyVecEnv([lambda: env])
+    print("✅ Environment created successfully")
+except Exception as e:
+    print(f"❌ Environment creation failed: {e}")
+    print("🔄 Trying with minimal dataset...")
+    # Fallback: Use just 1000 rows of POWERGRID
+    fallback_df = filtered_df[filtered_df['symbol'] == 'POWERGRID'].head(1000)
+    if len(fallback_df) < 100:
+        fallback_df = filtered_df.head(1000)
+    env = TradeEnv(maindf=fallback_df, config_path=CONFIG_PATH)
+    env = DummyVecEnv([lambda: env])
+    print("✅ Fallback environment created")
 
 # ---------------------------------------------------------
 # Load or create model — DQN-OPTIMIZED
 # ---------------------------------------------------------
 if os.path.exists(model_path + ".zip"):
-    model = DQN.load(model_path, env=env, device='cpu')
-    print("✅ Loaded existing model for fine-tuning")
+    try:
+        model = DQN.load(model_path, env=env, device='cpu')
+        print("✅ Loaded existing model for fine-tuning")
+    except Exception as e:
+        print(f"⚠️ Model load failed, creating new: {e}")
+        model = None
 else:
+    model = None
+
+if model is None:
     model = DQN(
         policy="MlpPolicy",
         env=env,
         verbose=1,
         learning_rate=3e-4,
-        buffer_size=100000,
-        learning_starts=2000,
-        batch_size=256,
-        tau=0.005,
-        gamma=0.98,
-        train_freq=8,
-        target_update_interval=500,   # ✅ Optimized for DSE (faster target sync)
-        exploration_fraction=0.3,      # ✅ More exploration
-        exploration_final_eps=0.02,
+        buffer_size=50000,      # ↓ Reduced for stability
+        learning_starts=1000,   # ↓ Faster start
+        batch_size=128,         # ↓ More stable
+        tau=0.01,               # ↑ More stable target update
+        gamma=0.99,             # ↑ Longer horizon
+        train_freq=4,           # ↑ More frequent updates
+        target_update_interval=500,
+        exploration_fraction=0.3,
+        exploration_final_eps=0.05,  # ↑ More exploration
         device='cpu'
     )
-    print("🆕 Created new model with DSE-Optimized DQN params")
+    print("🆕 Created new DQN model with STABLE parameters")
 
 # ---------------------------------------------------------
-# 🚀 TRAINING with LIQUIDITY-AWARE LOGGING
+# 🚀 TRAINING with ERROR HANDLING
 # ---------------------------------------------------------
-print(f"\n🚀 Retraining DQN with {len(filtered_df)} rows of LIQUIDITY-OPTIMIZED data...")
-print("   🔁 200,000 timesteps (≈ 15-20 mins)")
+print(f"\n🚀 Retraining DQN with {len(filtered_df)} rows...")
+print("   🔁 100,000 timesteps (≈ 10-15 mins)")
 
-# Custom callback
-from stable_baselines3.common.callbacks import BaseCallback
-
-class LogCallback(BaseCallback):
-    def __init__(self, verbose=0):
-        super().__init__(verbose)
-        self.rewards = []
-        self.steps = 0
-
-    def _on_step(self) -> bool:
-        self.steps += 1
-        if self.steps % 20000 == 0:
-            avg_reward = np.mean(self.model.ep_info_buffer or [0])
-            print(f"   📊 Step {self.steps:6d} | Avg Reward: {avg_reward:+.3f}")
-        return True
-
-callback = LogCallback()
-
-model.learn(
-    total_timesteps=200_000,
-    callback=callback,
-    log_interval=1000,
-    progress_bar=False
-)
+try:
+    model.learn(
+        total_timesteps=100_000,  # ↓ Reduced for stability
+        log_interval=1000,
+        progress_bar=True
+    )
+    print("✅ Training completed successfully")
+except Exception as e:
+    print(f"❌ Training failed: {e}")
+    print("🔄 Trying with shorter timesteps...")
+    try:
+        model.learn(total_timesteps=50_000, log_interval=500)
+        print("✅ Short training completed")
+    except Exception as e2:
+        print(f"❌ Short training also failed: {e2}")
+        exit(1)
 
 # ---------------------------------------------------------
-# ✅ Save & LIQUIDITY-AWARE Report
+# ✅ Save & Report
 # ---------------------------------------------------------
-model.save(model_path)
-print(f"\n✅ Model saved at {model_path}.zip")
-
-# 📊 Training summary with liquidity stats
-if hasattr(model, 'ep_info_buffer') and model.ep_info_buffer:
-    rewards = [ep['r'] for ep in model.ep_info_buffer]
+try:
+    model.save(model_path)
+    print(f"\n✅ Model saved at {model_path}.zip")
     
-    # Get liquidity distribution of trained symbols
-    trained_syms = filtered_df['symbol'].unique()
-    liq_distribution = {}
-    if os.path.exists(liquidity_path):
-        try:
-            liq_df = pd.read_csv(liquidity_path)
-            liq_df['symbol'] = liq_df['symbol'].str.upper()
-            trained_liq = liq_df[liq_df['symbol'].isin(trained_syms)]
-            liq_distribution = trained_liq['liquidity_rating'].value_counts().to_dict()
-        except:
-            pass
+    # Simple report
+    print("\n" + "="*50)
+    print("📊 DQN TRAINING SUMMARY")
+    print("="*50)
+    if hasattr(model, 'ep_info_buffer') and model.ep_info_buffer:
+        rewards = [ep['r'] for ep in model.ep_info_buffer]
+        print(f"📈 Final Avg Reward: {np.mean(rewards[-10:]):+.3f}")
+    print(f"🧮 Trained on: {filtered_df['symbol'].nunique()} symbols")
+    print("="*50)
+    
+except Exception as e:
+    print(f"❌ Model save failed: {e}")
 
-    print("\n" + "="*60)
-    print("📊 DQN TRAINING SUMMARY (LIQUIDITY-OPTIMIZED)")
-    print("="*60)
-    print(f"📈 Avg Episode Reward   : {np.mean(rewards):+.3f}")
-    print(f"📉 Min/Max Reward        : {np.min(rewards):+.3f} / {np.max(rewards):+.3f}")
-    print(f"🧮 Trained on           : {len(trained_syms)} symbols")
-    print(f"🎯 Top symbols          : {list(quality_symbols)[:5]}")
-    if liq_distribution:
-        print("💧 Liquidity distribution:")
-        for liq, cnt in sorted(liq_distribution.items()):
-            print(f"   • {liq:<10} : {cnt:2d} symbols")
-    print("="*60)
-
-# 🔁 Optional: Auto-generate signals
-auto_signal = input("\n🔄 Generate signals with new DQN model? (y/n): ").strip().lower()
+# 🔁 Optional: Generate signals
+auto_signal = input("\n🔄 Generate signals with new model? (y/n): ").strip().lower()
 if auto_signal == 'y':
     try:
         from generate_signals import generate_signals
-        print("\n🔍 Generating signals with new DQN model...\n")
         generate_signals()
     except Exception as e:
         print(f"⚠️ Signal generation failed: {e}")
+        print("💡 Tip: Check if TradeEnv.get_obs() returns correct shape")
