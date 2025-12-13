@@ -12,7 +12,7 @@ from stable_baselines3.common.logger import configure
 import gymnasium as gym
 
 # Import your custom environment
-from trade_env import TradeEnv  # assuming your env is in trade_env.py
+from env import TradeEnv  # assuming your env is in trade_env.py
 
 # 🔧 Configuration
 MODEL_DIR = "./models"
