@@ -1,4 +1,5 @@
 {
   "total_capital": 500000,
-  "risk_percent": 0.01
+  "risk_percent": 0.01,
+  "test_mode": true
 }
