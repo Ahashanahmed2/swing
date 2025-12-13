@@ -4,7 +4,7 @@ import os
 # Input and output paths
 input_path = "./csv/mongodb.csv"
 output_path1 = "./csv/gape.csv"
-output_path2 = "./output/ai_signal/gape.csv"
+#output_path2 = "./output/ai_signal/gape.csv"
 
 # Read CSV
 df = pd.read_csv(input_path)
@@ -82,10 +82,10 @@ if not result_df.empty:
 
 # Ensure output directories exist
 os.makedirs(os.path.dirname(output_path1), exist_ok=True)
-os.makedirs(os.path.dirname(output_path2), exist_ok=True)
+#os.makedirs(os.path.dirname(output_path2), #exist_ok=True)
 
 # Save to both paths
 result_df.to_csv(output_path1, index=False)
-result_df.to_csv(output_path2, index=False)
+#result_df.to_csv(output_path2, index=False)
 
 print("✅ Filtered data saved to gape.csv successfully!")
