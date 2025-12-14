@@ -1,153 +1,207 @@
-# train_ppo.py
-import numpy as np
+# train_all_sb3.py
 import pandas as pd
-import torch
+import numpy as np
 import os
 import warnings
-warnings.filterwarnings("ignore")
+import time
+from datetime import datetime
+from typing import Dict, List, Tuple
 
-# Import your modules
+# Suppress warnings
+warnings.filterwarnings('ignore')
+
+from stable_baselines3 import PPO
 from envs.trading_env import TradingEnv
-from ppo_agent import PPOAgent
 
-def load_data():
-    signals = pd.read_csv("./csv/trade_stock.csv")
-    market = pd.read_csv("./csv/mongodb.csv")
-    signals['date'] = pd.to_datetime(signals['date'])
-    market['date'] = pd.to_datetime(market['date'])
-    return signals, market
 
-def compute_gae(rewards, values, next_values, dones, gamma=0.99, lam=0.95):
-    if len(rewards) == 0:
-        return np.array([]), np.array([])
-    advantages = []
-    gae = 0
-    for i in reversed(range(len(rewards))):
-        delta = rewards[i] + gamma * next_values[i] * (1 - dones[i]) - values[i]
-        gae = delta + gamma * lam * (1 - dones[i]) * gae
-        advantages.insert(0, gae)
-    advantages = np.array(advantages)
-    returns = advantages + values[:-1]  # values has one extra (final)
-    return advantages, returns
-
-def main():
-    print("📦 Loading data...")
-    signals, market = load_data()
-    symbol = "POWERGRID"  # Change or loop as needed
+def load_data(data_dir: str = "./csv") -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """লোড এবং প্রিপ্রসেস ডাটা"""
+    print("📦 trade_stock.csv এবং mongodb.csv লোড করা হচ্ছে...")
     
     try:
+        signals = pd.read_csv(f"{data_dir}/trade_stock.csv")
+        market = pd.read_csv(f"{data_dir}/mongodb.csv")
+        
+        # তারিখ কনভার্ট করুন
+        signals['date'] = pd.to_datetime(signals['date'])
+        market['date'] = pd.to_datetime(market['date'])
+        
+        # তারিখ অনুযায়ী সর্ট করুন
+        signals = signals.sort_values(['symbol', 'date'])
+        market = market.sort_values(['symbol', 'date'])
+        
+        print(f"✅ সিগনাল ডাটা: {signals.shape}, মার্কেট ডাটা: {market.shape}")
+        return signals, market
+        
+    except Exception as e:
+        print(f"❌ ডাটা লোড করতে সমস্যা: {e}")
+        raise
+
+
+def check_data_for_symbol(signals: pd.DataFrame, market: pd.DataFrame, symbol: str) -> bool:
+    """একটি সিম্বলের জন্য ডাটা আছে কিনা চেক করুন"""
+    symbol_signals = signals[signals['symbol'] == symbol]
+    symbol_market = market[market['symbol'] == symbol]
+    
+    if len(symbol_signals) == 0:
+        print(f"  ⚠️ {symbol} এর জন্য সিগনাল ডাটা নেই")
+        return False
+        
+    if len(symbol_market) == 0:
+        print(f"  ⚠️ {symbol} এর জন্য মার্কেট ডাটা নেই")
+        return False
+    
+    # মিনিমাম ডাটা পয়েন্ট চেক করুন
+    if len(symbol_market) < 50:
+        print(f"  ⚠️ {symbol} এর জন্য পর্যাপ্ত ডাটা নেই: {len(symbol_market)} রেকর্ড")
+        return False
+    
+    return True
+
+
+def train_symbol(signals: pd.DataFrame, market: pd.DataFrame, symbol: str, 
+                total_timesteps: int = 50000) -> bool:
+    """একটি সিম্বলের জন্য PPO মডেল ট্রেন করুন"""
+    print(f"\n📊 {symbol} ট্রেনিং শুরু...")
+    
+    # প্রথমে ডাটা চেক করুন
+    if not check_data_for_symbol(signals, market, symbol):
+        return False
+    
+    try:
+        # এনভায়রনমেন্ট তৈরি করুন
         env = TradingEnv(signals, market, symbol=symbol)
-    except ValueError as e:
-        print(f"❌ Error: {e}")
+        print(f"  ✅ এনভায়রনমেন্ট তৈরি হয়েছে")
+        
+        # PPO মডেল তৈরি করুন
+        model = PPO(
+            policy="MlpPolicy",
+            env=env,
+            learning_rate=3e-4,
+            n_steps=2048,
+            batch_size=64,
+            n_epochs=10,
+            gamma=0.99,
+            gae_lambda=0.95,
+            ent_coef=0.01,
+            clip_range=0.2,
+            verbose=0,
+            device="cpu",
+            seed=42
+        )
+        print(f"  ✅ PPO মডেল তৈরি হয়েছে")
+        
+        # ট্রেনিং শুরু
+        start_time = time.time()
+        print(f"  ⏳ {total_timesteps:,} টাইমস্টেপ ট্রেনিং চলছে...")
+        
+        model.learn(
+            total_timesteps=total_timesteps,
+            progress_bar=True  # প্রোগ্রেস বার দেখান
+        )
+        
+        training_time = time.time() - start_time
+        print(f"  ✅ ট্রেনিং সম্পূর্ণ! সময় লেগেছে: {training_time:.1f} সেকেন্ড")
+        
+        # মডেল সেভ করুন
+        model_path = f"./models/ppo_{symbol}.zip"
+        os.makedirs("models", exist_ok=True)
+        
+        model.save(model_path)
+        print(f"  💾 মডেল সেভ হয়েছে: {model_path}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"  ❌ ট্রেনিং ব্যর্থ: {str(e)}")
+        return False
+
+
+def main():
+    """মেইন ট্রেনিং পাইপলাইন"""
+    print("=" * 60)
+    print("🤖 PPO ট্রেডিং মডেল ট্রেনিং")
+    print("=" * 60)
+    
+    # ডিরেক্টরি তৈরি করুন
+    os.makedirs("models", exist_ok=True)
+    
+    # ডাটা লোড করুন
+    try:
+        signals, market = load_data()
+    except Exception as e:
+        print(f"❌ ডাটা লোড করতে পারিনি: {e}")
         return
     
-    obs_dim = env.observation_space.shape[0]
-    action_dim = env.action_space.shape[0]
+    # কমন সিম্বল খুঁজুন
+    symbols = sorted(set(signals['symbol']) & set(market['symbol']))
     
-    print(f"✅ Environment ready for {symbol}")
-    print(f"   Obs dim: {obs_dim}, Action dim: {action_dim}")
+    if not symbols:
+        print("❌ দুটি ফাইলের মধ্যে কোন কমন সিম্বল নেই!")
+        return
     
-    # Force CPU (PyTorch 2.3+ compatible)
-    agent = PPOAgent(obs_dim, action_dim, device="cpu")
+    print(f"\n✅ {len(symbols)} টি সিম্বল পাওয়া গেছে")
     
-    total_timesteps = 0
-    best_reward = -np.inf
-    no_improve = 0
-    patience = 100  # stop if no improvement in 100 episodes
-
-    print("\n🚀 Starting PPO Training (CPU-only)...")
-    print("-" * 60)
-
-    # Training loop
-    for episode in range(1000):  # adjust as needed
-        obs, _ = env.reset()
-        done = False
-        episode_reward = 0.0
-        batch = {
-            'obs': [], 'actions': [], 'log_probs': [], 
-            'rewards': [], 'values': [], 'dones': []
-        }
+    # যেসব সিম্বল ট্রেন করতে হবে (প্রথম ১০টা, অথবা সবগুলো)
+    # symbols_to_train = symbols[:10]  # প্রথম ১০টা
+    symbols_to_train = symbols  # সবগুলো
+    
+    print(f"🎯 {len(symbols_to_train)} টি সিম্বল ট্রেন করা হবে")
+    
+    # ট্রেনিং শুরু
+    results = []
+    
+    for i, symbol in enumerate(symbols_to_train, 1):
+        print(f"\n[{i}/{len(symbols_to_train)}] {'='*40}")
         
-        while not done:
-            action, log_prob, value = agent.get_action(obs)
-            next_obs, reward, done, _, info = env.step(action)
-            
-            # Store experience
-            batch['obs'].append(obs.copy())
-            batch['actions'].append(action.copy())
-            batch['log_probs'].append(log_prob)
-            batch['rewards'].append(reward)
-            batch['values'].append(value)
-            batch['dones'].append(done)
-            
-            obs = next_obs
-            episode_reward += reward
-            total_timesteps += 1
-
-        # Add final state value
-        _, _, final_value = agent.get_action(obs)
-        batch['values'].append(final_value)
-
-        # Compute GAE & returns
-        advantages, returns = compute_gae(
-            batch['rewards'],
-            np.array(batch['values'][:-1]),
-            np.array(batch['values'][1:]),
-            np.array(batch['dones']),
-            gamma=0.99,
-            lam=0.95
+        success = train_symbol(
+            signals=signals,
+            market=market,
+            symbol=symbol,
+            total_timesteps=50000  # টাইমস্টেপ কমিয়েছি, বাড়াতে পারেন
         )
+        
+        results.append({
+            'symbol': symbol,
+            'success': success,
+            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+    
+    # রেজাল্ট সেভ করুন
+    results_df = pd.DataFrame(results)
+    results_df.to_csv("./models/training_results.csv", index=False)
+    
+    # সামারি দেখান
+    print(f"\n{'='*60}")
+    print("📊 ট্রেনিং সামারি")
+    print(f"{'='*60}")
+    
+    success_count = results_df['success'].sum()
+    total_count = len(results_df)
+    
+    print(f"✅ সফল: {success_count} / {total_count}")
+    
+    if success_count < total_count:
+        failed = results_df[results_df['success'] == False]['symbol'].tolist()
+        print(f"❌ ব্যর্থ: {failed}")
+    
+    print(f"\n📁 মডেলগুলো সেভ হয়েছে: ./models/ ফোল্ডারে")
+    print(f"📄 রেজাল্টস সেভ হয়েছে: ./models/training_results.csv")
+    
+    # মডেল লোড করার উদাহরণ
+    print(f"\n🔧 মডেল লোড করার উদাহরণ:")
+    print(f'''
+from stable_baselines3 import PPO
+from envs.trading_env import TradingEnv
 
-        # Skip update if no steps (edge case)
-        if len(advantages) == 0:
-            continue
+# মডেল লোড করুন
+model = PPO.load("models/ppo_YOUR_SYMBOL.zip", device="cpu")
 
-        # Prepare batch
-        batch_data = (
-            np.array(batch['obs'], dtype=np.float32),
-            np.array(batch['actions'], dtype=np.float32),
-            np.array(batch['log_probs'], dtype=np.float32),
-            returns.astype(np.float32),
-            advantages.astype(np.float32)
-        )
+# ব্যবহার করুন
+obs = env.reset()
+action, _states = model.predict(obs, deterministic=True)
+    ''')
 
-        # Update agent
-        actor_loss, critic_loss = agent.update(batch_data)
-
-        # Logging (every 50 episodes)
-        if episode % 50 == 0 or episode == 0:
-            print(f"Ep {episode:4d} | "
-                  f"Reward: {episode_reward:7.2f} | "
-                  f"Balance: {info['balance']:8.0f} | "
-                  f"Trades: {info['trades']:3d} | "
-                  f"A-Loss: {actor_loss:.4f} | "
-                  f"C-Loss: {critic_loss:.4f}")
-
-        # Save best model
-        if episode_reward > best_reward:
-            best_reward = episode_reward
-            no_improve = 0
-            os.makedirs("models", exist_ok=True)
-            torch.save({
-                'actor_state_dict': agent.actor.state_dict(),
-                'critic_state_dict': agent.critic.state_dict(),
-                'episode': episode,
-                'reward': episode_reward
-            }, f"models/ppo_{symbol}_best.pth")
-            print(f"   🎯 New best reward: {best_reward:.2f} → Model saved!")
-        else:
-            no_improve += 1
-
-        # Early stopping
-        if no_improve >= patience:
-            print(f"\n⏹️  Early stopping: no improvement in {patience} episodes.")
-            break
-
-    print("-" * 60)
-    print(f"✅ Training completed!")
-    print(f"   Total episodes: {episode + 1}")
-    print(f"   Best reward: {best_reward:.2f}")
-    print(f"   Model saved at: ./models/ppo_{symbol}_best.pth")
 
 if __name__ == "__main__":
     main()
