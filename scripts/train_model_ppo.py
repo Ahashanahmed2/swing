@@ -1,207 +1,208 @@
-# train_all_sb3.py
-import pandas as pd
 import numpy as np
-import os
-import warnings
-import time
-from datetime import datetime
-from typing import Dict, List, Tuple
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.distributions import Categorical
+import pandas as pd
 
-# Suppress warnings
-warnings.filterwarnings('ignore')
-
-from stable_baselines3 import PPO
-from envs.trading_env import TradingEnv
-
-
-def load_data(data_dir: str = "./csv") -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """লোড এবং প্রিপ্রসেস ডাটা"""
-    print("📦 trade_stock.csv এবং mongodb.csv লোড করা হচ্ছে...")
-    
-    try:
-        signals = pd.read_csv(f"{data_dir}/trade_stock.csv")
-        market = pd.read_csv(f"{data_dir}/mongodb.csv")
+class PPOTradingAgent:
+    def __init__(self, state_dim, action_dim, learning_rate=0.0003, gamma=0.99, 
+                 epsilon=0.2, epochs=10, batch_size=64):
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.gamma = gamma
+        self.epsilon = epsilon
+        self.epochs = epochs
+        self.batch_size = batch_size
         
-        # তারিখ কনভার্ট করুন
-        signals['date'] = pd.to_datetime(signals['date'])
-        market['date'] = pd.to_datetime(market['date'])
-        
-        # তারিখ অনুযায়ী সর্ট করুন
-        signals = signals.sort_values(['symbol', 'date'])
-        market = market.sort_values(['symbol', 'date'])
-        
-        print(f"✅ সিগনাল ডাটা: {signals.shape}, মার্কেট ডাটা: {market.shape}")
-        return signals, market
-        
-    except Exception as e:
-        print(f"❌ ডাটা লোড করতে সমস্যা: {e}")
-        raise
-
-
-def check_data_for_symbol(signals: pd.DataFrame, market: pd.DataFrame, symbol: str) -> bool:
-    """একটি সিম্বলের জন্য ডাটা আছে কিনা চেক করুন"""
-    symbol_signals = signals[signals['symbol'] == symbol]
-    symbol_market = market[market['symbol'] == symbol]
-    
-    if len(symbol_signals) == 0:
-        print(f"  ⚠️ {symbol} এর জন্য সিগনাল ডাটা নেই")
-        return False
-        
-    if len(symbol_market) == 0:
-        print(f"  ⚠️ {symbol} এর জন্য মার্কেট ডাটা নেই")
-        return False
-    
-    # মিনিমাম ডাটা পয়েন্ট চেক করুন
-    if len(symbol_market) < 50:
-        print(f"  ⚠️ {symbol} এর জন্য পর্যাপ্ত ডাটা নেই: {len(symbol_market)} রেকর্ড")
-        return False
-    
-    return True
-
-
-def train_symbol(signals: pd.DataFrame, market: pd.DataFrame, symbol: str, 
-                total_timesteps: int = 50000) -> bool:
-    """একটি সিম্বলের জন্য PPO মডেল ট্রেন করুন"""
-    print(f"\n📊 {symbol} ট্রেনিং শুরু...")
-    
-    # প্রথমে ডাটা চেক করুন
-    if not check_data_for_symbol(signals, market, symbol):
-        return False
-    
-    try:
-        # এনভায়রনমেন্ট তৈরি করুন
-        env = TradingEnv(signals, market, symbol=symbol)
-        print(f"  ✅ এনভায়রনমেন্ট তৈরি হয়েছে")
-        
-        # PPO মডেল তৈরি করুন
-        model = PPO(
-            policy="MlpPolicy",
-            env=env,
-            learning_rate=3e-4,
-            n_steps=2048,
-            batch_size=64,
-            n_epochs=10,
-            gamma=0.99,
-            gae_lambda=0.95,
-            ent_coef=0.01,
-            clip_range=0.2,
-            verbose=0,
-            device="cpu",
-            seed=42
-        )
-        print(f"  ✅ PPO মডেল তৈরি হয়েছে")
-        
-        # ট্রেনিং শুরু
-        start_time = time.time()
-        print(f"  ⏳ {total_timesteps:,} টাইমস্টেপ ট্রেনিং চলছে...")
-        
-        model.learn(
-            total_timesteps=total_timesteps,
-            progress_bar=True  # প্রোগ্রেস বার দেখান
+        # Policy network
+        self.policy_net = nn.Sequential(
+            nn.Linear(state_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Linear(128, action_dim),
+            nn.Softmax(dim=-1)
         )
         
-        training_time = time.time() - start_time
-        print(f"  ✅ ট্রেনিং সম্পূর্ণ! সময় লেগেছে: {training_time:.1f} সেকেন্ড")
-        
-        # মডেল সেভ করুন
-        model_path = f"./models/ppo_{symbol}.zip"
-        os.makedirs("models", exist_ok=True)
-        
-        model.save(model_path)
-        print(f"  💾 মডেল সেভ হয়েছে: {model_path}")
-        
-        return True
-        
-    except Exception as e:
-        print(f"  ❌ ট্রেনিং ব্যর্থ: {str(e)}")
-        return False
-
-
-def main():
-    """মেইন ট্রেনিং পাইপলাইন"""
-    print("=" * 60)
-    print("🤖 PPO ট্রেডিং মডেল ট্রেনিং")
-    print("=" * 60)
-    
-    # ডিরেক্টরি তৈরি করুন
-    os.makedirs("models", exist_ok=True)
-    
-    # ডাটা লোড করুন
-    try:
-        signals, market = load_data()
-    except Exception as e:
-        print(f"❌ ডাটা লোড করতে পারিনি: {e}")
-        return
-    
-    # কমন সিম্বল খুঁজুন
-    symbols = sorted(set(signals['symbol']) & set(market['symbol']))
-    
-    if not symbols:
-        print("❌ দুটি ফাইলের মধ্যে কোন কমন সিম্বল নেই!")
-        return
-    
-    print(f"\n✅ {len(symbols)} টি সিম্বল পাওয়া গেছে")
-    
-    # যেসব সিম্বল ট্রেন করতে হবে (প্রথম ১০টা, অথবা সবগুলো)
-    # symbols_to_train = symbols[:10]  # প্রথম ১০টা
-    symbols_to_train = symbols  # সবগুলো
-    
-    print(f"🎯 {len(symbols_to_train)} টি সিম্বল ট্রেন করা হবে")
-    
-    # ট্রেনিং শুরু
-    results = []
-    
-    for i, symbol in enumerate(symbols_to_train, 1):
-        print(f"\n[{i}/{len(symbols_to_train)}] {'='*40}")
-        
-        success = train_symbol(
-            signals=signals,
-            market=market,
-            symbol=symbol,
-            total_timesteps=50000  # টাইমস্টেপ কমিয়েছি, বাড়াতে পারেন
+        # Value network
+        self.value_net = nn.Sequential(
+            nn.Linear(state_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Linear(128, 1)
         )
         
-        results.append({
-            'symbol': symbol,
-            'success': success,
-            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        })
+        self.optimizer = optim.Adam(
+            list(self.policy_net.parameters()) + list(self.value_net.parameters()),
+            lr=learning_rate
+        )
+        
+        self.memory = []
+        
+    def get_state(self, market_data, idx):
+        """Convert market data to state vector"""
+        if idx >= len(market_data):
+            return None
+        
+        state = []
+        window_size = 10
+        
+        # Price features
+        for i in range(max(0, idx-window_size+1), idx+1):
+            if i < len(market_data):
+                row = market_data.iloc[i]
+                state.extend([
+                    row['open'], row['close'], row['high'], row['low'],
+                    row['volume'], row['rsi'], row['macd'], row['macd_signal'],
+                    row['bb_upper'], row['bb_middle'], row['bb_lower']
+                ])
+        
+        # Pad if needed
+        while len(state) < self.state_dim:
+            state.append(0)
+        
+        return np.array(state[:self.state_dim])
     
-    # রেজাল্ট সেভ করুন
-    results_df = pd.DataFrame(results)
-    results_df.to_csv("./models/training_results.csv", index=False)
+    def select_action(self, state):
+        state_tensor = torch.FloatTensor(state).unsqueeze(0)
+        probs = self.policy_net(state_tensor)
+        dist = Categorical(probs)
+        action = dist.sample()
+        
+        return action.item(), dist.log_prob(action), probs.detach().numpy()[0]
     
-    # সামারি দেখান
-    print(f"\n{'='*60}")
-    print("📊 ট্রেনিং সামারি")
-    print(f"{'='*60}")
+    def compute_returns(self, rewards):
+        returns = []
+        R = 0
+        
+        for r in reversed(rewards):
+            R = r + self.gamma * R
+            returns.insert(0, R)
+        
+        return torch.FloatTensor(returns)
     
-    success_count = results_df['success'].sum()
-    total_count = len(results_df)
+    def update(self):
+        if len(self.memory) < self.batch_size:
+            return
+        
+        states, actions, log_probs, rewards, next_states, dones = zip(*self.memory)
+        
+        # Convert to tensors
+        states = torch.FloatTensor(states)
+        actions = torch.LongTensor(actions)
+        old_log_probs = torch.FloatTensor(log_probs)
+        rewards = torch.FloatTensor(rewards)
+        
+        # Compute advantages
+        values = self.value_net(states).squeeze()
+        returns = self.compute_returns(rewards.numpy())
+        advantages = returns - values.detach()
+        
+        # Normalize advantages
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        
+        # PPO update
+        for _ in range(self.epochs):
+            # Get new probabilities
+            probs = self.policy_net(states)
+            dist = Categorical(probs)
+            new_log_probs = dist.log_prob(actions)
+            
+            # Compute ratio
+            ratio = torch.exp(new_log_probs - old_log_probs)
+            
+            # Compute surrogate losses
+            surr1 = ratio * advantages
+            surr2 = torch.clamp(ratio, 1 - self.epsilon, 1 + self.epsilon) * advantages
+            
+            # Policy loss
+            policy_loss = -torch.min(surr1, surr2).mean()
+            
+            # Value loss
+            value_loss = nn.MSELoss()(values, returns)
+            
+            # Total loss
+            loss = policy_loss + 0.5 * value_loss
+            
+            # Update
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+        
+        # Clear memory
+        self.memory = []
     
-    print(f"✅ সফল: {success_count} / {total_count}")
-    
-    if success_count < total_count:
-        failed = results_df[results_df['success'] == False]['symbol'].tolist()
-        print(f"❌ ব্যর্থ: {failed}")
-    
-    print(f"\n📁 মডেলগুলো সেভ হয়েছে: ./models/ ফোল্ডারে")
-    print(f"📄 রেজাল্টস সেভ হয়েছে: ./models/training_results.csv")
-    
-    # মডেল লোড করার উদাহরণ
-    print(f"\n🔧 মডেল লোড করার উদাহরণ:")
-    print(f'''
-from stable_baselines3 import PPO
-from envs.trading_env import TradingEnv
+    def train_episode(self, market_data, initial_balance=100000):
+        balance = initial_balance
+        position = 0
+        entry_price = 0
+        
+        states = []
+        actions = []
+        log_probs = []
+        rewards = []
+        next_states = []
+        dones = []
+        
+        for idx in range(len(market_data)):
+            state = self.get_state(market_data, idx)
+            if state is None:
+                continue
+            
+            # Select action (0: hold, 1: buy, 2: sell)
+            action, log_prob, _ = self.select_action(state)
+            
+            # Execute action
+            current_price = market_data.iloc[idx]['close']
+            reward = 0
+            
+            if action == 1 and position == 0:  # Buy
+                position = balance / current_price
+                entry_price = current_price
+                balance = 0
+                reward = 0  # No immediate reward
+                
+            elif action == 2 and position > 0:  # Sell
+                balance = position * current_price
+                profit = balance - (position * entry_price)
+                position = 0
+                reward = profit / entry_price  # Reward based on profit
+            
+            # Store experience
+            next_state = self.get_state(market_data, idx + 1)
+            
+            states.append(state)
+            actions.append(action)
+            log_probs.append(log_prob.item())
+            rewards.append(reward)
+            next_states.append(next_state if next_state is not None else state)
+            dones.append(1 if idx == len(market_data)-1 else 0)
+            
+            # Add to memory
+            self.memory.append((state, action, log_prob.item(), reward, 
+                               next_state if next_state is not None else state, 
+                               1 if idx == len(market_data)-1 else 0))
+            
+            # Update if batch is complete
+            if len(self.memory) >= self.batch_size:
+                self.update()
+        
+        return balance + (position * market_data.iloc[-1]['close'] if position > 0 else 0)
 
-# মডেল লোড করুন
-model = PPO.load("models/ppo_YOUR_SYMBOL.zip", device="cpu")
-
-# ব্যবহার করুন
-obs = env.reset()
-action, _states = model.predict(obs, deterministic=True)
-    ''')
-
-
+# Usage
 if __name__ == "__main__":
-    main()
+    # Load data
+    market_data = pd.read_csv("./csv/mongodb.csv")
+    
+    # Prepare agent
+    state_dim = 110  # 10 time steps * 11 features
+    action_dim = 3  # hold, buy, sell
+    
+    agent = PPOTradingAgent(state_dim=state_dim, action_dim=action_dim)
+    
+    # Train
+    for episode in range(100):
+        final_balance = agent.train_episode(market_data)
+        print(f"Episode {episode+1}: Final Balance: {final_balance:.2f}")
