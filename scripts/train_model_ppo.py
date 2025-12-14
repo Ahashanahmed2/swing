@@ -1,12 +1,14 @@
 # train_ppo.py
-import gymnasium as gym
 import numpy as np
 import pandas as pd
 import torch
 import os
+import warnings
+warnings.filterwarnings("ignore")
+
+# Import your modules
 from envs.trading_env import TradingEnv
 from ppo_agent import PPOAgent
-from torch.utils.tensorboard import SummaryWriter
 
 def load_data():
     signals = pd.read_csv("./csv/trade_stock.csv")
@@ -16,34 +18,51 @@ def load_data():
     return signals, market
 
 def compute_gae(rewards, values, next_values, dones, gamma=0.99, lam=0.95):
+    if len(rewards) == 0:
+        return np.array([]), np.array([])
     advantages = []
     gae = 0
     for i in reversed(range(len(rewards))):
         delta = rewards[i] + gamma * next_values[i] * (1 - dones[i]) - values[i]
         gae = delta + gamma * lam * (1 - dones[i]) * gae
         advantages.insert(0, gae)
-    returns = np.array(advantages) + values
-    return np.array(advantages), returns
+    advantages = np.array(advantages)
+    returns = advantages + values[:-1]  # values has one extra (final)
+    return advantages, returns
 
 def main():
+    print("📦 Loading data...")
     signals, market = load_data()
-    symbol = "POWERGRID"  # or loop over symbols
+    symbol = "POWERGRID"  # Change or loop as needed
     
-    env = TradingEnv(signals, market, symbol=symbol)
+    try:
+        env = TradingEnv(signals, market, symbol=symbol)
+    except ValueError as e:
+        print(f"❌ Error: {e}")
+        return
+    
     obs_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
     
-    agent = PPOAgent(obs_dim, action_dim, device="cuda" if torch.cuda.is_available() else "cpu")
-    writer = SummaryWriter(log_dir=f"./runs/ppo_{symbol}")
+    print(f"✅ Environment ready for {symbol}")
+    print(f"   Obs dim: {obs_dim}, Action dim: {action_dim}")
+    
+    # Force CPU (PyTorch 2.3+ compatible)
+    agent = PPOAgent(obs_dim, action_dim, device="cpu")
     
     total_timesteps = 0
     best_reward = -np.inf
-    
+    no_improve = 0
+    patience = 100  # stop if no improvement in 100 episodes
+
+    print("\n🚀 Starting PPO Training (CPU-only)...")
+    print("-" * 60)
+
     # Training loop
     for episode in range(1000):  # adjust as needed
         obs, _ = env.reset()
         done = False
-        episode_reward = 0
+        episode_reward = 0.0
         batch = {
             'obs': [], 'actions': [], 'log_probs': [], 
             'rewards': [], 'values': [], 'dones': []
@@ -51,12 +70,11 @@ def main():
         
         while not done:
             action, log_prob, value = agent.get_action(obs)
-            
             next_obs, reward, done, _, info = env.step(action)
             
-            # Store
-            batch['obs'].append(obs)
-            batch['actions'].append(action)
+            # Store experience
+            batch['obs'].append(obs.copy())
+            batch['actions'].append(action.copy())
             batch['log_probs'].append(log_prob)
             batch['rewards'].append(reward)
             batch['values'].append(value)
@@ -65,43 +83,50 @@ def main():
             obs = next_obs
             episode_reward += reward
             total_timesteps += 1
-        
-        # Add final value
+
+        # Add final state value
         _, _, final_value = agent.get_action(obs)
         batch['values'].append(final_value)
-        
-        # Compute GAE
+
+        # Compute GAE & returns
         advantages, returns = compute_gae(
             batch['rewards'],
-            batch['values'][:-1],
-            batch['values'][1:],
-            batch['dones'],
-            gamma=0.99, lam=0.95
+            np.array(batch['values'][:-1]),
+            np.array(batch['values'][1:]),
+            np.array(batch['dones']),
+            gamma=0.99,
+            lam=0.95
         )
-        
-        # Update agent
+
+        # Skip update if no steps (edge case)
+        if len(advantages) == 0:
+            continue
+
+        # Prepare batch
         batch_data = (
-            np.array(batch['obs']),
-            np.array(batch['actions']),
-            np.array(batch['log_probs']),
-            returns,
-            advantages
+            np.array(batch['obs'], dtype=np.float32),
+            np.array(batch['actions'], dtype=np.float32),
+            np.array(batch['log_probs'], dtype=np.float32),
+            returns.astype(np.float32),
+            advantages.astype(np.float32)
         )
+
+        # Update agent
         actor_loss, critic_loss = agent.update(batch_data)
-        
-        # Logging
-        writer.add_scalar("Episode/Reward", episode_reward, episode)
-        writer.add_scalar("Episode/Trades", info['trades'], episode)
-        writer.add_scalar("Episode/Balance", info['balance'], episode)
-        writer.add_scalar("Loss/Actor", actor_loss, episode)
-        writer.add_scalar("Loss/Critic", critic_loss, episode)
-        
-        if episode % 50 == 0:
-            print(f"Episode {episode} | Reward: {episode_reward:.2f} | Trades: {info['trades']} | Balance: {info['balance']:.0f}")
-        
+
+        # Logging (every 50 episodes)
+        if episode % 50 == 0 or episode == 0:
+            print(f"Ep {episode:4d} | "
+                  f"Reward: {episode_reward:7.2f} | "
+                  f"Balance: {info['balance']:8.0f} | "
+                  f"Trades: {info['trades']:3d} | "
+                  f"A-Loss: {actor_loss:.4f} | "
+                  f"C-Loss: {critic_loss:.4f}")
+
         # Save best model
         if episode_reward > best_reward:
             best_reward = episode_reward
+            no_improve = 0
             os.makedirs("models", exist_ok=True)
             torch.save({
                 'actor_state_dict': agent.actor.state_dict(),
@@ -109,9 +134,20 @@ def main():
                 'episode': episode,
                 'reward': episode_reward
             }, f"models/ppo_{symbol}_best.pth")
-    
-    writer.close()
-    print("✅ PPO Training completed.")
+            print(f"   🎯 New best reward: {best_reward:.2f} → Model saved!")
+        else:
+            no_improve += 1
+
+        # Early stopping
+        if no_improve >= patience:
+            print(f"\n⏹️  Early stopping: no improvement in {patience} episodes.")
+            break
+
+    print("-" * 60)
+    print(f"✅ Training completed!")
+    print(f"   Total episodes: {episode + 1}")
+    print(f"   Best reward: {best_reward:.2f}")
+    print(f"   Model saved at: ./models/ppo_{symbol}_best.pth")
 
 if __name__ == "__main__":
     main()
