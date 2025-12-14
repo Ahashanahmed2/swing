@@ -1,333 +1,238 @@
+# envs/trading_env.py
 import gymnasium as gym
-import os
+from gymnasium import spaces
 import numpy as np
 import pandas as pd
-from gymnasium import spaces
-import json
 
-class TradeEnv(gym.Env):
-    def __init__(self,
-                 maindf,
-                 gape_path="./csv/gape.csv",
-                 gapebuy_path="./csv/gape_buy.csv",
-                 shortbuy_path="./csv/short_buy.csv",
-                 rsi_diver_path="./csv/rsi_diver.csv",
-                 rsi_diver_retest_path="./csv/rsi_diver_retest.csv",
-                 trade_stock_path="./csv/trade_stock.csv",
-                 metrics_path="./output/ai_signal/strategy_metrics.csv",
-                 symbol_ref_path="./output/ai_signal/symbol_reference_metrics.csv",
-                 liquidity_path="./csv/liquidity_system.csv",
-                 config_path="./config.json"):
+class TradingEnv(gym.Env):
+    metadata = {"render_modes": []}
 
-        super(TradeEnv, self).__init__()
+    def __init__(
+        self,
+        signal_data,
+        market_data,
+        symbol="POWERGRID",
+        initial_capital=500_000,
+        risk_per_trade=0.01,
+        render_mode=None
+    ):
+        super().__init__()
+        self.symbol = symbol
+        self.initial_capital = initial_capital
+        self.risk_per_trade = risk_per_trade
 
-        # ✅ CRITICAL: Fill NaN BEFORE processing
-        self.maindf = maindf.copy().reset_index(drop=True)
-        self.maindf = self.maindf.fillna({
-            'open': self.maindf['close'],
-            'high': self.maindf['close'],
-            'low': self.maindf['close'],
-            'volume': 0,
-            'value': 0,
-            'trades': 0,
-            'change': 0,
-            'marketCap': 0,
-            'RSI': 50,
-            'bb_upper': self.maindf['close'],
-            'bb_middle': self.maindf['close'],
-            'bb_lower': self.maindf['close'],
-            'macd': 0,
-            'macd_signal': 0,
-            'macd_hist': 0,
-            'zigzag': 0,
-            'Hammer': 'FALSE',
-            'BullishEngulfing': 'FALSE',
-            'MorningStar': 'FALSE'
-        })
-        self.maindf['date'] = pd.to_datetime(self.maindf['date'], errors='coerce')
-        self.maindf['symbol'] = self.maindf['symbol'].str.upper()
-
-        # --- Load signal files ---
-        self.gape_df = self._safe_load(gape_path, ['symbol'])
-        self.gapebuy_df = self._safe_load(gapebuy_path, ['symbol', 'date'])
-        self.shortbuy_df = self._safe_load(shortbuy_path, ['symbol', 'date'])
-        self.rsi_diver_df = self._safe_load(rsi_diver_path, ['symbol'])
-        self.rsi_diver_retest_df = self._safe_load(rsi_diver_retest_path, ['symbol'])
-
-        # --- Load SYSTEM INTELLIGENCE ---
-        self.trade_stock_df = self._safe_load(trade_stock_path, ['symbol', 'date', 'position_size', 'RRR'])
-        self.strategy_metrics = self._safe_load(metrics_path, ['Reference', 'Win%'])
-        self.symbol_ref_metrics = self._safe_load(symbol_ref_path, ['Symbol', 'Reference', 'Win%', 'Expectancy (BDT)'])
-        self.liquidity_df = self._safe_load(liquidity_path, ['symbol', 'liquidity_score'])
-
-        # Load config
-        self._load_config(config_path)
-
-        # Environment state
-        self.cash = self.TOTAL_CAPITAL
-        self.positions = {}
+        # Filter data
+        self.signal_data = signal_data[signal_data['symbol'] == symbol].reset_index(drop=True)
+        self.market_data = market_data[market_data['symbol'] == symbol].reset_index(drop=True)
+        
+        # Merge on date
+        self.data = pd.merge(
+            self.signal_data,
+            self.market_data,
+            on=['symbol', 'date'],
+            how='inner'
+        ).sort_values('date').reset_index(drop=True)
+        
+        if len(self.data) == 0:
+            raise ValueError(f"No data for symbol: {symbol}")
+        
         self.current_step = 0
-        self.total_steps = len(self.maindf) - 1
-        self.last_obs = None
+        self.reset()
 
-        # --- ✅ ENHANCED OBSERVATION SPACE ---
-        self.base_features = [
-            'open', 'high', 'low', 'close', 'volume', 'value', 'trades', 'change', 'marketCap',
-            'RSI', 'bb_upper', 'bb_middle', 'bb_lower',
-            'macd', 'macd_signal', 'macd_hist', 'zigzag'
-        ]
-        self.pattern_cols = ['Hammer', 'BullishEngulfing', 'MorningStar']
-        self.sys_features = [
-            'has_signal_today', 'position_size_suggested', 'rrr_signal',
-            'win_pct_symbol', 'expectancy_bdt', 'liquidity_score',
-            'portfolio_exposure_ratio', 'unrealized_pnl_pct'
-        ]
+        # Action space: continuous (for PPO)
+        # [position_size_ratio (0~2), sl_offset (0~3*atr), tp_offset (1~4*atr), close_ratio (0~1)]
+        self.action_space = spaces.Box(
+            low=np.array([0.0, 0.0, 1.0, 0.0]),
+            high=np.array([2.0, 3.0, 4.0, 1.0]),
+            dtype=np.float32
+        )
 
-        self.obs_dim = len(self.base_features) + len(self.pattern_cols) + len(self.sys_features)
-        print(f"✅ TradeEnv initialized with observation size = {self.obs_dim}")
+        # Observation space: 30+ features
+        self.obs_dim = 32
+        self.observation_space = spaces.Box(
+            low=-np.inf, high=np.inf, shape=(self.obs_dim,), dtype=np.float32
+        )
 
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self.obs_dim,), dtype=np.float32)
-        self.action_space = spaces.Discrete(3)
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+        self.current_step = 0
+        self.balance = self.initial_capital
+        self.position = 0          # number of shares
+        self.entry_price = 0.0
+        self.current_sl = 0.0
+        self.current_tp = 0.0
+        self.trades = []
+        self.cum_pnl = 0.0
+        self.max_balance = self.balance
+        self.drawdown = 0.0
+        
+        return self._get_obs(), {}
 
-    def _safe_load(self, path, required_cols):
-        try:
-            if os.path.exists(path):
-                df = pd.read_csv(path)
-                df.columns = df.columns.str.strip()
-                for col in required_cols:
-                    if col not in df.columns:
-                        df[col] = 0
-                return df
-        except Exception as e:
-            print(f"⚠️ Failed to load {path}: {e}")
-        return pd.DataFrame(columns=required_cols)
-
-    def _load_config(self, config_path):
-        self.TOTAL_CAPITAL = 500000
-        self.RISK_PERCENT = 0.01
-        if os.path.exists(config_path):
-            with open(config_path) as f:
-                cfg = json.load(f)
-                self.TOTAL_CAPITAL = cfg.get("total_capital", 500000)
-                self.RISK_PERCENT = cfg.get("risk_percent", 0.01)
-
-    def _get_open_signal(self, symbol, date):
-        if self.trade_stock_df.empty:
-            return None
-
-        signals = self.trade_stock_df[
-            (self.trade_stock_df['symbol'].str.upper() == symbol.upper()) &
-            (pd.to_datetime(self.trade_stock_df['date']).dt.date == date.date())
-        ]
-        return signals.iloc[0] if not signals.empty else None
-
-    def _get_system_context(self, symbol, date):
-        context = {
-            'has_signal_today': 0,
-            'position_size_suggested': 0,
-            'rrr_signal': 0.0,
-            'win_pct_symbol': 50.0,
-            'expectancy_bdt': 0.0,
-            'liquidity_score': 0.5,
-            'portfolio_exposure_ratio': 0.0,
-            'unrealized_pnl_pct': 0.0
-        }
-
-        # --- Open signal today? ---
-        signal = self._get_open_signal(symbol, date)
-        if signal is not None:
-            context['has_signal_today'] = 1
-            context['position_size_suggested'] = int(signal.get('position_size', 0))
-            context['rrr_signal'] = float(signal.get('RRR', 0))
-
-        # --- Symbol performance ---
-        if not self.symbol_ref_metrics.empty:
-            ref_row = self.symbol_ref_metrics[
-                (self.symbol_ref_metrics['Symbol'].str.upper() == symbol.upper()) &
-                (self.symbol_ref_metrics['Reference'] == 'SWING')
-            ]
-            if not ref_row.empty:
-                context['win_pct_symbol'] = float(ref_row.iloc[0].get('Win%', 50.0))
-                context['expectancy_bdt'] = float(ref_row.iloc[0].get('Expectancy (BDT)', 0.0))
-
-        # --- Liquidity ---
-        if not self.liquidity_df.empty:
-            liq_row = self.liquidity_df[self.liquidity_df['symbol'].str.upper() == symbol.upper()]
-            if not liq_row.empty:
-                context['liquidity_score'] = float(liq_row.iloc[0].get('liquidity_score', 0.5))
-
-        # --- Portfolio context ---
-        total_exposure = sum(p['shares'] * p['avg_price'] for p in self.positions.values())
-        context['portfolio_exposure_ratio'] = total_exposure / self.TOTAL_CAPITAL
-
-        # Unrealized PnL
-        if symbol in self.positions:
-            pos = self.positions[symbol]
-            current_price = self.maindf.iloc[min(self.current_step, len(self.maindf)-1)]['close']
-            unrealized = (current_price - pos['avg_price']) / pos['avg_price'] * 100
-            context['unrealized_pnl_pct'] = unrealized
-
-        return context
-
-    def get_obs(self):
-        # ✅ CRITICAL: Fill row-level NaN first
-        row = self.maindf.iloc[self.current_step].fillna(0)
-        symbol = str(row.get('symbol', '')).upper()
-        date = row.get('date', pd.Timestamp.now())
-
-        # Base features
-        obs = []
-        for col in self.base_features:
-            val = row.get(col, 0)
-            try:
-                obs.append(float(val))
-            except (ValueError, TypeError):
-                obs.append(0.0)
-
-        # Pattern flags
-        for col in self.pattern_cols:
-            val = str(row.get(col, 'FALSE')).upper()
-            obs.append(1.0 if val == 'TRUE' else 0.0)
-
-        # System intelligence
-        sys_ctx = self._get_system_context(symbol, date)
-        for col in self.sys_features:
-            val = sys_ctx.get(col, 0.0)
-            try:
-                obs.append(float(val))
-            except (ValueError, TypeError):
-                obs.append(0.0)
-
-        # ✅ CRITICAL: Validate observation size
-        if len(obs) != self.obs_dim:
-            print(f"❗ Obs length mismatch: got {len(obs)}, expected {self.obs_dim}")
-            print("Base features:", len(self.base_features))
-            print("Pattern cols:", len(self.pattern_cols))
-            print("Sys features:", len(self.sys_features))
-            # Pad or truncate to fix
-            if len(obs) < self.obs_dim:
-                obs.extend([0.0] * (self.obs_dim - len(obs)))
-            else:
-                obs = obs[:self.obs_dim]
-
-        obs_array = np.array(obs, dtype=np.float32)
-        # Final NaN cleanup
-        obs_array = np.nan_to_num(obs_array, nan=0.0, posinf=0.0, neginf=0.0)
-        return obs_array
+    def _get_obs(self):
+        if self.current_step >= len(self.data):
+            # Dummy obs at end
+            return np.zeros(self.obs_dim, dtype=np.float32)
+        
+        row = self.data.iloc[self.current_step]
+        
+        # Normalized features
+        obs = np.array([
+            # Signal features
+            row['buy'],
+            row['SL'],
+            row['tp'],
+            row['diff'],
+            row['RRR1'],
+            row['position_size'],
+            
+            # Market features
+            row['open'], row['high'], row['low'], row['close'],
+            row['volume'] / 1e6,
+            row['marketCap'] / 1e9,
+            row['rsi'] / 100,
+            row['macd'] / 10,
+            row['macd_hist'] / 5,
+            row['atr'] / row['close'],
+            
+            # Patterns (binary → float)
+            float(row['Hammer']),
+            float(row['BullishEngulfing']),
+            float(row['MorningStar']),
+            float(row['Doji']),
+            
+            # Position context
+            self.position / 1000,  # normalize shares
+            (self.balance - self.initial_capital) / self.initial_capital,  # PnL%
+            self.cum_pnl / self.initial_capital,
+            self.drawdown,
+            
+            # Risk context
+            (row['buy'] - row['SL']) / row['buy'],  # % risk if taken
+            row['atr'] / row['close'],
+            
+            # Time features (sine/cosine for day-of-year)
+            np.sin(2 * np.pi * pd.to_datetime(row['date']).dayofyear / 365),
+            np.cos(2 * np.pi * pd.to_datetime(row['date']).dayofyear / 365),
+        ], dtype=np.float32)
+        
+        # Pad to obs_dim
+        if len(obs) < self.obs_dim:
+            obs = np.pad(obs, (0, self.obs_dim - len(obs)), 'constant')
+        return obs[:self.obs_dim]
 
     def step(self, action):
-        # ✅ CRITICAL: Handle empty dataframe
-        if self.current_step >= len(self.maindf):
-            return self.last_obs, 0.0, True, False, {}
+        if self.current_step >= len(self.data) - 1:
+            done = True
+            reward = 0.0
+            return self._get_obs(), reward, done, False, self._get_info()
 
-        row = self.maindf.iloc[self.current_step]
-        symbol = str(row.get('symbol', '')).upper()
-        price = float(row.get('close', 0))
-        date = row.get('date', pd.Timestamp.now())
+        row = self.data.iloc[self.current_step]
+        next_row = self.data.iloc[self.current_step + 1]
+        
+        # Unpack action
+        pos_ratio, sl_mult, tp_mult, close_ratio = action
+        pos_ratio = np.clip(pos_ratio, 0, 2)
+        sl_mult = np.clip(sl_mult, 0.5, 3.0)
+        tp_mult = np.clip(tp_mult, 1.0, 4.0)
+        close_ratio = np.clip(close_ratio, 0, 1)
 
+        done = False
         reward = 0.0
-        info = {}
 
-        # Get system signal for TODAY
-        signal = self._get_open_signal(symbol, date)
-        sys_ctx = self._get_system_context(symbol, date)
+        # ——————— EXECUTION LOGIC ———————
+        # 1. Close part of position?
+        if self.position > 0 and close_ratio > 0:
+            shares_to_close = int(self.position * close_ratio)
+            exit_price = next_row['open']  # assume execution at next open
+            pnl = shares_to_close * (exit_price - self.entry_price)
+            self.balance += pnl
+            self.position -= shares_to_close
+            self.trades.append({
+                'date': next_row['date'],
+                'type': 'partial_close',
+                'shares': shares_to_close,
+                'price': exit_price,
+                'pnl': pnl
+            })
 
-        # --- ✅ DSE-REALISTIC EXECUTION ---
-        if action == 1 and signal is not None:
-            suggested_shares = int(signal.get('position_size', 0))
-            cost = suggested_shares * price
+        # 2. Adjust SL/TP
+        new_sl = row['buy'] - sl_mult * row['atr']
+        new_tp = row['buy'] + tp_mult * row['atr']
+        self.current_sl = new_sl
+        self.current_tp = new_tp
 
-            if self.cash >= cost and suggested_shares > 0 and price > 0:
-                self.positions[symbol] = {
-                    'shares': suggested_shares,
-                    'avg_price': price,
-                    'sl': float(signal.get('SL', price * 0.97)),
-                    'tp': float(signal.get('tp', price * 1.05))
-                }
-                self.cash -= cost
+        # 3. Open new position (if signal active & no position)
+        if self.position == 0 and pos_ratio > 0:
+            risk_per_share = row['buy'] - new_sl
+            if risk_per_share <= 0:
+                risk_per_share = 0.01 * row['buy']  # fallback
+            
+            max_shares_by_risk = int((self.balance * self.risk_per_trade) / risk_per_share)
+            desired_shares = int(row['position_size'] * pos_ratio)
+            shares = min(desired_shares, max_shares_by_risk, int(self.balance / row['buy']))
+            
+            if shares > 0:
+                self.position = shares
+                self.entry_price = row['buy']
+                self.current_sl = new_sl
+                self.current_tp = new_tp
+                self.trades.append({
+                    'date': row['date'],
+                    'type': 'entry',
+                    'shares': shares,
+                    'price': row['buy'],
+                    'sl': new_sl,
+                    'tp': new_tp
+                })
 
-                bonus = (
-                    sys_ctx['expectancy_bdt'] * 0.001 +
-                    sys_ctx['liquidity_score'] * 0.5 +
-                    (sys_ctx['win_pct_symbol'] - 50) * 0.01
-                )
-                reward = 1.0 + max(-1.0, min(3.0, bonus))  # clip bonus
+        # 4. Check SL/TP hit during next period (simplified: use OHLC)
+        if self.position > 0:
+            hit_sl = next_row['low'] <= self.current_sl
+            hit_tp = next_row['high'] >= self.current_tp
+            
+            if hit_sl or hit_tp:
+                exit_price = self.current_sl if hit_sl else self.current_tp
+                pnl = self.position * (exit_price - self.entry_price)
+                self.balance += pnl
+                self.trades.append({
+                    'date': next_row['date'],
+                    'type': 'exit',
+                    'shares': self.position,
+                    'price': exit_price,
+                    'pnl': pnl,
+                    'reason': 'SL' if hit_sl else 'TP'
+                })
+                self.position = 0
 
-            else:
-                reward = -2.0
+        # ——————— REWARD DESIGN ———————
+        # Risk-adjusted return + drawdown penalty
+        prev_balance = self.balance - (pnl if 'pnl' in locals() else 0)
+        step_pnl_pct = (self.balance - prev_balance) / prev_balance if prev_balalance > 0 else 0
+        
+        self.max_balance = max(self.max_balance, self.balance)
+        self.drawdown = (self.max_balance - self.balance) / self.max_balance
+        
+        # Reward = Sharpe-like + penalty for drawdown & turnover
+        reward = step_pnl_pct * 100  # scale to %
+        reward -= 0.5 * self.drawdown  # drawdown penalty
+        if action[3] > 0.5:  # excessive closing
+            reward -= 0.1
 
-        elif action == 2 and symbol in self.positions:
-            pos = self.positions[symbol]
-            proceeds = pos['shares'] * price
-            profit = proceeds - (pos['shares'] * pos['avg_price'])
+        self.cum_pnnl += step_pnl_pct
 
-            self.cash += proceeds
-            del self.positions[symbol]
-
-            if profit > 0:
-                reward = profit * (1 + 0.001 * max(0, sys_ctx['expectancy_bdt']))
-            else:
-                reward = profit * 2.0
-
-        # --- Auto-exit on SL/TP ---
-        if symbol in self.positions:
-            pos = self.positions[symbol]
-            sl_price = pos['sl']
-            tp_price = pos['tp']
-
-            if price <= sl_price and sl_price > 0:
-                shares = pos['shares']
-                proceeds = shares * price
-                self.cash += proceeds
-                del self.positions[symbol]
-                reward += -1.0
-                info['exit_reason'] = 'SL'
-            elif price >= tp_price and tp_price > 0:
-                shares = pos['shares']
-                proceeds = shares * price
-                self.cash += proceeds
-                del self.positions[symbol]
-                reward += +0.5
-                info['exit_reason'] = 'TP'
-
-        # Step forward
+        # Advance
         self.current_step += 1
-        done = self.current_step >= self.total_steps
+        done = self.current_step >= len(self.data) - 1
 
-        # Portfolio value
-        if self.current_step < len(self.maindf):
-            current_price = self.maindf.iloc[self.current_step]['close']
-        else:
-            current_price = price
-        portfolio_value = self.cash + sum(
-            p['shares'] * current_price for p in self.positions.values()
-        )
-        info['portfolio_value'] = portfolio_value
-        info['positions'] = len(self.positions)
+        return self._get_obs(), reward, done, False, self._get_info()
 
-        # Clip reward
-        reward = np.clip(reward, -5, 5)
-        obs = self.get_obs() if not done else self.last_obs
-        self.last_obs = obs
-
-        return obs, reward, done, False, info
-
-    def reset(self, *, seed=None, options=None):
-        self.cash = self.TOTAL_CAPITAL
-        self.positions = {}
-        self.current_step = 0
-        self.last_obs = self.get_obs()
-        return self.last_obs, {}
+    def _get_info(self):
+        return {
+            "balance": self.balance,
+            "position": self.position,
+            "drawdown": self.drawdown,
+            "trades": len(self.trades)
+        }
 
     def render(self):
-        if self.current_step >= len(self.maindf):
-            print("[ENV] Done")
-            return
-
-        r = self.maindf.iloc[self.current_step]
-        symbol = r.get('symbol', 'N/A')
-        price = float(r.get('close', 0))
-        portfolio_value = self.cash + sum(p['shares'] * price for p in self.positions.values())
-        pnl = portfolio_value - self.TOTAL_CAPITAL
-        pos_str = ", ".join([f"{s}: {p['shares']}" for s, p in self.positions.items()])
-        print(f"[{symbol}] Cash: {self.cash:8.0f} | PnL: {pnl:+7.0f} | Pos: {pos_str or 'None'}")
+        pass
