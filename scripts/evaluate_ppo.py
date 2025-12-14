@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import torch
 import os
-from env import TradeEnv
+from env import TradingEnv
 from ppo_agent import PPOAgent
 
 def load_data():
@@ -38,7 +38,7 @@ def estimate_win_probability(row):
 
 def process_symbol(signals, market, symbol):
     try:
-        env = TradeEnv(signals, market, symbol=symbol, initial_capital=500_000)
+        env = TradingEnv(signals, market, symbol=symbol, initial_capital=500_000)
     except Exception as e:
         print(f"   ⚠️ Skip {symbol}: {str(e)[:50]}")
         return None
