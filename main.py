@@ -25,6 +25,7 @@ scripts = [
     #"scripts/rsi_diversence.py",
     "scripts/profit_loss_generator.py",
     #"scripts/train_model_ppo.py",
+    "scripts/evaluate_ppo.py",
     #"scripts/generate_signal.py",
     #"scripts/backtest_all_signals.py",
     "scripts/generate_pdf.py",
