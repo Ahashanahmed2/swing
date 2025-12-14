@@ -124,9 +124,10 @@ trade_df["risk_per_trade"] = TOTAL_CAPITAL * RISK_PERCENT
 trade_df["position_size"] = (trade_df["risk_per_trade"] / (trade_df["buy"] - trade_df["SL"])).astype(int)
 trade_df["position_size"] = trade_df["position_size"].clip(lower=1)  # min 1 share (DSE allows it!)
 
-# Final fields
+# Calculate DIFF (buy - SL) and other metrics
+trade_df["DIFF"] = trade_df["buy"] - trade_df["SL"]
 trade_df["exposure_bdt"] = trade_df["position_size"] * trade_df["buy"]
-trade_df["actual_risk_bdt"] = trade_df["position_size"] * (trade_df["buy"] - trade_df["SL"])
+trade_df["actual_risk_bdt"] = trade_df["position_size"] * trade_df["DIFF"]
 
 
 # ---------------------------------------------------------
@@ -169,6 +170,7 @@ for _, row in trade_df.iterrows():
     trade_id, ref = row["trade_id"], row["Reference"]
     pos_size = int(row["position_size"])
     exp_bdt = float(row["exposure_bdt"])
+    diff_val = float(row["DIFF"])
 
     buy_sl_diff = buy - SL_value
     sl_pct = ((buy - SL_value) / buy) * 100 if buy > 0 else np.nan
@@ -210,7 +212,7 @@ for _, row in trade_df.iterrows():
                 diff_days, ref, round(buy_sl_diff, 4),
                 round(sl_pct, 2), round(atr_sl_pct, 2),
                 round(tp_val, 4), round(rrr_val, 2) if pd.notna(rrr_val) else np.nan,
-                pos_size, round(exp_bdt, 0)
+                pos_size, round(exp_bdt, 0), round(diff_val, 4)
             ])
             remove_trade_ids.append(trade_id)
             break
@@ -224,7 +226,7 @@ for _, row in trade_df.iterrows():
                 diff_days, ref, round(buy_sl_diff, 4),
                 round(sl_pct, 2), round(atr_sl_pct, 2),
                 round(tp_val, 4), round(rrr_val, 2) if pd.notna(rrr_val) else np.nan,
-                pos_size, round(exp_bdt, 0)
+                pos_size, round(exp_bdt, 0), round(diff_val, 4)
             ])
             remove_trade_ids.append(trade_id)
             break
@@ -238,7 +240,7 @@ if results:
         "no", "symbol", "buy_date", "buy", "SL_value",
         "sell_date", "sell", "loss_pct", "profit_pct", "days_held",
         "Reference", "buy_sl_diff", "sl_pct", "atr_sl_pct", "tp", "RRR",
-        "position_size", "exposure_bdt"
+        "position_size", "exposure_bdt", "DIFF"
     ])
     out["no"] = range(1, len(out) + 1)
     out = out.sort_values("buy_sl_diff", ascending=True).reset_index(drop=True)
@@ -452,15 +454,19 @@ if strategy_metrics:
 
 
 # ---------------------------------------------------------
-# ✅ SMART MERGE: trade_stock.csv
+# ✅ SMART MERGE: trade_stock.csv (WITH ALL COLUMNS)
 # ---------------------------------------------------------
 def merge_open_trades(old_path, new_df, exited_ids):
     old_df = pd.DataFrame()
     if os.path.exists(old_path):
         try:
             old_df = pd.read_csv(old_path)
-            for col in ["symbol", "date", "Reference", "buy", "SL"]:
-                assert col in old_df.columns, f"Missing in old: {col}"
+            for col in ["symbol", "date", "Reference", "buy", "SL", "tp", "RRR", "DIFF", 
+                       "position_size", "exposure_bdt", "actual_risk_bdt"]:
+                if col not in old_df.columns and col in ["tp", "RRR"]:
+                    # Handle missing optional columns
+                    old_df[col] = np.nan
+                assert col in old_df.columns or col in ["tp", "RRR"], f"Missing in old: {col}"
             old_df["symbol"] = old_df["symbol"].str.upper().str.strip()
             old_df["date"] = pd.to_datetime(old_df["date"]).dt.date
             if "no" in old_df.columns:
@@ -491,16 +497,28 @@ def merge_open_trades(old_path, new_df, exited_ids):
     combined = combined.sort_values("DIFF", ascending=True).reset_index(drop=True)
     combined.insert(0, "no", range(1, len(combined) + 1))
 
+    # Ensure all columns exist
+    for col in ["tp", "RRR"]:
+        if col not in combined.columns:
+            combined[col] = np.nan
+
     col_order = [
-        "no", "date", "symbol", "buy", "SL", "tp", "RRR",
+        "no", "date", "symbol", "buy", "SL", "tp", "RRR", "DIFF",
         "position_size", "exposure_bdt", "actual_risk_bdt", "Reference"
     ]
+    
+    # Add missing columns with NaN values
+    for col in col_order:
+        if col not in combined.columns:
+            combined[col] = np.nan
+    
     return combined.reindex(columns=col_order)
 
 
 final_trades = merge_open_trades(trade_stock_path, trade_df, remove_trade_ids)
 final_trades.to_csv(trade_stock_path, index=False)
 print(f"\n✅ Updated trade_stock.csv: {len(final_trades)} open signals.")
+print(f"   Columns saved: {', '.join(final_trades.columns.tolist())}")
 
 print("\n🎉 SYSTEM READY — DSE-Optimized, Risk-Exact, 3-Layer Metrics!")
 print("   → Every trade risks exactly `risk_percent` of capital.")
