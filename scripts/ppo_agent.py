@@ -1,113 +1,203 @@
-# ppo_agent.py
+# src/ppo_agent.py
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import numpy as np
-from torch.distributions import Normal
-import torch.nn.functional as F
+from torch.distributions import Categorical
+import pandas as pd
+import os
+import sys
 
-class Actor(nn.Module):
-    def __init__(self, obs_dim, action_dim):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(obs_dim, 256),
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import MONGODB_PATH, PPO_MODEL_PATH
+
+class PPOTradingAgent:
+    def __init__(self, state_dim=110, action_dim=3, learning_rate=0.0003, 
+                 gamma=0.99, epsilon=0.2, epochs=10, batch_size=64):
+        
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.gamma = gamma
+        self.epsilon = epsilon
+        self.epochs = epochs
+        self.batch_size = batch_size
+        
+        # Policy network
+        self.policy_net = nn.Sequential(
+            nn.Linear(state_dim, 128),
             nn.ReLU(),
-            nn.Linear(256, 128),
+            nn.Linear(128, 128),
             nn.ReLU(),
+            nn.Linear(128, action_dim),
+            nn.Softmax(dim=-1)
         )
-        self.mean_head = nn.Linear(128, action_dim)
-        self.log_std = nn.Parameter(torch.zeros(action_dim))
-
-    def forward(self, x):
-        x = self.net(x)
-        mean = torch.tanh(self.mean_head(x))  # keep in [-1,1] then scale
-        std = torch.exp(self.log_std.clamp(-20, 2))  # avoid extreme std
-        return mean, std
-
-    def act(self, obs):
-        with torch.no_grad():
-            mean, std = self(obs)
-            dist = Normal(mean, std)
-            action = dist.sample()
-            log_prob = dist.log_prob(action).sum(-1)
-        return action.cpu().numpy(), log_prob.item()
-
-class Critic(nn.Module):
-    def __init__(self, obs_dim):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(obs_dim, 256),
+        
+        # Value network
+        self.value_net = nn.Sequential(
+            nn.Linear(state_dim, 128),
             nn.ReLU(),
-            nn.Linear(256, 128),
+            nn.Linear(128, 128),
             nn.ReLU(),
             nn.Linear(128, 1)
         )
-
-    def forward(self, x):
-        return self.net(x).squeeze(-1)
-
-class PPOAgent:
-    def __init__(
-        self,
-        obs_dim,
-        action_dim,
-        lr_actor=3e-4,
-        lr_critic=3e-4,
-        gamma=0.99,
-        gae_lambda=0.95,
-        clip_epsilon=0.2,
-        epochs=10,
-        device="cpu"
-    ):
-        self.device = device
-        self.gamma = gamma
-        self.gae_lambda = gae_lambda
-        self.clip_epsilon = clip_epsilon
-        self.epochs = epochs
-
-        self.actor = Actor(obs_dim, action_dim).to(device)
-        self.critic = Critic(obs_dim).to(device)
-        self.actor_opt = optim.Adam(self.actor.parameters(), lr=lr_actor)
-        self.critic_opt = optim.Adam(self.critic.parameters(), lr=lr_critic)
-
-    def get_action(self, obs):
-        obs = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
-        action, log_prob = self.actor.act(obs)
-        value = self.critic(obs).item()
-        return action, log_prob, value
-
-    def update(self, batch):
-        obs, actions, old_log_probs, returns, advantages = batch
         
-        obs = torch.FloatTensor(obs).to(self.device)
-        actions = torch.FloatTensor(actions).to(self.device)
-        old_log_probs = torch.FloatTensor(old_log_probs).to(self.device)
-        returns = torch.FloatTensor(returns).to(self.device)
-        advantages = torch.FloatTensor(advantages).to(self.device)
-
+        self.optimizer = optim.Adam(
+            list(self.policy_net.parameters()) + list(self.value_net.parameters()),
+            lr=learning_rate
+        )
+        
+        self.memory = []
+        
+    def get_state(self, market_data, idx):
+        """কনভার্ট মার্কেট ডেটা টু স্টেট ভেক্টর"""
+        if idx >= len(market_data):
+            return None
+        
+        state = []
+        window_size = 10
+        
+        # Price features
+        for i in range(max(0, idx-window_size+1), idx+1):
+            if i < len(market_data):
+                row = market_data.iloc[i]
+                state.extend([
+                    row['open'], row['close'], row['high'], row['low'],
+                    row['volume'], row['rsi'], row['macd'], row['macd_signal'],
+                    row['bb_upper'], row['bb_middle'], row['bb_lower']
+                ])
+        
+        # Pad if needed
+        while len(state) < self.state_dim:
+            state.append(0)
+        
+        return np.array(state[:self.state_dim])
+    
+    def select_action(self, state):
+        state_tensor = torch.FloatTensor(state).unsqueeze(0)
+        probs = self.policy_net(state_tensor)
+        dist = Categorical(probs)
+        action = dist.sample()
+        
+        return action.item(), dist.log_prob(action), probs.detach().numpy()[0]
+    
+    def train_episode(self, market_data, initial_balance=100000):
+        """ট্রেইন ওয়ান এপিসোড"""
+        balance = initial_balance
+        position = 0
+        entry_price = 0
+        
+        for idx in range(len(market_data)):
+            state = self.get_state(market_data, idx)
+            if state is None:
+                continue
+            
+            # Select action (0: hold, 1: buy, 2: sell)
+            action, log_prob, _ = self.select_action(state)
+            
+            # Execute action
+            current_price = market_data.iloc[idx]['close']
+            reward = 0
+            
+            if action == 1 and position == 0:  # Buy
+                position = balance / current_price
+                entry_price = current_price
+                balance = 0
+                
+            elif action == 2 and position > 0:  # Sell
+                balance = position * current_price
+                profit = balance - (position * entry_price)
+                position = 0
+                reward = profit / entry_price
+            
+            # Store experience
+            next_state = self.get_state(market_data, idx + 1)
+            
+            self.memory.append((state, action, log_prob.item(), reward, 
+                               next_state if next_state is not None else state, 
+                               1 if idx == len(market_data)-1 else 0))
+            
+            # Update if batch is complete
+            if len(self.memory) >= self.batch_size:
+                self._update_model()
+        
+        return balance + (position * market_data.iloc[-1]['close'] if position > 0 else 0)
+    
+    def _update_model(self):
+        """ইন্টারনাল আপডেট মডেল"""
+        states, actions, log_probs, rewards, next_states, dones = zip(*self.memory)
+        
+        # Convert to tensors
+        states = torch.FloatTensor(states)
+        actions = torch.LongTensor(actions)
+        old_log_probs = torch.FloatTensor(log_probs)
+        rewards = torch.FloatTensor(rewards)
+        
+        # Compute returns
+        returns = self._compute_returns(rewards.numpy())
+        
+        # Compute advantages
+        values = self.value_net(states).squeeze()
+        advantages = returns - values.detach()
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        
+        # PPO update
         for _ in range(self.epochs):
-            # Actor loss
-            mean, std = self.actor(obs)
-            dist = Normal(mean, std)
-            new_log_probs = dist.log_prob(actions).sum(-1)
+            probs = self.policy_net(states)
+            dist = Categorical(probs)
+            new_log_probs = dist.log_prob(actions)
+            
             ratio = torch.exp(new_log_probs - old_log_probs)
             surr1 = ratio * advantages
-            surr2 = torch.clamp(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon) * advantages
-            actor_loss = -torch.min(surr1, surr2).mean()
+            surr2 = torch.clamp(ratio, 1 - self.epsilon, 1 + self.epsilon) * advantages
+            
+            policy_loss = -torch.min(surr1, surr2).mean()
+            value_loss = nn.MSELoss()(values, returns)
+            
+            loss = policy_loss + 0.5 * value_loss
+            
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+        
+        self.memory = []
+    
+    def _compute_returns(self, rewards):
+        """কম্পিউট রিটার্নস"""
+        returns = []
+        R = 0
+        
+        for r in reversed(rewards):
+            R = r + self.gamma * R
+            returns.insert(0, R)
+        
+        return torch.FloatTensor(returns)
+    
+    def save_model(self):
+        """সেভ মডেল"""
+        torch.save({
+            'policy_net_state_dict': self.policy_net.state_dict(),
+            'value_net_state_dict': self.value_net.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+        }, PPO_MODEL_PATH)
+        print(f"PPO model saved to {PPO_MODEL_PATH}")
+    
+    def load_model(self):
+        """লোড মডেল"""
+        checkpoint = torch.load(PPO_MODEL_PATH)
+        self.policy_net.load_state_dict(checkpoint['policy_net_state_dict'])
+        self.value_net.load_state_dict(checkpoint['value_net_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        print(f"PPO model loaded from {PPO_MODEL_PATH}")
 
-            # Critic loss
-            values = self.critic(obs)
-            critic_loss = F.mse_loss(values, returns)
-
-            # Update
-            self.actor_opt.zero_grad()
-            actor_loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 0.5)
-            self.actor_opt.step()
-
-            self.critic_opt.zero_grad()
-            critic_loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.critic.parameters(), 0.5)
-            self.critic_opt.step()
-
-        return actor_loss.item(), critic_loss.item()
+if __name__ == "__main__":
+    # Standalone execution
+    market_data = pd.read_csv(MONGODB_PATH)
+    
+    agent = PPOTradingAgent(state_dim=110, action_dim=3)
+    
+    print("Training PPO agent...")
+    for episode in range(10):  # Reduced for testing
+        final_balance = agent.train_episode(market_data)
+        print(f"Episode {episode+1}: Final Balance: {final_balance:.2f}")
+    
+    agent.save_model()
