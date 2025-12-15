@@ -27,6 +27,7 @@ scripts = [
     "scripts/ppo_agent.py",
     "scripts/risk_engine.py",
     "scripts/portfolio_allocator.py",
+    "scripts/main_system.py",
     "scripts/generate_pdf.py",
     "scripts/dayliMassage.py",
     #"scripts/email_reports.py",
