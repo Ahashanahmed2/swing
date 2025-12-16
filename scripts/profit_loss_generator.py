@@ -1,3 +1,4 @@
+# profit_loss_generator_v2.py
 import pandas as pd
 import os
 import numpy as np
@@ -121,11 +122,8 @@ trade_df["trade_id"] = trade_df.index
 # ✅ DSE-COMPLIANT POSITION SIZING (1 share allowed, no artificial cap)
 # ---------------------------------------------------------
 trade_df["risk_per_trade"] = TOTAL_CAPITAL * RISK_PERCENT
-trade_df["position_size"] = (trade_df["risk_per_trade"] / (trade_df["buy"] - trade_df["SL"])).astype(int)
-trade_df["position_size"] = trade_df["position_size"].clip(lower=1)  # min 1 share (DSE allows it!)
-
-# Calculate DIFF (buy - SL) and other metrics
 trade_df["DIFF"] = trade_df["buy"] - trade_df["SL"]
+trade_df["position_size"] = (trade_df["risk_per_trade"] / trade_df["DIFF"]).astype(int).clip(lower=1)
 trade_df["exposure_bdt"] = trade_df["position_size"] * trade_df["buy"]
 trade_df["actual_risk_bdt"] = trade_df["position_size"] * trade_df["DIFF"]
 
@@ -240,7 +238,7 @@ if results:
         "no", "symbol", "buy_date", "buy", "SL_value",
         "sell_date", "sell", "loss_pct", "profit_pct", "days_held",
         "Reference", "buy_sl_diff", "sl_pct", "atr_sl_pct", "tp", "RRR",
-        "position_size", "exposure_bdt", "DIFF"
+        "position_size", "exposure_bdt", "actual_risk_bdt"
     ])
     out["no"] = range(1, len(out) + 1)
     out = out.sort_values("buy_sl_diff", ascending=True).reset_index(drop=True)
@@ -496,11 +494,11 @@ def merge_open_trades(old_path, new_df, exited_ids):
 
     combined["DIFF"] = combined["buy"] - combined["SL"]
     combined = combined.sort_values("DIFF", ascending=True).reset_index(drop=True)
-    
+
     # আগে থেকে "no" কলাম থাকলে ড্রপ করুন
     if "no" in combined.columns:
         combined = combined.drop(columns=["no"])
-    
+
     # "no" কলাম সরাসরি অ্যাসাইন করুন
     combined["no"] = range(1, len(combined) + 1)
 
