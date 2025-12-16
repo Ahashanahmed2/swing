@@ -1,184 +1,187 @@
-# scripts/xgboost_model.py
+import os
+import sys
+import joblib
+import logging
+from pathlib import Path
+
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import accuracy_score, classification_report
 import xgboost as xgb
-import joblib
-import os
-import sys
+
+# ------------------ logging (ঐচ্ছিক) ------------------
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+log = logging.getLogger(__name__)
+
+# ------------------------------------------------------
+
 
 class XGBoostTradingModel:
     def __init__(self):
         self.model = None
         self.label_encoder = LabelEncoder()
-        self.feature_names = None
-        
-    def _get_csv_paths(self):
-        """Get correct CSV file paths based on execution context"""
-        # Get current working directory
-        current_dir = os.getcwd()
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        
-        print(f"Current directory: {current_dir}")
-        print(f"Script directory: {script_dir}")
-        
-        # Try different possible paths
-        possible_paths = [
-            os.path.join(current_dir, "csv", "mongodb.csv"),  # main.py from root
-            os.path.join(current_dir, "mongodb.csv"),          # direct execution
-            os.path.join(script_dir, "..", "csv", "mongodb.csv"),  # from scripts dir
-            os.path.join("csv", "mongodb.csv"),                # relative path
-            "./csv/mongodb.csv",                               # another relative
+        self.feature_names = [
+            "open",
+            "close",
+            "high",
+            "low",
+            "volume",
+            "rsi",
+            "macd",
+            "macd_signal",
+            "bb_upper",
+            "bb_lower",
+            "atr",
+            "returns",
+            "volatility",
+            "volume_change",
         ]
-        
-        for path in possible_paths:
-            if os.path.exists(path):
-                print(f"✅ Found mongodb.csv at: {path}")
-                mongodb_path = path
-                trade_stock_path = path.replace("mongodb.csv", "trade_stock.csv")
-                return mongodb_path, trade_stock_path
-        
-        # If not found, show error
-        print("❌ Could not find CSV files in any location")
-        print("   Checked locations:")
-        for path in possible_paths:
-            print(f"   - {path} (exists: {os.path.exists(path)})")
-        
-        raise FileNotFoundError("CSV files not found. Please ensure trade_stock.csv and mongodb.csv are in csv/ directory")
 
+    # ------------------------------------------------------------------
+    # 1. CSV খোঁজা
+    # ------------------------------------------------------------------
+    def _resolve_csv_paths(self) -> tuple[Path, Path]:
+        """স্ক্রিপ্টের অবস্থান থেকে csv/ ফোল্ডার খোঁজা"""
+        script_dir = Path(__file__).resolve().parent
+        csv_dir = script_dir / ".." / "csv"  # scripts/ থেকে csv/
+        mongodb_path = csv_dir / "mongodb.csv"
+        trade_stock_path = csv_dir / "trade_stock.csv"
+
+        if not mongodb_path.exists():
+            raise FileNotFoundError(f"mongodb.csv পাওয়া যায়নি → {mongodb_path}")
+        if not trade_stock_path.exists():
+            raise FileNotFoundError(f"trade_stock.csv পাওয়া যায়নি → {trade_stock_path}")
+
+        log.info("✅ CSV files found: %s, %s", mongodb_path, trade_stock_path)
+        return mongodb_path, trade_stock_path
+
+    # ------------------------------------------------------------------
+    # 2. লোড + প্রিপেয়ার
+    # ------------------------------------------------------------------
     def load_and_prepare_data(self):
-        """লোড এবং প্রিপেয়ার ডেটা"""
-        print("\n📊 Loading and preparing data...")
-        
-        # Get correct file paths
-        mongodb_path, trade_stock_path = self._get_csv_paths()
-        
-        # Load data
-        try:
-            market_data = pd.read_csv(mongodb_path)
-            trade_data = pd.read_csv(trade_stock_path)
-        except Exception as e:
-            print(f"❌ Error loading CSV files: {e}")
-            raise
-        
-        print(f"   Market data shape: {market_data.shape}")
-        print(f"   Trade data shape: {trade_data.shape}")
-        
-        # Quick check if data looks okay
-        print(f"   Market columns: {list(market_data.columns)[:10]}...")
-        print(f"   Trade columns: {list(trade_data.columns)}")
-        
-        # Feature engineering
-        market_data['returns'] = market_data['close'].pct_change()
-        market_data['volatility'] = market_data['returns'].rolling(window=20).std()
-        market_data['volume_change'] = market_data['volume'].pct_change()
-        
-        # Merge for labels
-        merged_data = pd.merge(market_data, trade_data[['symbol', 'date', 'buy']], 
-                              on=['symbol', 'date'], how='left')
-        
-        # Create target (1 for buy signal)
-        merged_data['target'] = (merged_data['buy'].notna()).astype(int)
-        
-        buy_signals = merged_data['target'].sum()
-        print(f"   Buy signals found: {buy_signals} out of {len(merged_data)} samples")
-        
-        # Features
-        self.feature_names = ['open', 'close', 'high', 'low', 'volume', 'rsi', 'macd', 
-                             'macd_signal', 'bb_upper', 'bb_lower', 'atr', 'returns',
-                             'volatility', 'volume_change']
-        
-        # Encode symbol
-        if 'symbol' in merged_data.columns:
-            merged_data['symbol_encoded'] = self.label_encoder.fit_transform(merged_data['symbol'])
-            self.feature_names.append('symbol_encoded')
-        
-        # Clean data
-        merged_data = merged_data.dropna(subset=self.feature_names + ['target'])
-        
-        return merged_data[self.feature_names], merged_data['target']
-    
-    def train(self, X, y, test_size=0.2):
-        """ট্রেইন মডেল"""
-        print("\n🤖 Training XGBoost model...")
-        
-        if len(X) < 20:
-            print(f"⚠️ Only {len(X)} samples. Skipping training.")
-            return 0.0
-        
-        # Split data
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=42
+        log.info("📊 Loading & preparing data ...")
+        mongodb_path, trade_stock_path = self._resolve_csv_paths()
+
+        market_df = pd.read_csv(mongodb_path)
+        trade_df = pd.read_csv(trade_stock_path)
+
+        log.info("Market data shape: %s", market_df.shape)
+        log.info("Trade data shape: %s", trade_df.shape)
+
+        # --- ফিচার ইঞ্জিনিয়ারিং ---
+        market_df["returns"] = market_df["close"].pct_change()
+        market_df["volatility"] = market_df["returns"].rolling(20).std()
+        market_df["volume_change"] = market_df["volume"].pct_change()
+
+        # --- মার্জ ---
+        required_on = ["symbol", "date"]
+        for col in required_on:
+            if col not in market_df.columns:
+                raise KeyError(f"'{col}' কলাম মার্কেট ডেটায় নেই")
+            if col not in trade_df.columns:
+                raise KeyError(f"'{col}' কলাম ট্রেড ডেটায় নেই")
+
+        trade_small = trade_df[required_on + ["buy"]].drop_duplicates()
+        merged = pd.merge(
+            market_df, trade_small, on=required_on, how="left"
         )
-        
-        # Train model
+        merged["target"] = merged["buy"].notna().astype(int)
+        log.info("Buy signals: %d / %d", merged["target"].sum(), len(merged))
+
+        # --- সিম্বল এনকোড ---
+        if "symbol" in merged.columns:
+            merged["symbol_encoded"] = self.label_encoder.fit_transform(
+                merged["symbol"]
+            )
+            # ফিচার লিস্টে যোগ
+            if "symbol_encoded" not in self.feature_names:
+                self.feature_names.append("symbol_encoded")
+
+        # --- ক্লিন ---
+        merged = merged.dropna(subset=self.feature_names + ["target"])
+        log.info("Final samples: %d", len(merged))
+
+        return merged[self.feature_names], merged["target"]
+
+    # ------------------------------------------------------------------
+    # 3. ট্রেন
+    # ------------------------------------------------------------------
+    def train(self, X: pd.DataFrame, y: pd.Series, test_size: float = 0.2) -> float:
+        if len(X) < 20:
+            log.warning("Too few samples (%d) – skipping train", len(X))
+            return 0.0
+
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=42, stratify=y
+        )
+
         self.model = xgb.XGBClassifier(
             n_estimators=50,
             max_depth=3,
             learning_rate=0.1,
             random_state=42,
             use_label_encoder=False,
-            eval_metric='logloss'
+            eval_metric="logloss",
         )
-        
         self.model.fit(X_train, y_train)
-        
-        # Evaluate
-        y_pred = self.model.predict(X_test)
-        accuracy = accuracy_score(y_test, y_pred)
-        
-        print(f"\n📈 Model Accuracy: {accuracy:.4f}")
-        print(classification_report(y_test, y_pred, zero_division=0))
-        
-        return accuracy
-    
-    def save_model(self):
-        """সেভ মডেল"""
-        if self.model is None:
-            print("⚠️ No model to save")
-            return
-        
-        # Save to csv/models directory
-        models_dir = os.path.join("csv", "models")
-        os.makedirs(models_dir, exist_ok=True)
-        
-        model_path = os.path.join(models_dir, "xgboost_model.pkl")
-        joblib.dump({
-            'model': self.model,
-            'label_encoder': self.label_encoder,
-            'feature_names': self.feature_names
-        }, model_path)
-        
-        print(f"✅ Model saved to {model_path}")
 
+        y_pred = self.model.predict(X_test)
+        acc = accuracy_score(y_test, y_pred)
+        log.info("📈 Accuracy: %.4f", acc)
+        print(classification_report(y_test, y_pred, zero_division=0))
+        return acc
+
+    # ------------------------------------------------------------------
+    # 4. সেভ
+    # ------------------------------------------------------------------
+    def save_model(self):
+        if self.model is None:
+            log.warning("No model to save")
+            return
+
+        script_dir = Path(__file__).resolve().parent
+        models_dir = script_dir / ".." / "csv" / "models"
+        models_dir.mkdir(exist_ok=True)
+
+        save_path = models_dir / "xgboost_model.pkl"
+        joblib.dump(
+            {
+                "model": self.model,
+                "label_encoder": self.label_encoder,
+                "feature_names": self.feature_names,
+            },
+            save_path,
+        )
+        log.info("✅ Model saved → %s", save_path)
+
+
+# ----------------------------------------------------------------------
+# মেইন
+# ----------------------------------------------------------------------
 def main():
-    """মেইন এক্সিকিউশন ফাংশন - main.py থেকে কল হলে"""
+    print("=" * 60)
+    print("XGBoost Trading Model – Training")
+    print("=" * 60)
+
     try:
-        print("=" * 60)
-        print("XGBOOST MODEL - Starting training...")
-        print("=" * 60)
-        
         model = XGBoostTradingModel()
         X, y = model.load_and_prepare_data()
-        
-        if len(X) > 0:
-            accuracy = model.train(X, y)
-            if accuracy > 0:
+
+        if len(X):
+            acc = model.train(X, y)
+            if acc > 0:
                 model.save_model()
-                print(f"\n✅ Training completed! Accuracy: {accuracy:.4f}")
+                print(f"\n✅ Training complete – Accuracy: {acc:.4f}")
             else:
-                print("\n⚠️ Training skipped - not enough data or poor accuracy")
+                print("\n⚠️ Training skipped (insufficient data or poor accuracy)")
         else:
-            print("\n❌ No data available for training")
-        
-    except FileNotFoundError as e:
-        print(f"\n❌ File error: {e}")
+            print("\n❌ No data to train")
     except Exception as e:
-        print(f"\n❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
+        log.exception("❌ Fatal error: %s", e)
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
