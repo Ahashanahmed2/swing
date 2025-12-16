@@ -469,6 +469,7 @@ def merge_open_trades(old_path, new_df, exited_ids):
                 assert col in old_df.columns or col in ["tp", "RRR"], f"Missing in old: {col}"
             old_df["symbol"] = old_df["symbol"].str.upper().str.strip()
             old_df["date"] = pd.to_datetime(old_df["date"]).dt.date
+            # "no" কলাম থাকলে ড্রপ করুন
             if "no" in old_df.columns:
                 old_df = old_df.drop(columns=["no"])
         except Exception as e:
@@ -495,7 +496,13 @@ def merge_open_trades(old_path, new_df, exited_ids):
 
     combined["DIFF"] = combined["buy"] - combined["SL"]
     combined = combined.sort_values("DIFF", ascending=True).reset_index(drop=True)
-    combined.insert(0, "no", range(1, len(combined) + 1))
+    
+    # আগে থেকে "no" কলাম থাকলে ড্রপ করুন
+    if "no" in combined.columns:
+        combined = combined.drop(columns=["no"])
+    
+    # "no" কলাম সরাসরি অ্যাসাইন করুন
+    combined["no"] = range(1, len(combined) + 1)
 
     # Ensure all columns exist
     for col in ["tp", "RRR"]:
@@ -506,13 +513,13 @@ def merge_open_trades(old_path, new_df, exited_ids):
         "no", "date", "symbol", "buy", "SL", "tp", "RRR", "DIFF",
         "position_size", "exposure_bdt", "actual_risk_bdt", "Reference"
     ]
-    
+
     # Add missing columns with NaN values
     for col in col_order:
         if col not in combined.columns:
             combined[col] = np.nan
-    
-    return combined.reindex(columns=col_order)
+
+    return combined[col_order]
 
 
 final_trades = merge_open_trades(trade_stock_path, trade_df, remove_trade_ids)
