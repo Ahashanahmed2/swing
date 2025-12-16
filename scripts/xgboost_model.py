@@ -1,3 +1,4 @@
+# src/xgboost_model_v2.py  (strategy-aware)
 import os
 import sys
 import joblib
@@ -11,102 +12,95 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import accuracy_score, classification_report
 import xgboost as xgb
 
-# ------------------ logging (ঐচ্ছিক) ------------------
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger(__name__)
 
 # ------------------------------------------------------
+# Config fallback
+# ------------------------------------------------------
+try:
+    from config import MAX_POSITION_SIZE, MAX_PORTFOLIO_RISK, STOP_LOSS_PCT
+except ImportError:
+    MAX_POSITION_SIZE = 0.02
+    MAX_PORTFOLIO_RISK = 0.01
+    STOP_LOSS_PCT = 0.02
 
 
+# ==============================================================================
+# XGBoost Model (strategy-aware)
+# ==============================================================================
 class XGBoostTradingModel:
     def __init__(self):
         self.model = None
         self.label_encoder = LabelEncoder()
         self.feature_names = [
-            "open",
-            "close",
-            "high",
-            "low",
-            "volume",
-            "rsi",
-            "macd",
-            "macd_signal",
-            "bb_upper",
-            "bb_lower",
-            "atr",
-            "returns",
-            "volatility",
-            "volume_change",
+            "open", "close", "high", "low", "volume", "rsi", "macd",
+            "macd_signal", "bb_upper", "bb_lower", "atr", "returns",
+            "volatility", "volume_change", "symbol_encoded",
+            "RRR", "SL_pct", "TP_pct"  # <-- NEW strategy features
         ]
 
     # ------------------------------------------------------------------
-    # 1. CSV খোঁজা
+    # 1. Resolve CSV paths
     # ------------------------------------------------------------------
     def _resolve_csv_paths(self) -> tuple[Path, Path]:
-        """স্ক্রিপ্টের অবস্থান থেকে csv/ ফোল্ডার খোঁজা"""
         script_dir = Path(__file__).resolve().parent
-        csv_dir = script_dir / ".." / "csv"  # scripts/ থেকে csv/
+        csv_dir = script_dir / ".." / "csv"
         mongodb_path = csv_dir / "mongodb.csv"
         trade_stock_path = csv_dir / "trade_stock.csv"
 
         if not mongodb_path.exists():
-            raise FileNotFoundError(f"mongodb.csv পাওয়া যায়নি → {mongodb_path}")
+            raise FileNotFoundError(f"mongodb.csv not found → {mongodb_path}")
         if not trade_stock_path.exists():
-            raise FileNotFoundError(f"trade_stock.csv পাওয়া যায়নি → {trade_stock_path}")
+            raise FileNotFoundError(f"trade_stock.csv not found → {trade_stock_path}")
 
         log.info("✅ CSV files found: %s, %s", mongodb_path, trade_stock_path)
         return mongodb_path, trade_stock_path
 
     # ------------------------------------------------------------------
-    # 2. লোড + প্রিপেয়ার
+    # 2. Load + prepare (with strategy features)
     # ------------------------------------------------------------------
     def load_and_prepare_data(self):
-        log.info("📊 Loading & preparing data ...")
+        log.info("📊 Loading & preparing data (strategy-aware)...")
         mongodb_path, trade_stock_path = self._resolve_csv_paths()
 
-        market_df = pd.read_csv(mongodb_path)
-        trade_df = pd.read_csv(trade_stock_path)
+        market_df = pd.read_csv(mongodb_path, parse_dates=["date"])
+        trade_df = pd.read_csv(trade_stock_path, parse_dates=["date"])
 
         log.info("Market data shape: %s", market_df.shape)
         log.info("Trade data shape: %s", trade_df.shape)
 
-        # --- ফিচার ইঞ্জিনিয়ারিং ---
+        # --- Feature engineering (market) ---
         market_df["returns"] = market_df["close"].pct_change()
         market_df["volatility"] = market_df["returns"].rolling(20).std()
         market_df["volume_change"] = market_df["volume"].pct_change()
 
-        # --- মার্জ ---
-        required_on = ["symbol", "date"]
-        for col in required_on:
-            if col not in market_df.columns:
-                raise KeyError(f"'{col}' কলাম মার্কেট ডেটায় নেই")
-            if col not in trade_df.columns:
-                raise KeyError(f"'{col}' কলাম ট্রেড ডেটায় নেই")
+        # --- Strategy features ---
+        trade_feats = trade_df[["symbol", "date", "buy", "SL", "tp", "RRR"]].copy()
+        trade_feats["SL_pct"] = (trade_feats["SL"] - trade_feats["buy"]) / trade_feats["buy"]
+        trade_feats["TP_pct"] = (trade_feats["tp"] - trade_feats["buy"]) / trade_feats["buy"]
+        trade_feats = trade_feats[["symbol", "date", "RRR", "SL_pct", "TP_pct"]]
 
-        trade_small = trade_df[required_on + ["buy"]].drop_duplicates()
-        merged = pd.merge(
-            market_df, trade_small, on=required_on, how="left"
-        )
+        # --- Merge ---
+        merged = pd.merge(market_df, trade_feats, on=["symbol", "date"], how="left")
+        merged["RRR"] = merged["RRR"].fillna(0.0)
+        merged["SL_pct"] = merged["SL_pct"].fillna(0.0)
+        merged["TP_pct"] = merged["TP_pct"].fillna(0.0)
+
+        # --- Label (buy signal) ---
         merged["target"] = merged["buy"].notna().astype(int)
         log.info("Buy signals: %d / %d", merged["target"].sum(), len(merged))
 
-        # --- সিম্বল এনকোড ---
+        # --- Symbol encoding ---
         if "symbol" in merged.columns:
-            merged["symbol_encoded"] = self.label_encoder.fit_transform(
-                merged["symbol"]
-            )
-            # ফিচার লিস্টে যোগ
-            if "symbol_encoded" not in self.feature_names:
-                self.feature_names.append("symbol_encoded")
-
-        # --- ক্লিন ---
+            merged["symbol_encoded"] = self.label_encoder.fit_transform(merged["symbol"])
+        # --- Drop NA ---
         merged = merged.dropna(subset=self.feature_names + ["target"])
         log.info("Final samples: %d", len(merged))
-
         return merged[self.feature_names], merged["target"]
 
     # ------------------------------------------------------------------
-    # 3. ট্রেন
+    # 3. Train
     # ------------------------------------------------------------------
     def train(self, X: pd.DataFrame, y: pd.Series, test_size: float = 0.2) -> float:
         if len(X) < 20:
@@ -134,7 +128,7 @@ class XGBoostTradingModel:
         return acc
 
     # ------------------------------------------------------------------
-    # 4. সেভ
+    # 4. Save
     # ------------------------------------------------------------------
     def save_model(self):
         if self.model is None:
@@ -145,7 +139,7 @@ class XGBoostTradingModel:
         models_dir = script_dir / ".." / "csv" / "models"
         models_dir.mkdir(exist_ok=True)
 
-        save_path = models_dir / "xgboost_model.pkl"
+        save_path = models_dir / "xgboost_strategy_model.pkl"
         joblib.dump(
             {
                 "model": self.model,
@@ -154,15 +148,15 @@ class XGBoostTradingModel:
             },
             save_path,
         )
-        log.info("✅ Model saved → %s", save_path)
+        log.info("✅ Strategy-aware model saved → %s", save_path)
 
 
 # ----------------------------------------------------------------------
-# মেইন
+# Main
 # ----------------------------------------------------------------------
 def main():
     print("=" * 60)
-    print("XGBoost Trading Model – Training")
+    print("XGBoost Trading Model – Strategy-Aware Training")
     print("=" * 60)
 
     try:
