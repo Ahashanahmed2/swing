@@ -1,4 +1,4 @@
-# src/ppo_agent_with_signal.py
+# src/ppo_agent_with_signal_xgb_hybrid.py
 import os
 import sys
 import random
@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Categorical
+import joblib  # <-- XGBoost load
 
 # --------------- path resolver ---------------
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -18,7 +19,8 @@ CSV_MARKET = BASE_DIR / "csv" / "mongodb.csv"
 CSV_SIGNAL = BASE_DIR / "csv" / "trade_stock.csv"
 MODEL_DIR = BASE_DIR / "csv" / "model"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
-MODEL_PATH = MODEL_DIR / "ppo_signal_model.pt"
+PPO_MODEL_PATH = MODEL_DIR / "ppo_signal_model.pt"
+XGB_MODEL_PATH = MODEL_DIR / "xgboost_strategy_model.pkl"  # <-- hybrid
 
 sys.path.insert(0, str(BASE_DIR))
 
@@ -30,11 +32,6 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # 1. Load trade signals (new format)
 # ------------------------------------------------------------------------------
 def load_signals(csv_path: Path) -> dict:
-    """
-    Returns: {(symbol, date): {"buy":float, "SL":float, "TP":float,
-                               "position_size":int, "exposure_bdt":float,
-                               "actual_risk_bdt":float, "diff":float, "RRR":float}}
-    """
     df = pd.read_csv(csv_path, parse_dates=["date"])
     df["date"] = df["date"].dt.strftime("%Y-%m-%d")
     required = ["No", "date", "symbol", "buy", "SL", "tp",
@@ -60,7 +57,6 @@ def load_signals(csv_path: Path) -> dict:
 # 2. Build observation: 110 price + 4 signal = 114
 # ------------------------------------------------------------------------------
 def build_observation(df_market, idx, window, state_dim, signals_dict):
-    # 110 price features
     cols = ["open", "close", "high", "low", "volume", "rsi", "macd", "macd_signal",
             "bb_upper", "bb_middle", "bb_lower"]
     pad_needed = max(0, window - (idx + 1))
@@ -69,7 +65,6 @@ def build_observation(df_market, idx, window, state_dim, signals_dict):
     seg = np.pad(seg, ((pad_needed, 0), (0, 0)), "edge").flatten()
     price_vec = seg[:110]
 
-    # 4 signal features
     row = df_market.iloc[idx]
     sym, date = row["symbol"], row["date"]
     sig = signals_dict.get((sym, date))
@@ -80,9 +75,9 @@ def build_observation(df_market, idx, window, state_dim, signals_dict):
         tp_p = sig["TP"]
         rrr = sig["RRR"]
         feat = np.array([
-            close / (buy_p or 1e-8),  # normalized price
-            (buy_p - sl_p) / (buy_p or 1e-8),  # SL %
-            (tp_p - buy_p) / (buy_p or 1e-8),  # TP %
+            close / (buy_p or 1e-8),
+            (buy_p - sl_p) / (buy_p or 1e-8),
+            (tp_p - buy_p) / (buy_p or 1e-8),
             rrr,
         ])
     else:
@@ -92,8 +87,9 @@ def build_observation(df_market, idx, window, state_dim, signals_dict):
     obs = np.nan_to_num(obs, nan=0.0, posinf=0.0, neginf=0.0)
     return obs
 
+
 # ------------------------------------------------------------------------------
-# 3. PPO Agent
+# 3. PPO Agent (Hybrid with XGBoost)
 # ------------------------------------------------------------------------------
 class PPOTradingAgent:
     def __init__(self, state_dim=114, action_dim=3, lr=1e-4):
@@ -112,6 +108,12 @@ class PPOTradingAgent:
         self.memory = []
         self.trade_log = []
 
+        # ---------- XGBoost model ----------
+        if not XGB_MODEL_PATH.exists():
+            raise FileNotFoundError(f"XGBoost model not found at {XGB_MODEL_PATH}")
+        self.xgb_model = joblib.load(XGB_MODEL_PATH)
+        log.info("✅ XGBoost hybrid model loaded → %s", XGB_MODEL_PATH)
+
     def _make_net(self, out_size, softmax):
         layers = [nn.Linear(self.state_dim, 128), nn.ReLU(),
                   nn.Linear(128, 128), nn.ReLU(),
@@ -120,11 +122,25 @@ class PPOTradingAgent:
             layers.append(nn.Softmax(dim=-1))
         return nn.Sequential(*layers)
 
+    # ---------- XGBoost probability ----------
     @torch.no_grad()
-    def select_action(self, obs):
+    def xgb_prob_buy(self, obs: np.ndarray) -> float:
+        obs_xgb = obs[:114].reshape(1, -1)
+        prob = self.xgb_model.predict_proba(obs_xgb)[0, 1]
+        return float(prob)
+
+    # ---------- action with mask ----------
+    @torch.no_grad()
+    def select_action(self, obs: np.ndarray):
         obs = torch.tensor(obs, dtype=torch.float32, device=device)
         if torch.isnan(obs).any() or torch.isinf(obs).any():
             return random.randint(0, self.action_dim - 1), 0.0, 0.0
+
+        # XGBoost filter
+        prob_buy = self.xgb_prob_buy(obs.cpu().numpy())
+        if prob_buy < 0.5:  # confidence threshold
+            return 0, 0.0, 0.0  # force HOLD
+
         probs = self.policy(obs)
         if torch.isnan(probs).any() or torch.isinf(probs).any():
             probs = torch.ones(self.action_dim, device=device) / self.action_dim
@@ -154,7 +170,7 @@ class PPOTradingAgent:
                     entry_price = price
                     position = shares
                     balance -= shares * entry_price
-                    # লগিং
+                    # logging
                     self.trade_log.append({
                         "No": len(self.trade_log) + 1,
                         "date": date,
@@ -246,8 +262,8 @@ class PPOTradingAgent:
     def save_model(self):
         torch.save({"policy": self.policy.state_dict(),
                     "value": self.value.state_dict(),
-                    "optimizer": self.optimizer.state_dict()}, MODEL_PATH)
-        log.info("Model saved → %s", MODEL_PATH)
+                    "optimizer": self.optimizer.state_dict()}, PPO_MODEL_PATH)
+        log.info("Hybrid model saved → %s", PPO_MODEL_PATH)
 
 
 # ==============================================================================
@@ -258,6 +274,8 @@ if __name__ == "__main__":
         raise FileNotFoundError(CSV_MARKET)
     if not CSV_SIGNAL.exists():
         raise FileNotFoundError(CSV_SIGNAL)
+    if not XGB_MODEL_PATH.exists():
+        raise FileNotFoundError(XGB_MODEL_PATH)
 
     # --- OPTIONAL: last 90 days filter ---
     df_market = pd.read_csv(CSV_MARKET, parse_dates=["date"])
