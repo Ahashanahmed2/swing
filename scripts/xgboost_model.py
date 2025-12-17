@@ -1,475 +1,280 @@
-# scripts/xgboost_model.py
+# xgboost_model.py - সম্পূর্ণ আপডেটেড ভার্সন
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.metrics import accuracy_score, classification_report, f1_score, precision_score, recall_score, roc_auc_score, confusion_matrix
 import xgboost as xgb
-import joblib
-import os
-import sys
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, f1_score, classification_report
+from imblearn.over_sampling import SMOTE
+from collections import Counter
 import warnings
 warnings.filterwarnings('ignore')
 
 class XGBoostTradingModel:
-    def __init__(self):
+    def __init__(self, n_estimators=1000, max_depth=5, learning_rate=0.01):
         self.model = None
-        self.label_encoder = LabelEncoder()
-        self.feature_names = []
         self.scaler = StandardScaler()
+        self.feature_importance = None
+        self.params = {
+            'n_estimators': n_estimators,
+            'max_depth': max_depth,
+            'learning_rate': learning_rate,
+            'subsample': 0.8,
+            'colsample_bytree': 0.8,
+            'random_state': 42,
+            'early_stopping_rounds': 50,  # ✅ এখানে সরিয়ে আনা হয়েছে
+            'eval_metric': 'mlogloss'  # মাল্টি-ক্লাসের জন্য উপযুক্ত
+        }
         
-    def load_and_prepare_data(self):
-        """লোড এবং প্রিপেয়ার ডেটা - ALL FEATURES FROM mongodb.csv"""
-        print("\n📊 Loading and preparing data...")
+    def prepare_data(self, market_data, trade_data):
+        """
+        মার্কেট এবং ট্রেড ডাটা প্রিপেয়ার করে
+        """
+        print("📊 লোডিং এবং ডাটা প্রিপেয়ার করা হচ্ছে...")
+        print(f"   মার্কেট ডাটা আকার: {market_data.shape}")
+        print(f"   ট্রেড ডাটা আকার: {trade_data.shape}")
         
-        try:
-            market_data = pd.read_csv("csv/mongodb.csv")
-            trade_data = pd.read_csv("csv/trade_stock.csv")
-        except Exception as e:
-            print(f"❌ Error loading CSV files: {e}")
-            raise
+        # 1. ফিচার তৈরি
+        market_data['returns'] = market_data['close'].pct_change()
+        market_data['volatility'] = market_data['returns'].rolling(5).std()
+        market_data['volume_ma'] = market_data['volume'].rolling(5).mean()
         
-        print(f"   Market data shape: {market_data.shape}")
-        print(f"   Trade data shape: {trade_data.shape}")
+        # 2. ডাটা মার্জ
+        merged_data = pd.merge(market_data, trade_data, 
+                              on=['symbol', 'date'], 
+                              how='left')
         
-        # Show available columns
-        print(f"\n   Available market columns ({len(market_data.columns)}):")
-        for col in market_data.columns:
-            print(f"     - {col}")
+        # 3. টার্গেট ভ্যারিয়েবল তৈরি
+        merged_data['signal'] = merged_data['buy'].notna().astype(int)
+        merged_data['signal_type'] = 0  # ডিফল্ট: নো সিগন্যাল
         
-        # 1. ADVANCED FEATURE ENGINEERING USING ALL COLUMNS
-        print("\n   Creating advanced features from all available columns...")
+        # ক্লাস 1: রেগুলার বাই সিগন্যাল
+        buy_mask = merged_data['buy'].notna()
+        merged_data.loc[buy_mask, 'signal_type'] = 1
         
-        # Group by symbol for time-series operations
-        market_data = market_data.sort_values(['symbol', 'date'])
+        # ক্লাস 2: স্ট্রং বাই সিগন্যাল (যদি RRR1 > 2.0)
+        strong_buy_mask = buy_mask & (merged_data['RRR1'] > 2.0)
+        merged_data.loc[strong_buy_mask, 'signal_type'] = 2
         
-        # A. PRICE ACTION FEATURES
-        market_data['returns'] = market_data.groupby('symbol')['close'].pct_change()
-        market_data['returns_5'] = market_data.groupby('symbol')['close'].pct_change(5)
-        market_data['returns_10'] = market_data.groupby('symbol')['close'].pct_change(10)
+        print(f"   বাই সিগন্যাল পাওয়া গেছে: {merged_data['signal'].sum()} out of {len(merged_data)} samples ({merged_data['signal'].sum()/len(merged_data)*100:.2f}%)")
+        print(f"   টার্গেট ডিস্ট্রিবিউশন: {dict(Counter(merged_data['signal_type']))}")
         
-        market_data['high_low_range'] = (market_data['high'] - market_data['low']) / market_data['close']
-        market_data['close_to_open'] = (market_data['close'] - market_data['open']) / market_data['open']
-        market_data['body_size'] = abs(market_data['close'] - market_data['open']) / (market_data['high'] - market_data['low'] + 1e-8)
+        # 4. ফিচার সিলেকশন
+        features = [
+            'open', 'high', 'low', 'close', 'volume',
+            'returns', 'volatility', 'volume_ma',
+            'marketCap', 'rsi', 'macd', 'macd_hist',
+            'atr', 'Hammer', 'BullishEngulfing', 
+            'MorningStar', 'Doji', 'diff'
+        ]
         
-        # B. VOLUME ANALYSIS FEATURES
-        market_data['volume_change'] = market_data.groupby('symbol')['volume'].pct_change()
-        market_data['volume_ma_5'] = market_data.groupby('symbol')['volume'].rolling(5).mean().reset_index(level=0, drop=True)
-        market_data['volume_ma_20'] = market_data.groupby('symbol')['volume'].rolling(20).mean().reset_index(level=0, drop=True)
-        market_data['volume_ratio_5'] = market_data['volume'] / market_data['volume_ma_5']
-        market_data['volume_ratio_20'] = market_data['volume'] / market_data['volume_ma_20']
+        # শুধু সেই ফিচারগুলো নিন যেগুলো আছে
+        available_features = [f for f in features if f in merged_data.columns]
+        print(f"   ব্যবহার করা হচ্ছে {len(available_features)} টি ফিচার")
         
-        # Value-based volume features
-        market_data['value_per_trade'] = market_data['value'] / (market_data['trades'] + 1)
-        market_data['avg_trade_size'] = market_data['volume'] / (market_data['trades'] + 1)
+        # 5. NaN ভ্যালু হ্যান্ডলিং
+        original_len = len(merged_data)
+        merged_data = merged_data.dropna(subset=available_features + ['signal_type'])
+        dropped_rows = original_len - len(merged_data)
+        print(f"   NaN ভ্যালু সহ {dropped_rows} টি সারি ড্রপ করা হয়েছে")
+        print(f"   ফাইনাল ডাটা আকার: {merged_data.shape}")
         
-        # C. MOVING AVERAGES
-        for window in [5, 10, 20, 50]:
-            market_data[f'ma_{window}'] = market_data.groupby('symbol')['close'].rolling(window).mean().reset_index(level=0, drop=True)
-            market_data[f'ma_{window}_ratio'] = market_data['close'] / market_data[f'ma_{window}']
-        
-        # D. BOLLINGER BANDS FEATURES (you have bb_upper, bb_middle, bb_lower)
-        market_data['bb_width'] = (market_data['bb_upper'] - market_data['bb_lower']) / market_data['bb_middle']
-        market_data['bb_position'] = (market_data['close'] - market_data['bb_lower']) / (market_data['bb_upper'] - market_data['bb_lower'])
-        market_data['near_bb_upper'] = (market_data['close'] > market_data['bb_upper'] * 0.95).astype(int)
-        market_data['near_bb_lower'] = (market_data['close'] < market_data['bb_lower'] * 1.05).astype(int)
-        market_data['bb_squeeze'] = (market_data['bb_width'] < market_data['bb_width'].rolling(20).mean()).astype(int)
-        
-        # E. MACD FEATURES (you have macd, macd_signal, macd_hist)
-        market_data['macd_diff'] = market_data['macd'] - market_data['macd_signal']
-        market_data['macd_cross'] = ((market_data['macd'] > market_data['macd_signal']) & 
-                                    (market_data.groupby('symbol')['macd'].shift(1) <= 
-                                     market_data.groupby('symbol')['macd_signal'].shift(1))).astype(int)
-        market_data['macd_trend'] = market_data['macd'].diff()
-        market_data['macd_hist_change'] = market_data['macd_hist'].diff()
-        
-        # F. RSI FEATURES
-        market_data['rsi_level'] = pd.cut(market_data['rsi'], 
-                                         bins=[0, 30, 40, 60, 70, 100],
-                                         labels=['oversold', 'weak_oversold', 'neutral', 'weak_overbought', 'overbought'])
-        
-        # One-hot encode RSI levels
-        rsi_dummies = pd.get_dummies(market_data['rsi_level'], prefix='rsi')
-        market_data = pd.concat([market_data, rsi_dummies], axis=1)
-        
-        # G. CANDLESTICK PATTERNS (you have Hammer, BullishEngulfing, etc.)
-        candlestick_cols = ['Hammer', 'BullishEngulfing', 'MorningStar', 'Doji', 
-                           'PiercingLine', 'ThreeWhiteSoldiers']
-        
-        # Count bullish patterns
-        market_data['bullish_patterns'] = market_data[candlestick_cols].sum(axis=1)
-        market_data['any_bullish_pattern'] = (market_data['bullish_patterns'] > 0).astype(int)
-        
-        # H. ATR FEATURES
-        market_data['atr_pct'] = market_data['atr'] / market_data['close'] * 100
-        market_data['atr_ratio'] = market_data['atr'] / market_data['atr'].rolling(20).mean()
-        market_data['high_low_atr'] = (market_data['high'] - market_data['low']) / market_data['atr']
-        
-        # I. MARKET CAP FEATURES
-        market_data['marketCap_log'] = np.log1p(market_data['marketCap'])
-        market_data['cap_category'] = pd.qcut(market_data['marketCap'], 4, labels=['small', 'mid', 'large', 'xlarge'])
-        cap_dummies = pd.get_dummies(market_data['cap_category'], prefix='cap')
-        market_data = pd.concat([market_data, cap_dummies], axis=1)
-        
-        # J. ZIGZAG FEATURES
-        market_data['zigzag_change'] = market_data['zigzag'].diff()
-        market_data['zigzag_trend'] = np.where(market_data['zigzag_change'] > 0, 1, 
-                                              np.where(market_data['zigzag_change'] < 0, -1, 0))
-        
-        # K. MOMENTUM FEATURES
-        for window in [5, 10, 20]:
-            market_data[f'momentum_{window}'] = market_data['close'] - market_data.groupby('symbol')['close'].shift(window)
-            market_data[f'roc_{window}'] = market_data.groupby('symbol')['close'].pct_change(window) * 100
-        
-        # L. VOLATILITY FEATURES
-        market_data['volatility_5'] = market_data.groupby('symbol')['returns'].rolling(5).std().reset_index(level=0, drop=True)
-        market_data['volatility_20'] = market_data.groupby('symbol')['returns'].rolling(20).std().reset_index(level=0, drop=True)
-        market_data['volatility_ratio'] = market_data['volatility_5'] / market_data['volatility_20']
-        
-        # M. PRICE POSITION FEATURES
-        market_data['price_position'] = (market_data['close'] - market_data['low']) / (market_data['high'] - market_data['low'] + 1e-8)
-        market_data['gap_up'] = (market_data['open'] > market_data.groupby('symbol')['close'].shift(1)).astype(int)
-        market_data['gap_down'] = (market_data['open'] < market_data.groupby('symbol')['close'].shift(1)).astype(int)
-        
-        # Ensure date columns are in correct format
-        market_data['date'] = pd.to_datetime(market_data['date'])
-        trade_data['date'] = pd.to_datetime(trade_data['date'])
-        
-        # 2. CREATE FUTURE TARGETS (PREDICT 3 DAYS AHEAD)
-        print("   Creating future prediction targets...")
-        
-        # Shift trade signals 3 days forward
-        trade_data_future = trade_data.copy()
-        trade_data_future['date'] = trade_data_future['date'] + pd.Timedelta(days=3)
-        
-        # Merge with market data
-        merged = pd.merge(market_data, trade_data_future[['symbol', 'date', 'buy', 'RRR']], 
-                         on=['symbol', 'date'], how='left')
-        
-        # Create target variable
-        merged['target'] = merged['buy'].notna().astype(int)
-        
-        # Create multi-class target based on RRR
-        merged['target_rrr'] = 0  # default: no signal
-        merged.loc[merged['buy'].notna() & (merged['RRR'] > 1.5), 'target_rrr'] = 2  # strong buy
-        merged.loc[merged['buy'].notna() & (merged['RRR'] <= 1.5) & (merged['RRR'] > 0), 'target_rrr'] = 1  # moderate buy
-        
-        buy_signals = merged['target'].sum()
-        total_samples = len(merged)
-        print(f"   FUTURE Buy signals: {buy_signals} out of {total_samples} samples ({buy_signals/total_samples:.2%})")
-        
-        # 3. SELECT ALL AVAILABLE FEATURES
-        print("   Selecting features...")
-        
-        # Define feature categories
-        price_features = ['open', 'close', 'high', 'low', 'returns', 'returns_5', 'returns_10',
-                         'high_low_range', 'close_to_open', 'body_size', 'price_position',
-                         'gap_up', 'gap_down']
-        
-        volume_features = ['volume', 'volume_change', 'volume_ma_5', 'volume_ma_20',
-                          'volume_ratio_5', 'volume_ratio_20', 'value', 'trades',
-                          'value_per_trade', 'avg_trade_size', 'change']
-        
-        ma_features = [f'ma_{w}' for w in [5, 10, 20, 50]] + [f'ma_{w}_ratio' for w in [5, 10, 20, 50]]
-        
-        bb_features = ['bb_upper', 'bb_middle', 'bb_lower', 'bb_width', 'bb_position',
-                      'near_bb_upper', 'near_bb_lower', 'bb_squeeze']
-        
-        macd_features = ['macd', 'macd_signal', 'macd_hist', 'macd_diff', 'macd_cross',
-                        'macd_trend', 'macd_hist_change']
-        
-        rsi_features = ['rsi'] + [col for col in merged.columns if 'rsi_' in col]
-        
-        pattern_features = candlestick_cols + ['bullish_patterns', 'any_bullish_pattern']
-        
-        atr_features = ['atr', 'atr_pct', 'atr_ratio', 'high_low_atr']
-        
-        market_cap_features = ['marketCap', 'marketCap_log'] + [col for col in merged.columns if 'cap_' in col]
-        
-        zigzag_features = ['zigzag', 'zigzag_change', 'zigzag_trend']
-        
-        momentum_features = [f'momentum_{w}' for w in [5, 10, 20]] + [f'roc_{w}' for w in [5, 10, 20]]
-        
-        volatility_features = ['volatility_5', 'volatility_20', 'volatility_ratio']
-        
-        # Combine all features
-        all_features = (price_features + volume_features + ma_features + bb_features +
-                       macd_features + rsi_features + pattern_features + atr_features +
-                       market_cap_features + zigzag_features + momentum_features + volatility_features)
-        
-        # Filter to only available features
-        self.feature_names = [col for col in all_features if col in merged.columns]
-        
-        # Add symbol encoding
-        if 'symbol' in merged.columns:
-            merged['symbol_encoded'] = self.label_encoder.fit_transform(merged['symbol'])
-            self.feature_names.append('symbol_encoded')
-        
-        print(f"   Selected {len(self.feature_names)} features for modeling")
-        
-        # 4. HANDLE MISSING VALUES
-        print("   Handling missing values...")
-        before_drop = merged.shape[0]
-        
-        # Fill NaN with forward/backward fill for time-series
-        for col in self.feature_names:
-            if col != 'symbol_encoded':
-                merged[col] = merged.groupby('symbol')[col].ffill().bfill()
-        
-        # Drop remaining NaN
-        merged = merged.dropna(subset=self.feature_names + ['target'])
-        after_drop = merged.shape[0]
-        
-        print(f"   Dropped {before_drop - after_drop} rows with NaN values")
-        print(f"   Final data shape: {merged.shape}")
-        
-        # 5. DATA ANALYSIS
-        print(f"\n📊 Data Analysis:")
-        print(f"   Total samples: {len(merged)}")
-        print(f"   Buy signals: {merged['target'].sum()} ({merged['target'].mean()*100:.2f}%)")
-        print(f"   No signals: {len(merged) - merged['target'].sum()} ({(1 - merged['target'].mean())*100:.2f}%)")
-        
-        if 'target_rrr' in merged.columns:
-            rrr_counts = merged['target_rrr'].value_counts().sort_index()
-            print(f"   Signal strength distribution:")
-            for val, count in rrr_counts.items():
-                label = {0: 'No signal', 1: 'Moderate buy', 2: 'Strong buy'}.get(val, val)
-                print(f"     {label}: {count} ({count/len(merged)*100:.2f}%)")
-        
-        return merged[self.feature_names], merged['target'], merged.get('target_rrr', None)
+        return merged_data, available_features
     
-    def train_model(self, X, y, y_rrr=None):
-        """ট্রেইন XGBoost model with all features"""
-        print("\n🤖 Training XGBoost model with all available features...")
+    def train(self, market_data, trade_data):
+        """
+        XGBoost মডেল ট্রেন করে
+        """
+        # 1. ডাটা প্রিপেয়ার
+        data, features = self.prepare_data(market_data, trade_data)
         
-        if len(X) < 100:
-            print(f"   ⚠️ Only {len(X)} samples available")
-            return None
+        # 2. ফিচার এবং টার্গেট আলাদা করা
+        X = data[features]
+        y_binary = data['signal']  # বাইনারি ক্লাসিফিকেশন
+        y_multi = data['signal_type']  # মাল্টি-ক্লাস ক্লাসিফিকেশন
         
-        # Split data
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y
+        # 3. ট্রেন-টেস্ট স্প্লিট
+        X_train, X_test, y_bin_train, y_bin_test, y_multi_train, y_multi_test = train_test_split(
+            X, y_binary, y_multi, test_size=0.3, random_state=42, stratify=y_multi
         )
         
-        print(f"   Training samples: {len(X_train)}")
-        print(f"   Testing samples: {len(X_test)}")
-        print(f"   Features: {len(self.feature_names)}")
-        print(f"   Class distribution - Train: {np.bincount(y_train)}")
-        print(f"   Class distribution - Test: {np.bincount(y_test)}")
+        print(f"\n🤖 XGBoost মডেল ট্রেনিং শুরু...")
+        print(f"   ট্রেনিং স্যাম্পল: {X_train.shape[0]}")
+        print(f"   টেস্টিং স্যাম্পল: {X_test.shape[0]}")
+        print(f"   ক্লাস ডিস্ট্রিবিউশন - বাইনারি: {dict(Counter(y_bin_train))}")
+        print(f"   ক্লাস ডিস্ট্রিবিউশন - মাল্টি: {dict(Counter(y_multi_train))}")
         
-        # Calculate class weights for imbalance
-        if y_train.sum() > 0:
-            scale_pos_weight = (len(y_train) - y_train.sum()) / y_train.sum()
-            print(f"   Class weight (scale_pos_weight): {scale_pos_weight:.2f}")
-        else:
-            scale_pos_weight = 1.0
-            print("   ⚠️ No positive samples!")
-            return None
+        # 4. SMOTE অ্যাপ্লাই করা (শ্রেণী ব্যালেন্সের জন্য)
+        print("   ক্লাস ব্যালেন্সিংয়ের জন্য SMOTE অ্যাপ্লাই করা হচ্ছে...")
+        smote = SMOTE(random_state=42)
+        X_train_balanced, y_bin_train_balanced = smote.fit_resample(X_train, y_bin_train)
+        print(f"   SMOTE পরে: {dict(Counter(y_bin_train_balanced))}")
         
-        # Train XGBoost model
-        print("   Training model...")
+        # 5. ক্লাস ওয়েট ক্যালকুলেট
+        scale_pos_weight = len(y_bin_train_balanced[y_bin_train_balanced == 0]) / len(y_bin_train_balanced[y_bin_train_balanced == 1])
+        print(f"   ক্লাস ওয়েট (scale_pos_weight): {scale_pos_weight:.2f}")
+        
+        # 6. XGBoost মডেল তৈরি
+        print("   বাইনারি ক্লাসিফিকেশন মডেল ট্রেনিং...")
+        
+        # ✅ early_stopping_rounds এখন কনস্ট্রাক্টরে
         self.model = xgb.XGBClassifier(
-            n_estimators=500,
-            max_depth=8,
-            learning_rate=0.01,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            gamma=0.1,
-            reg_alpha=0.1,
-            reg_lambda=1.0,
-            random_state=42,
-            eval_metric='aucpr',
+            n_estimators=self.params['n_estimators'],
+            max_depth=self.params['max_depth'],
+            learning_rate=self.params['learning_rate'],
+            subsample=self.params['subsample'],
+            colsample_bytree=self.params['colsample_bytree'],
+            random_state=self.params['random_state'],
+            early_stopping_rounds=self.params['early_stopping_rounds'],  # ✅ এখানে
+            eval_metric=self.params['eval_metric'],
             scale_pos_weight=scale_pos_weight,
             use_label_encoder=False
         )
         
-        # Train with early stopping
+        # 7. মডেল ট্রেনিং
+        # ✅ eval_set এখন .fit() মেথডে
         self.model.fit(
-            X_train, y_train,
-            eval_set=[(X_test, y_test)],
-            early_stopping_rounds=50,
-            verbose=0
+            X_train_balanced,
+            y_bin_train_balanced,
+            eval_set=[(X_test, y_bin_test)],  # ✅ এখানে
+            verbose=False
         )
         
-        # Make predictions
+        # 8. পারফরম্যান্স ইভ্যালুয়েশন
         y_pred = self.model.predict(X_test)
-        y_pred_proba = self.model.predict_proba(X_test)[:, 1]
+        accuracy = accuracy_score(y_bin_test, y_pred)
+        f1 = f1_score(y_bin_test, y_pred)
         
-        # Calculate metrics
-        metrics = {
-            'accuracy': accuracy_score(y_test, y_pred),
-            'precision': precision_score(y_test, y_pred, zero_division=0),
-            'recall': recall_score(y_test, y_pred, zero_division=0),
-            'f1': f1_score(y_test, y_pred, zero_division=0),
-            'auc_roc': roc_auc_score(y_test, y_pred_proba) if len(np.unique(y_test)) > 1 else 0,
-            'confusion_matrix': confusion_matrix(y_test, y_pred)
-        }
+        print(f"\n✅ মডেল ট্রেনিং সম্পূর্ণ!")
+        print(f"   একুরেসি: {accuracy:.4f}")
+        print(f"   F1 স্কোর: {f1:.4f}")
+        print(f"\n📊 ক্লাসিফিকেশন রিপোর্ট:")
+        print(classification_report(y_bin_test, y_pred, target_names=['No Signal', 'Buy Signal']))
         
-        # Print results
-        print(f"\n📈 Model Performance:")
-        print(f"   Accuracy:  {metrics['accuracy']:.4f}")
-        print(f"   Precision: {metrics['precision']:.4f}")
-        print(f"   Recall:    {metrics['recall']:.4f}")
-        print(f"   F1-Score:  {metrics['f1']:.4f}")
-        print(f"   AUC-ROC:   {metrics['auc_roc']:.4f}")
+        # 9. ফিচার ইম্পরটেন্স
+        self.feature_importance = pd.DataFrame({
+            'feature': features,
+            'importance': self.model.feature_importances_
+        }).sort_values('importance', ascending=False)
         
-        print("\n📋 Classification Report:")
-        print(classification_report(y_test, y_pred, zero_division=0))
+        print(f"\n🏆 Top 5 গুরুত্বপূর্ণ ফিচার:")
+        for i, row in self.feature_importance.head().iterrows():
+            print(f"   {row['feature']}: {row['importance']:.4f}")
         
-        print("\n📊 Confusion Matrix:")
-        print(metrics['confusion_matrix'])
-        
-        # Feature importance
-        if hasattr(self.model, 'feature_importances_'):
-            importance_df = pd.DataFrame({
-                'feature': self.feature_names,
-                'importance': self.model.feature_importances_
-            }).sort_values('importance', ascending=False)
-            
-            print("\n🔝 Top 25 Most Important Features:")
-            for idx, row in importance_df.head(25).iterrows():
-                print(f"   {row['feature']}: {row['importance']:.4f}")
-            
-            # Save feature importance
-            self.save_feature_importance(importance_df)
-        
-        return metrics
+        return accuracy, f1
     
-    def save_model(self, metrics):
-        """সেভ মডেল এবং মেট্রিক্স"""
+    def predict(self, market_data, trade_data):
+        """
+        নতুন ডাটার উপর প্রেডিকশন করে
+        """
+        data, features = self.prepare_data(market_data, trade_data)
+        
         if self.model is None:
-            print("   ⚠️ No model to save")
-            return
+            raise ValueError("মডেল ট্রেন করা হয়নি। প্রথমে .train() মেথড কল করুন")
         
-        model_dir = "csv/models"
-        os.makedirs(model_dir, exist_ok=True)
+        # প্রেডিকশন
+        predictions = self.model.predict(data[features])
+        probabilities = self.model.predict_proba(data[features])
         
-        # Save model
-        model_path = os.path.join(model_dir, "xgboost_model.pkl")
-        joblib.dump({
-            'model': self.model,
-            'label_encoder': self.label_encoder,
-            'feature_names': self.feature_names,
-            'feature_importances': dict(zip(self.feature_names, self.model.feature_importances_)),
-            'metrics': metrics
-        }, model_path)
+        # রেজাল্ট ডাটাফ্রেম
+        result_df = data[['symbol', 'date', 'open', 'high', 'low', 'close', 'volume']].copy()
+        result_df['predicted_signal'] = predictions
+        result_df['signal_probability'] = probabilities[:, 1]  # ক্লাস 1-এর প্রোবাবিলিটি
         
-        print(f"\n✅ Model saved to: {model_path}")
+        # সিগন্যাল ফিল্টার (শুধু বাই সিগন্যাল)
+        buy_signals = result_df[result_df['predicted_signal'] == 1].copy()
         
-        # Save metrics report
-        metrics_path = os.path.join(model_dir, "model_metrics.txt")
-        with open(metrics_path, 'w') as f:
-            f.write("XGBoost Trading Model - Performance Metrics\n")
-            f.write("=" * 50 + "\n\n")
-            f.write(f"Accuracy:  {metrics['accuracy']:.4f}\n")
-            f.write(f"Precision: {metrics['precision']:.4f}\n")
-            f.write(f"Recall:    {metrics['recall']:.4f}\n")
-            f.write(f"F1-Score:  {metrics['f1']:.4f}\n")
-            f.write(f"AUC-ROC:   {metrics['auc_roc']:.4f}\n")
-            f.write(f"\nTotal Features: {len(self.feature_names)}\n")
-            f.write(f"Training Samples: {self.model.n_features_in_}\n")
+        # রিস্ক ম্যানেজমেন্ট প্যারামিটার যোগ
+        buy_signals['position_size'] = 100  # ডিফল্ট
+        buy_signals['stop_loss'] = buy_signals['close'] * 0.95  # 5% স্টপ লস
+        buy_signals['take_profit'] = buy_signals['close'] * 1.10  # 10% টেক প্রফিট
+        buy_signals['risk_reward_ratio'] = (buy_signals['take_profit'] - buy_signals['close']) / (buy_signals['close'] - buy_signals['stop_loss'])
         
-        print(f"✅ Metrics saved to: {metrics_path}")
+        return result_df, buy_signals
     
-    def save_feature_importance(self, importance_df):
-        """Save feature importance analysis"""
-        model_dir = "csv/models"
-        os.makedirs(model_dir, exist_ok=True)
-        
-        # Save as CSV
-        csv_path = os.path.join(model_dir, "feature_importance.csv")
-        importance_df.to_csv(csv_path, index=False)
-        
-        # Group by feature category
-        categories = {
-            'price': ['open', 'close', 'high', 'low', 'returns', 'price_position'],
-            'volume': ['volume', 'value', 'trades', 'volume_ratio'],
-            'technical': ['rsi', 'macd', 'bb_', 'atr', 'zigzag'],
-            'patterns': ['Hammer', 'BullishEngulfing', 'Doji', 'bullish_patterns'],
-            'momentum': ['momentum', 'roc', 'ma_ratio'],
-            'volatility': ['volatility', 'bb_width', 'high_low_range']
-        }
-        
-        # Calculate category importance
-        category_importance = {}
-        for category, keywords in categories.items():
-            cat_features = [f for f in importance_df['feature'] if any(k in f for k in keywords)]
-            cat_importance = importance_df[importance_df['feature'].isin(cat_features)]['importance'].sum()
-            category_importance[category] = cat_importance
-        
-        # Save category analysis
-        cat_path = os.path.join(model_dir, "feature_categories.txt")
-        with open(cat_path, 'w') as f:
-            f.write("Feature Importance by Category\n")
-            f.write("=" * 50 + "\n\n")
-            for category, importance in sorted(category_importance.items(), key=lambda x: x[1], reverse=True):
-                f.write(f"{category:15} {importance:.4f} ({importance/sum(category_importance.values())*100:.1f}%)\n")
-        
-        print(f"✅ Feature analysis saved to: {csv_path}")
+    def save_model(self, path='./models/xgboost_model.json'):
+        """
+        মডেল সেভ করে
+        """
+        import os
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        self.model.save_model(path)
+        print(f"✅ মডেল সেভ করা হয়েছে: {path}")
+    
+    def load_model(self, path='./models/xgboost_model.json'):
+        """
+        মডেল লোড করে
+        """
+        self.model = xgb.XGBClassifier()
+        self.model.load_model(path)
+        print(f"✅ মডেল লোড করা হয়েছে: {path}")
 
 def main():
-    """মেইন ফাংশন"""
+    """
+    মেইন এক্সিকিউশন ফাংশন
+    """
     print("=" * 70)
-    print("XGBOOST TRADING MODEL - USING ALL mongodb.csv FEATURES")
+    print("XGBOOST ট্রেডিং মডেল - অ্যাডভান্সড ট্রেনিং")
     print("=" * 70)
+    
+    # 1. ডাটা লোড
+    print("\n📥 ডাটা লোড করা হচ্ছে...")
     
     try:
-        # Create model
-        model = XGBoostTradingModel()
+        market_data = pd.read_csv("./csv/mongodb.csv")
+        trade_data = pd.read_csv("./csv/trade_stock.csv")
         
-        # Load and prepare data
-        print("\n📥 Loading and preparing data with ALL features...")
-        X, y, y_rrr = model.load_and_prepare_data()
+        # তারিখ কনভার্ট
+        market_data['date'] = pd.to_datetime(market_data['date'])
+        trade_data['date'] = pd.to_datetime(trade_data['date'])
         
-        if len(X) == 0:
-            print("❌ No data available for training")
-            return
+    except FileNotFoundError as e:
+        print(f"❌ ফাইল পাওয়া যায়নি: {e}")
+        return
+    except Exception as e:
+        print(f"❌ ডাটা লোড করতে সমস্যা: {e}")
+        return
+    
+    # 2. XGBoost মডেল তৈরি এবং ট্রেন
+    model = XGBoostTradingModel(
+        n_estimators=500,  # কমিয়ে আনা হয়েছে দ্রুত ট্রেনিংয়ের জন্য
+        max_depth=4,
+        learning_rate=0.05
+    )
+    
+    try:
+        accuracy, f1 = model.train(market_data, trade_data)
         
-        # Train model
-        metrics = model.train_model(X, y, y_rrr)
+        # 3. মডেল সেভ
+        model.save_model('./models/xgboost_trading_model.json')
         
-        if metrics and metrics['f1'] > 0.1:  # Minimum F1 threshold
-            model.save_model(metrics)
-            
-            print(f"\n" + "=" * 70)
-            print("✅ MODEL TRAINING SUCCESSFUL!")
-            print("=" * 70)
-            print(f"\n📊 Key Insights:")
-            print(f"   • Model uses {len(model.feature_names)} features from mongodb.csv")
-            print(f"   • Best metric: F1-Score = {metrics['f1']:.4f}")
-            print(f"   • Recall: {metrics['recall']:.4f} (can detect buy signals)")
-            print(f"   • Check 'csv/models/' folder for detailed analysis")
-            print("=" * 70)
-            
-            # Generate sample predictions
-            print("\n🎯 Sample Predictions (first 10 test samples):")
-            sample_indices = np.random.choice(len(X), min(10, len(X)), replace=False)
-            sample_X = X.iloc[sample_indices]
-            
-            if hasattr(model.model, 'predict_proba'):
-                probabilities = model.model.predict_proba(sample_X)[:, 1]
-                predictions = (probabilities > 0.3).astype(int)
-                
-                sample_results = pd.DataFrame({
-                    'Probability': probabilities,
-                    'Prediction': predictions,
-                    'Actual': y.iloc[sample_indices].values if len(y) > max(sample_indices) else [0]*len(sample_indices)
-                })
-                print(sample_results.to_string(index=False))
-        else:
-            print(f"\n⚠️ Model performance insufficient (F1={metrics['f1']:.4f} if available)")
-            print("   Consider:")
-            print("   1. Getting more trade data")
-            print("   2. Adjusting the prediction horizon")
-            print("   3. Feature selection/engineering")
+        # 4. প্রেডিকশন তৈরি
+        print("\n🔮 নতুন প্রেডিকশন তৈরি করা হচ্ছে...")
+        all_predictions, buy_signals = model.predict(market_data, trade_data)
+        
+        # 5. রেজাল্ট সেভ
+        buy_signals.to_csv("./csv/xgboost_predictions.csv", index=False)
+        print(f"✅ {len(buy_signals)} টি বাই সিগন্যাল CSV তে সেভ করা হয়েছে: ./csv/xgboost_predictions.csv")
+        
+        # 6. সামারি ডিসপ্লে
+        print(f"\n📈 ট্রেনিং সামারি:")
+        print(f"   • ফাইনাল একুরেসি: {accuracy:.2%}")
+        print(f"   • F1 স্কোর: {f1:.4f}")
+        print(f"   • টপ ফিচার: {model.feature_importance.iloc[0]['feature']}")
+        print(f"   • টোটাল সিগন্যাল: {len(buy_signals)}")
+        
+        if len(buy_signals) > 0:
+            print(f"\n🎯 শীর্ষ 3 ট্রেডিং সুযোগ:")
+            top_signals = buy_signals.sort_values('signal_probability', ascending=False).head(3)
+            for idx, row in top_signals.iterrows():
+                print(f"   {row['symbol']} - {row['date'].date()}")
+                print(f"     প্রাইস: {row['close']:.2f}, প্রোবাবিলিটি: {row['signal_probability']:.2%}")
+                print(f"     R/R রেশিও: {row['risk_reward_ratio']:.2f}")
         
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"❌ ট্রেনিং/প্রেডিকশনে এরর: {e}")
         import traceback
         traceback.print_exc()
-    
-    print("\n" + "=" * 70)
-    print("Script completed")
 
 if __name__ == "__main__":
     main()
