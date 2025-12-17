@@ -5,7 +5,6 @@ import xgboost as xgb
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, f1_score, classification_report
-from imblearn.over_sampling import SMOTE
 from collections import Counter
 import warnings
 warnings.filterwarnings('ignore')
