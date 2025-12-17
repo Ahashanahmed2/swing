@@ -22,8 +22,9 @@ class XGBoostTradingModel:
             'subsample': 0.8,
             'colsample_bytree': 0.8,
             'random_state': 42,
-            'early_stopping_rounds': 50,  # ✅ এখানে সরিয়ে আনা হয়েছে
-            'eval_metric': 'mlogloss'  # মাল্টি-ক্লাসের জন্য উপযুক্ত
+            'early_stopping_rounds': 50,
+            'eval_metric': 'logloss',  # ✅ বাইনারি ক্লাসিফিকেশনের জন্য
+            'objective': 'binary:logistic'  # ✅ যোগ করুন
         }
         
     def prepare_data(self, market_data, trade_data):
@@ -52,7 +53,7 @@ class XGBoostTradingModel:
         buy_mask = merged_data['buy'].notna()
         merged_data.loc[buy_mask, 'signal_type'] = 1
         
-        # ক্লাস 2: স্ট্রং বাই সিগন্যাল (যদি RRR1 > 2.0)
+        # ক্লাস 2: স্ট্রং বাই সিগন্যাল (যদি RRR > 2.0)
         strong_buy_mask = buy_mask & (merged_data['RRR'] > 2.0)
         merged_data.loc[strong_buy_mask, 'signal_type'] = 2
         
@@ -67,6 +68,10 @@ class XGBoostTradingModel:
             'atr', 'Hammer', 'BullishEngulfing', 
             'MorningStar', 'Doji', 'diff'
         ]
+        
+        # RRR ফিচার হিসেবে যোগ করুন (যদি থাকে)
+        if 'RRR' in merged_data.columns:
+            features.append('RRR')
         
         # শুধু সেই ফিচারগুলো নিন যেগুলো আছে
         available_features = [f for f in features if f in merged_data.columns]
@@ -90,12 +95,12 @@ class XGBoostTradingModel:
         
         # 2. ফিচার এবং টার্গেট আলাদা করা
         X = data[features]
-        y_binary = data['signal']  # বাইনারি ক্লাসিফিকেশন
-        y_multi = data['signal_type']  # মাল্টি-ক্লাস ক্লাসিফিকেশন
+        y_binary = data['signal']  # বাইনারি ক্লাসিফিকেশন (0, 1)
+        y_multi = data['signal_type']  # মাল্টি-ক্লাস ক্লাসিফিকেশন (0, 1, 2)
         
-        # 3. ট্রেন-টেস্ট স্প্লিট
+        # 3. ট্রেন-টেস্ট স্প্লিট (বাইনারি টার্গেট দিয়ে stratify)
         X_train, X_test, y_bin_train, y_bin_test, y_multi_train, y_multi_test = train_test_split(
-            X, y_binary, y_multi, test_size=0.3, random_state=42, stratify=y_multi
+            X, y_binary, y_multi, test_size=0.3, random_state=42, stratify=y_binary  # ✅ y_binary দিয়ে
         )
         
         print(f"\n🤖 XGBoost মডেল ট্রেনিং শুরু...")
@@ -104,17 +109,17 @@ class XGBoostTradingModel:
         print(f"   ক্লাস ডিস্ট্রিবিউশন - বাইনারি: {dict(Counter(y_bin_train))}")
         print(f"   ক্লাস ডিস্ট্রিবিউশন - মাল্টি: {dict(Counter(y_multi_train))}")
         
-        # 4. SMOTE অ্যাপ্লাই করা (শ্রেণী ব্যালেন্সের জন্য)
+        # 4. SMOTE অ্যাপ্লাই করা (বাইনারি ক্লাসের জন্য)
         print("   ক্লাস ব্যালেন্সিংয়ের জন্য SMOTE অ্যাপ্লাই করা হচ্ছে...")
         smote = SMOTE(random_state=42)
         X_train_balanced, y_bin_train_balanced = smote.fit_resample(X_train, y_bin_train)
         print(f"   SMOTE পরে: {dict(Counter(y_bin_train_balanced))}")
         
-        # 5. ক্লাস ওয়েট ক্যালকুলেট
+        # 5. ক্লাস ওয়েট ক্যালকুলেট (বাইনারি ক্লাসিফিকেশনের জন্য)
         scale_pos_weight = len(y_bin_train_balanced[y_bin_train_balanced == 0]) / len(y_bin_train_balanced[y_bin_train_balanced == 1])
         print(f"   ক্লাস ওয়েট (scale_pos_weight): {scale_pos_weight:.2f}")
         
-        # 6. XGBoost মডেল তৈরি
+        # 6. XGBoost মডেল তৈরি (বাইনারি ক্লাসিফিকেশন)
         print("   বাইনারি ক্লাসিফিকেশন মডেল ট্রেনিং...")
         
         # ✅ early_stopping_rounds এখন কনস্ট্রাক্টরে
@@ -125,8 +130,9 @@ class XGBoostTradingModel:
             subsample=self.params['subsample'],
             colsample_bytree=self.params['colsample_bytree'],
             random_state=self.params['random_state'],
-            early_stopping_rounds=self.params['early_stopping_rounds'],  # ✅ এখানে
-            eval_metric=self.params['eval_metric'],
+            early_stopping_rounds=self.params['early_stopping_rounds'],
+            eval_metric=self.params['eval_metric'],  # ✅ এখন 'logloss'
+            objective=self.params['objective'],      # ✅ 'binary:logistic'
             scale_pos_weight=scale_pos_weight,
             use_label_encoder=False
         )
@@ -136,7 +142,7 @@ class XGBoostTradingModel:
         self.model.fit(
             X_train_balanced,
             y_bin_train_balanced,
-            eval_set=[(X_test, y_bin_test)],  # ✅ এখানে
+            eval_set=[(X_test, y_bin_test)],  # ✅ y_bin_test (0, 1 only)
             verbose=False
         )
         
