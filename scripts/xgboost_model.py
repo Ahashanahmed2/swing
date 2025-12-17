@@ -53,7 +53,7 @@ class XGBoostTradingModel:
         merged_data.loc[buy_mask, 'signal_type'] = 1
         
         # ক্লাস 2: স্ট্রং বাই সিগন্যাল (যদি RRR1 > 2.0)
-        strong_buy_mask = buy_mask & (merged_data['RRR1'] > 2.0)
+        strong_buy_mask = buy_mask & (merged_data['RRR'] > 2.0)
         merged_data.loc[strong_buy_mask, 'signal_type'] = 2
         
         print(f"   বাই সিগন্যাল পাওয়া গেছে: {merged_data['signal'].sum()} out of {len(merged_data)} samples ({merged_data['signal'].sum()/len(merged_data)*100:.2f}%)")
