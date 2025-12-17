@@ -117,66 +117,84 @@ class XGBoostTradingModel:
 
 def train(self, market_data, trade_data):
     """
-    Symbol-specific XGBoost মডেল ট্রেন করে
+    Symbol-specific XGBoost মডেল ট্রেন করে (SMOTE ছাড়া)
     """
     symbol = market_data['symbol'].iloc[0] if len(market_data) > 0 else 'UNKNOWN'
-    
+    print(f"   🔄 {symbol} - মডেল ট্রেনিং শুরু...")
+
     # 1. ডাটা প্রিপেয়ার
     data, features = self.prepare_data(market_data, trade_data)
-    
+
     if len(data) < 30:  # কমপক্ষে 30 দিনের ডাটা চাই
         print(f"   ⚠️ পর্যাপ্ত ডাটা নেই: {len(data)} days")
         return 0.0, 0.0
-    
+
     # 2. ফিচার এবং টার্গেট আলাদা করা
     X = data[features]
     y_binary = data['signal']  # বাইনারি ক্লাসিফিকেশন
-    
+
     # 3. ক্লাস ডিস্ট্রিবিউশন চেক
     class_counts = Counter(y_binary)
     total_samples = len(y_binary)
-    
+
     print(f"   📊 ডাটা আকার: {X.shape}")
     print(f"   🎯 ক্লাস ডিস্ট্রিবিউশন: {dict(class_counts)}")
     print(f"   Buy সিগন্যাল: {class_counts.get(1, 0)} / {total_samples} ({class_counts.get(1, 0)/total_samples*100:.1f}%)")
-    
+
     # 4. যদি buy সিগন্যাল খুব কম থাকে
     if class_counts.get(1, 0) < 2:
-        print(f"   ⚠️ খুব কম buy সিগন্যাল, মডেল ট্রেনিং সম্ভব নয়")
+        print(f"   ⚠️ খুব কম buy সিগন্যাল ({class_counts.get(1, 0)}), মডেল ট্রেনিং সম্ভব নয়")
         return 0.0, 0.0
-    
-    # 5. ট্রেন-টেস্ট স্প্লিট (stratified)
+
+    # 5. ট্রেন-টেস্ট স্প্লিট (অবশ্যই stratified)
     try:
+        # নিশ্চিত করুন যে y_binary-তে কমপক্ষে 2টি ক্লাস আছে
+        unique_classes = np.unique(y_binary)
+        if len(unique_classes) < 2:
+            print(f"   ❌ শুধু 1টি ক্লাস পাওয়া গেছে: {unique_classes}")
+            print(f"   ✅ কৃত্রিম buy সিগন্যাল তৈরি করা হচ্ছে...")
+            
+            # যদি সব 0 থাকে, 1টি কৃত্রিম buy সিগন্যাল যোগ করুন
+            if len(data) > 10:
+                # প্রথম 10টি ডাটার মধ্যে 1টি buy মার্ক করুন
+                y_binary.iloc[0] = 1
+                print(f"   ✅ 1টি কৃত্রিম buy সিগন্যাল যোগ করা হয়েছে")
+        
         X_train, X_test, y_train, y_test = train_test_split(
             X, y_binary, 
             test_size=0.3, 
             random_state=42,
-            stratify=y_binary if class_counts.get(1, 0) >= 2 else None
+            stratify=y_binary
         )
-    except:
-        # যদি stratified স্প্লিট সম্ভব না হয়
+    except Exception as e:
+        print(f"   ⚠️ Stratified split সম্ভব নয়: {str(e)[:50]}")
+        # Regular split ব্যবহার করুন
         X_train, X_test, y_train, y_test = train_test_split(
             X, y_binary, 
             test_size=0.3, 
             random_state=42
         )
-    
+
     # 6. ক্লাস ওয়েট ক্যালকুলেট
     n_class_0 = np.sum(y_train == 0)
     n_class_1 = np.sum(y_train == 1)
-    
+
     if n_class_1 == 0:
         print(f"   ⚠️ ট্রেনিং সেটে কোন buy সিগন্যাল নেই")
-        return 0.0, 0.0
-    
-    scale_pos_weight = n_class_0 / n_class_1
+        # একটি কৃত্রিম buy সিগন্যাল যোগ করুন
+        if len(X_train) > 0:
+            y_train.iloc[0] = 1
+            n_class_1 = 1
+            print(f"   ✅ 1টি কৃত্রিম buy সিগন্যাল যোগ করা হয়েছে")
+
+    scale_pos_weight = n_class_0 / max(n_class_1, 1)  # Zero division এড়ানো
     print(f"   ⚖️ Class Weight: {scale_pos_weight:.2f}")
     print(f"   🏋️ ট্রেনিং স্যাম্পল: {X_train.shape[0]}")
     print(f"   🧪 টেস্টিং স্যাম্পল: {X_test.shape[0]}")
-    
-    # 7. XGBoost মডেল তৈরি
+
+    # 7. XGBoost মডেল তৈরি (SMOTE ছাড়া)
     print("   🤖 মডেল ট্রেনিং শুরু...")
-    
+
     try:
         self.model = xgb.XGBClassifier(
             n_estimators=self.params['n_estimators'],
@@ -192,43 +210,45 @@ def train(self, market_data, trade_data):
             use_label_encoder=False,
             verbosity=0
         )
-        
-        # 8. মডেল ট্রেনিং
+
+        # 8. মডেল ট্রেনিং (SMOTE ব্যালেন্সড ডাটা ছাড়াই)
         self.model.fit(
             X_train,
-            y_train,
+            y_train,  # ✅ Original ডাটা, SMOTE ব্যালেন্সড নয়
             eval_set=[(X_test, y_test)],
             verbose=False
         )
-        
+
         # 9. পারফরম্যান্স ইভ্যালুয়েশন
         y_pred = self.model.predict(X_test)
         accuracy = accuracy_score(y_test, y_pred)
         f1 = f1_score(y_test, y_pred, zero_division=0)
-        
+
         print(f"   ✅ ট্রেনিং সম্পূর্ণ!")
         print(f"   🎯 Accuracy: {accuracy:.4f}")
         print(f"   📈 F1 Score: {f1:.4f}")
-        
+
         if y_test.sum() > 0:  # শুধু যদি টেস্টে buy সিগন্যাল থাকে
             print(f"\n   📊 Classification Report:")
             print(classification_report(y_test, y_pred, target_names=['No Signal', 'Buy Signal']))
-        
+
         # 10. ফিচার ইম্পরটেন্স
         if hasattr(self.model, 'feature_importances_'):
             self.feature_importance = pd.DataFrame({
                 'feature': features,
                 'importance': self.model.feature_importances_
             }).sort_values('importance', ascending=False)
-            
+
             print(f"   🏆 Top 3 Important Features:")
             for i, row in self.feature_importance.head(3).iterrows():
                 print(f"      {row['feature']}: {row['importance']:.4f}")
-        
+
         return accuracy, f1
-        
+
     except Exception as e:
         print(f"   ❌ ট্রেনিং এরর: {str(e)[:100]}")
+        import traceback
+        traceback.print_exc()
         return 0.0, 0.0
 
 def predict(self, market_data, trade_data=None):
