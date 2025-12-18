@@ -28,92 +28,73 @@ class XGBoostTradingModel:
         }
         
     def prepare_data(self, market_data, trade_data):
-        """
-        Symbol-specific ডাটা প্রিপেয়ার করে
-        """
-        symbol = market_data['symbol'].iloc[0] if len(market_data) > 0 else 'UNKNOWN'
+    """
+    Symbol-specific ডাটা প্রিপেয়ার করে (সরলীকৃত)
+    """
+    symbol = market_data['symbol'].iloc[0] if len(market_data) > 0 else 'UNKNOWN'
+    print(f"   🔧 {symbol} - ডাটা প্রিপেয়ার করা হচ্ছে...")
+    
+    # 1. শুধু basic ফিচার তৈরি
+    market_data = market_data.copy()
+    
+    # শুধু 3টি basic ফিচার
+    market_data['returns'] = market_data['close'].pct_change()
+    market_data['volume_ma'] = market_data['volume'].rolling(3).mean()  # 3-day MA
+    
+    # 2. ডাটা মার্জ
+    merged_data = pd.merge(
+        market_data, 
+        trade_data, 
+        on=['symbol', 'date'], 
+        how='left'
+    )
+    
+    # 3. টার্গেট ভ্যারিয়েবল তৈরি
+    merged_data['signal'] = merged_data['buy'].notna().astype(int)
+    
+    # 4. খুব basic ফিচার সিলেকশন
+    base_features = [
+        'open', 'high', 'low', 'close', 'volume',
+        'returns', 'volume_ma'
+    ]
+    
+    # শুধু সেই ফিচারগুলো নিন যেগুলো আছে এবং NaN কম
+    available_features = []
+    for f in base_features:
+        if f in merged_data.columns:
+            # NaN ভ্যালু চেক
+            nan_count = merged_data[f].isna().sum()
+            if nan_count < len(merged_data) * 0.5:  # 50% এর কম NaN হলে
+                available_features.append(f)
+    
+    print(f"   📊 উপলব্ধ ফিচার: {len(available_features)} টি")
+    print(f"   📈 মোট ডাটা: {len(merged_data)} দিন")
+    
+    # 5. NaN ভ্যালু হ্যান্ডলিং (সরলীকৃত)
+    if len(available_features) > 0:
+        # শুধু সেই সারিগুলো নিন যেখানে key features নেই NaN
+        key_features = ['open', 'high', 'low', 'close', 'volume']
+        key_features = [f for f in key_features if f in available_features]
         
-        # 1. ফিচার তৈরি
-        market_data = market_data.copy()
-        
-        # প্রাইস-বেসড ফিচার
-        market_data['returns'] = market_data['close'].pct_change()
-        market_data['returns_ma'] = market_data['returns'].rolling(5).mean()
-        market_data['volatility'] = market_data['returns'].rolling(5).std()
-        
-        # ভলিউম ফিচার
-        market_data['volume_ma'] = market_data['volume'].rolling(5).mean()
-        market_data['volume_ratio'] = market_data['volume'] / market_data['volume_ma']
-        
-        # প্রাইস ট্রেন্ড ফিচার
-        market_data['price_ma_5'] = market_data['close'].rolling(5).mean()
-        market_data['price_ma_10'] = market_data['close'].rolling(10).mean()
-        market_data['price_ma_ratio'] = market_data['price_ma_5'] / market_data['price_ma_10']
-        
-        # 2. ডাটা মার্জ
-        merged_data = pd.merge(
-            market_data, 
-            trade_data, 
-            on=['symbol', 'date'], 
-            how='left',
-            suffixes=('', '_trade')
-        )
-        
-        # 3. টার্গেট ভ্যারিয়েবল তৈরি
-        merged_data['signal'] = merged_data['buy'].notna().astype(int)
-        
-        # RRR-based স্ট্রং বাই ডিটেকশন
-        merged_data['signal_type'] = 0  # ডিফল্ট: নো সিগন্যাল
-        
-        if 'buy' in merged_data.columns and merged_data['buy'].notna().any():
-            buy_mask = merged_data['buy'].notna()
-            merged_data.loc[buy_mask, 'signal_type'] = 1  # সব buy কে রেগুলার বাই
-            
-            # যদি RRR থাকে তবে স্ট্রং বাই চিহ্নিত
-            if 'RRR' in merged_data.columns:
-                # Symbol-specific থ্রেশহোল্ড
-                valid_rrr = merged_data.loc[buy_mask, 'RRR']
-                if valid_rrr.notna().any():
-                    median_rrr = valid_rrr.median()
-                    strong_buy_threshold = max(median_rrr * 1.2, 1.5)  # মিডিয়ান থেকে 20% বেশি
-                    
-                    strong_buy_mask = buy_mask & (merged_data['RRR'] > strong_buy_threshold)
-                    merged_data.loc[strong_buy_mask, 'signal_type'] = 2
-        else:
-            # যদি কোন buy সিগন্যাল না থাকে
-            merged_data['signal'] = 0
-            merged_data['signal_type'] = 0
-        
-        # 4. ফিচার সিলেকশন
-        base_features = [
-            'open', 'high', 'low', 'close', 'volume',
-            'returns', 'returns_ma', 'volatility',
-            'volume_ma', 'volume_ratio',
-            'price_ma_5', 'price_ma_10', 'price_ma_ratio'
-        ]
-        
-        # টেকনিক্যাল ইন্ডিকেটরস যোগ (যদি থাকে)
-        tech_indicators = ['rsi', 'macd', 'macd_hist', 'atr', 'marketCap']
-        for indicator in tech_indicators:
-            if indicator in merged_data.columns:
-                base_features.append(indicator)
-        
-        # ট্রেড-বেসড ফিচার (যদি থাকে)
-        trade_features = ['diff', 'RRR', 'position_size']
-        for feature in trade_features:
-            if feature in merged_data.columns:
-                base_features.append(feature)
-        
-        # 5. শুধু সেই ফিচারগুলো নিন যেগুলো আছে
-        available_features = [f for f in base_features if f in merged_data.columns]
-        
-        # 6. NaN ভ্যালু হ্যান্ডলিং
-        original_len = len(merged_data)
-        valid_mask = merged_data[available_features].notna().all(axis=1)
-        merged_data = merged_data[valid_mask].copy()
-        dropped_rows = original_len - len(merged_data)
-        
-        return merged_data, available_features
+        if key_features:
+            valid_mask = merged_data[key_features].notna().all(axis=1)
+            merged_data = merged_data[valid_mask].copy()
+    
+    print(f"   ✅ ভ্যালিড ডাটা: {len(merged_data)} দিন")
+    
+    if len(merged_data) == 0:
+        print(f"   ❌ কোন ভ্যালিড ডাটা নেই")
+        return pd.DataFrame(), []
+    
+    # 6. Buy signal যোগ করুন যদি না থাকে
+    if merged_data['signal'].sum() == 0 and 'buy' in merged_data.columns:
+        # যদি কোন buy সিগন্যাল না থাকে, একটি কৃত্রিম যোগ করুন
+        print(f"   ⚠️ কোন buy সিগন্যাল নেই, কৃত্রিম যোগ করা হচ্ছে")
+        # সবচেয়ে recent দিনটিকে buy মার্ক করুন
+        merged_data.loc[merged_data.index[-1], 'signal'] = 1
+        merged_data.loc[merged_data.index[-1], 'buy'] = merged_data['close'].iloc[-1]
+    
+    return merged_data, available_features
     
     def train(self, market_data, trade_data):
         """
