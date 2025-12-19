@@ -1,9 +1,9 @@
-# ================== PPO_trading.py ==================
+# ================== ppo_trading.py ==================
 
 import pandas as pd
 import numpy as np
-
 from pathlib import Path
+
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 
@@ -90,25 +90,34 @@ if __name__ == "__main__":
         if len(sdf) >= WINDOW
     }
 
+    # 🔹 Curriculum: start with 1 symbol
+    symbol_dfs = dict(list(symbol_dfs.items())[:1])
+
     env = DummyVecEnv([
         lambda: MultiSymbolTradingEnv(
             symbol_dfs,
             signals,
             build_observation,
             WINDOW,
-            STATE_DIM
+            STATE_DIM,
+            total_capital=500_000,
+            risk_percent=0.01,
         )
     ])
 
     model = PPO(
-        policy="MlpPolicy",
-        env=env,
+        "MlpPolicy",
+        env,
         n_steps=1024,
         batch_size=256,
-        gamma=0.99,
-        learning_rate=3e-4,
-        verbose=1
+        gamma=0.995,
+        learning_rate=1e-4,
+        ent_coef=0.001,
+        clip_range=0.1,
+        vf_coef=0.5,
+        max_grad_norm=0.5,
+        verbose=1,
     )
 
-    model.learn(total_timesteps=50_000)
+    model.learn(total_timesteps=100_000)
     model.save(MODEL_PATH)
