@@ -1,8 +1,9 @@
 # ================== env_trading.py ==================
 
-import gym
+
+import gymnasium as gym
+from gymnasium import spaces
 import numpy as np
-from gym import spaces
 
 
 class MultiSymbolTradingEnv(gym.Env):
