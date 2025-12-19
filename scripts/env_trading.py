@@ -1,6 +1,5 @@
 # ================== env_trading.py ==================
 
-
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
@@ -8,14 +7,14 @@ import numpy as np
 
 class MultiSymbolTradingEnv(gym.Env):
     """
-    Multi-symbol trading environment for PPO
+    Multi-symbol trading environment for PPO (SB3 + gymnasium)
     Action per symbol:
         0 = HOLD
         1 = BUY
-        2 = SELL (manual exit, TP/SL auto handled)
+        2 = SELL
     """
 
-    metadata = {"render.modes": ["human"]}
+    metadata = {"render_modes": ["human"]}
 
     def __init__(
         self,
@@ -52,20 +51,18 @@ class MultiSymbolTradingEnv(gym.Env):
             dtype=np.float32,
         )
 
-        self.reset()
-
     # -------------------------------------------------
     # RESET
     # -------------------------------------------------
     def reset(self, seed=None, options=None):
-          super().reset(seed=seed)
+        super().reset(seed=seed)
 
-          self.t = 0
-          self.balance = {s:       self.total_capital for s in self.symbols}
-          self.position = {s: 0 for s in self.symbols}
-          self.entry_price = {s: 0.0 for s in self.symbols}
+        self.t = 0
+        self.balance = {s: self.total_capital for s in self.symbols}
+        self.position = {s: 0 for s in self.symbols}
+        self.entry_price = {s: 0.0 for s in self.symbols}
 
-          return self._get_obs(), {}
+        return self._get_obs(), {}
 
     # -------------------------------------------------
     # OBSERVATION
@@ -105,17 +102,22 @@ class MultiSymbolTradingEnv(gym.Env):
             sig = self.signals.get((s, row["date"]))
             reward = 0.0
 
+            # -------- ACTION MASKING --------
+            if action == 1 and not sig:
+                action = 0
+            if action == 2 and self.position[s] == 0:
+                action = 0
+
             # -------- BUY --------
             if action == 1 and self.position[s] == 0 and sig:
                 buy = sig["buy"]
                 sl = sig["SL"]
 
                 risk_amount = self.total_capital * self.risk_percent
-                risk_per_share = max(buy - sl, 1e-8)
+                risk_per_share = max(buy - sl, 1e-6)
+                shares = max(int(risk_amount / risk_per_share), 1)
 
-                shares = int(risk_amount / risk_per_share)
-
-                if shares > 0 and price <= buy:
+                if price <= buy:
                     self.position[s] = shares
                     self.entry_price[s] = price
                     self.balance[s] -= shares * price
@@ -126,28 +128,32 @@ class MultiSymbolTradingEnv(gym.Env):
                     pnl = (price - self.entry_price[s]) * self.position[s]
                     self.balance[s] += self.position[s] * price
 
-                    reward = pnl / (
-                        abs(self.entry_price[s] * self.position[s]) + 1e-8
+                    # 🔥 Stable reward
+                    reward = np.tanh(
+                        pnl / (self.total_capital * self.risk_percent)
                     )
 
                     self.position[s] = 0
                     self.entry_price[s] = 0.0
 
+            # -------- Over-trading penalty --------
+            if action != 0 and reward == 0:
+                reward -= 0.001
+
             rewards.append(reward)
             done_flags.append(self.t >= len(df) - 1)
 
         self.t += 1
-        done = all(done_flags)
 
-        terminated = done
+        terminated = all(done_flags)
         truncated = False
 
-        return self._get_obs(),     float(np.sum(rewards)), terminated, truncated, {}
+        return self._get_obs(), float(np.sum(rewards)), terminated, truncated, {}
 
     # -------------------------------------------------
     # RENDER
     # -------------------------------------------------
-    def render(self, mode="human"):
+    def render(self):
         print(f"\nStep {self.t}")
         for s in self.symbols:
             print(
