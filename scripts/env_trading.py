@@ -57,12 +57,15 @@ class MultiSymbolTradingEnv(gym.Env):
     # -------------------------------------------------
     # RESET
     # -------------------------------------------------
-    def reset(self):
-        self.t = 0
-        self.balance = {s: self.total_capital for s in self.symbols}
-        self.position = {s: 0 for s in self.symbols}
-        self.entry_price = {s: 0.0 for s in self.symbols}
-        return self._get_obs()
+    def reset(self, seed=None, options=None):
+    super().reset(seed=seed)
+
+    self.t = 0
+    self.balance = {s: self.total_capital for s in self.symbols}
+    self.position = {s: 0 for s in self.symbols}
+    self.entry_price = {s: 0.0 for s in self.symbols}
+
+    return self._get_obs(), {}
 
     # -------------------------------------------------
     # OBSERVATION
