@@ -139,7 +139,10 @@ class MultiSymbolTradingEnv(gym.Env):
         self.t += 1
         done = all(done_flags)
 
-        return self._get_obs(), float(np.sum(rewards)), done, {}
+        terminated = done
+        truncated = False
+
+        return self._get_obs(),     float(np.sum(rewards)), terminated, truncated, {}
 
     # -------------------------------------------------
     # RENDER
