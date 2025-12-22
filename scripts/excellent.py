@@ -5,7 +5,7 @@ import os
 # Paths
 # ---------------------------------------------------------
 source_path = './csv/liquidity.csv'
-output_path = './output/ai_signal/excellent.csv'
+'
 csv_path = './csv/excellent.csv'
 
 # Ensure output dirs exist
@@ -50,11 +50,9 @@ if len(filtered) == 0:
         print(f"   • {rating}: {count} stocks")
     # Optional: Still save empty file (for pipeline continuity)
     empty_df = pd.DataFrame(columns=df.columns)
-    empty_df.to_csv(output_path, index=False)
     empty_df.to_csv(csv_path, index=False)
 else:
     # Save
-    filtered.to_csv(output_path, index=False)
     filtered.to_csv(csv_path, index=False)
     print(f"📁 Saved to:\n   → {output_path}\n   → {csv_path}")
 
