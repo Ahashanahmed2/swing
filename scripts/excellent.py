@@ -8,7 +8,6 @@ source_path = './csv/liquidity.csv'
 csv_path = './csv/excellent.csv'
 
 # Ensure output dirs exist
-os.makedirs(os.path.dirname(output_path), exist_ok=True)
 os.makedirs(os.path.dirname(csv_path), exist_ok=True)
 
 # ---------------------------------------------------------
