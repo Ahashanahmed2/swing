@@ -52,7 +52,7 @@ if len(filtered) == 0:
 else:
     # Save
     filtered.to_csv(csv_path, index=False)
-    print(f"📁 Saved to:\n   → {output_path}\n   → {csv_path}")
+    print(f"📁 Saved to:\n   → {csv_path}")
 
 # ---------------------------------------------------------
 # ✅ Optional: Update system-wide liquidity flag
