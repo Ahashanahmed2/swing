@@ -26,8 +26,7 @@ scripts = [
     "scripts/trend_signal.py",
     "scripts/buy.py",
     "scripts/profit_loss_generator.py",
-    "scripts/ppo_trading.py",
-  
+    #"scripts/ppo_trading.py",
     "scripts/generate_pdf.py",
     "scripts/dayliMassage.py",
     #"scripts/email_reports.py",
