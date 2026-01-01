@@ -68,8 +68,8 @@ def create_uptrend_downtrend_signals():
     os.makedirs(output_dir, exist_ok=True)
     
     # Output file paths
-    uptrend_file = os.path.join(output_dir, 'uptrend.csv')
-    downtrend_file = os.path.join(output_dir, 'downtrend.csv')
+    uptrend_file = os.path.join(output_dir, 'uptrand.csv')
+    downtrend_file = os.path.join(output_dir, 'downtrand.csv')
     
     # Read mongodb.csv
     print(f"Reading {mongodb_csv}...")
