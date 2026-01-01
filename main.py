@@ -10,6 +10,7 @@ import os
 
 scripts = [
     "scripts/mongodb.py",
+    "scripts/trand.py",
     "scripts/swing_High_Low.py",
     "scripts/swing_buy.py",
     "scripts/liquidly.py",
