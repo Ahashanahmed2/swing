@@ -23,6 +23,7 @@ scripts = [
     "scripts/excellent.py",
     "scripts/excellent_buy.csv",
     "scripts/rsi_crose_above_30.py",
+    "scripts/trend_signal.py",
     "scripts/profit_loss_generator.py",
     "scripts/ppo_trading.py",
     "scripts/generate_pdf.py",
