@@ -2,7 +2,13 @@ import pandas as pd
 import os
 from datetime import datetime
 
+#hf_uploader import download_from_hf_or_run_script
+
+# Step 1: Download CSV from HF if needed
+#if download_from_hf_or_run_script():
+    #print(f"HF data download success")
 # সংক্ষিপ্ত নাম সংরক্ষণ (internal use only)
+
 variable_definitions = {
     'high_one_candle': 'hoc',
     'high_one_candle_high': 'hoch',
