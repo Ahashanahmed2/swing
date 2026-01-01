@@ -1,4 +1,5 @@
 import pandas as pd
+import html
 import os
 from datetime import datetime
 import requests
@@ -33,24 +34,22 @@ def send_telegram_message(message):
         return None
 
 def send_summary_to_telegram(summary_file):
-    """সারাংশ ফাইল টেলিগ্রামে পাঠানো"""
     if not os.path.exists(summary_file):
         print(f"❌ সারাংশ ফাইল পাওয়া যায়নি: {summary_file}")
         return False
-    
+
     try:
-        # ফাইল পড়া
         with open(summary_file, 'r', encoding='utf-8') as f:
             content = f.read()
-        
-        # HTML ফরম্যাটে কনভার্ট করা
-        html_content = content.replace('\n', '\n')
-        html_content = f"<pre>{html_content}</pre>"
-        
-        # টেলিগ্রামে পাঠানো
-        print(f"📤 টেলিগ্রামে সারাংশ পাঠানো হচ্ছে...")
-        return send_telegram_message(html_content)
-        
+
+        # 🔐 HTML escape (CRITICAL FIX)
+        safe_content = html.escape(content)
+
+        message = f"<pre>{safe_content}</pre>"
+
+        print("📤 টেলিগ্রামে সারাংশ পাঠানো হচ্ছে...")
+        return send_telegram_message(message)
+
     except Exception as e:
         print(f"⚠️ সারাংশ পাঠানোতে ত্রুটি: {e}")
         return False
