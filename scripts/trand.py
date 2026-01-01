@@ -154,19 +154,27 @@ def save_to_csv(symbol, high_dates, high_prices, low_dates, low_prices, output_b
     os.makedirs(symbol_dir, exist_ok=True)
 
     if high_dates:
-        pd.DataFrame({
-            "date": high_dates,
+        high_df = pd.DataFrame({
+            "date": pd.to_datetime(high_dates),
             "price": high_prices
-        }).sort_values("date", ascending=False).to_csv(
-            os.path.join(symbol_dir, "high.csv"), index=False
+        }).sort_values("date", ascending=False).reset_index(drop=True)
+
+        high_df.to_csv(
+            os.path.join(symbol_dir, "high.csv"),
+            index=False,
+            date_format="%Y-%m-%d"
         )
 
     if low_dates:
-        pd.DataFrame({
-            "date": low_dates,
+        low_df = pd.DataFrame({
+            "date": pd.to_datetime(low_dates),
             "price": low_prices
-        }).sort_values("date", ascending=False).to_csv(
-            os.path.join(symbol_dir, "low.csv"), index=False
+        }).sort_values("date", ascending=False).reset_index(drop=True)
+
+        low_df.to_csv(
+            os.path.join(symbol_dir, "low.csv"),
+            index=False,
+            date_format="%Y-%m-%d"
         )
 
 
