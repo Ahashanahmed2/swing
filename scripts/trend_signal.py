@@ -1,6 +1,59 @@
 import pandas as pd
 import os
 from datetime import datetime
+import requests
+
+# টেলিগ্রাম বট কনফিগারেশন
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+def send_telegram_message(message):
+    """টেলিগ্রামে টেক্সট মেসেজ পাঠানো"""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("❌ টেলিগ্রাম টোকেন বা চ্যাট আইডি সেট করা নেই!")
+        return None
+    
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML"
+    }
+    
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        if response.status_code == 200:
+            print("✅ টেলিগ্রাম মেসেজ সফলভাবে পাঠানো হয়েছে!")
+            return response.json()
+        else:
+            print(f"❌ টেলিগ্রাম মেসেজ পাঠানো ব্যর্থ: {response.text}")
+            return None
+    except Exception as e:
+        print(f"⚠️ টেলিগ্রামে মেসেজ পাঠানোতে ত্রুটি: {e}")
+        return None
+
+def send_summary_to_telegram(summary_file):
+    """সারাংশ ফাইল টেলিগ্রামে পাঠানো"""
+    if not os.path.exists(summary_file):
+        print(f"❌ সারাংশ ফাইল পাওয়া যায়নি: {summary_file}")
+        return False
+    
+    try:
+        # ফাইল পড়া
+        with open(summary_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # HTML ফরম্যাটে কনভার্ট করা
+        html_content = content.replace('\n', '\n')
+        html_content = f"<pre>{html_content}</pre>"
+        
+        # টেলিগ্রামে পাঠানো
+        print(f"📤 টেলিগ্রামে সারাংশ পাঠানো হচ্ছে...")
+        return send_telegram_message(html_content)
+        
+    except Exception as e:
+        print(f"⚠️ সারাংশ পাঠানোতে ত্রুটি: {e}")
+        return False
 
 def create_uptrend_downtrend_signals():
     """
@@ -166,26 +219,71 @@ def create_uptrend_downtrend_signals():
     # Create summary report
     summary_file = os.path.join(output_dir, 'trend_signals_summary.txt')
     with open(summary_file, 'w', encoding='utf-8') as f:
-        f.write("TREND SIGNALS SUMMARY REPORT\n")
-        f.write("=" * 50 + "\n")
-        f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-        f.write(f"Total symbols processed: {len(latest_data)}\n")
-        f.write(f"Uptrend signals found: {len(uptrend_signals)}\n")
-        f.write(f"Downtrend signals found: {len(downtrend_signals)}\n\n")
+        f.write("📊 TREND SIGNALS SUMMARY REPORT\n")
+        f.write("=" * 60 + "\n")
+        f.write(f"📅 Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"📁 Data Source: {mongodb_csv}\n")
+        f.write(f"📈 Swing Data: {trand_base_dir}\n")
+        f.write("=" * 60 + "\n\n")
+        
+        f.write("📊 EXECUTIVE SUMMARY:\n")
+        f.write("-" * 40 + "\n")
+        f.write(f"• Total symbols processed: {len(latest_data)}\n")
+        f.write(f"• Uptrend signals found: {len(uptrend_signals)}\n")
+        f.write(f"• Downtrend signals found: {len(downtrend_signals)}\n")
+        f.write(f"• Success rate: {((len(uptrend_signals) + len(downtrend_signals)) / len(latest_data) * 100):.1f}%\n\n")
         
         if uptrend_signals:
-            f.write("UPTREND SIGNALS:\n")
-            f.write("-" * 30 + "\n")
+            f.write("🟢 UPTREND SIGNALS:\n")
+            f.write("=" * 30 + "\n")
             for signal in uptrend_signals:
-                f.write(f"{signal['no']}. {signal['symbol']} - Close: {signal['close']} (Date: {signal['date']})\n")
+                date_str = signal['date'].strftime('%Y-%m-%d') if hasattr(signal['date'], 'strftime') else signal['date']
+                f.write(f"{signal['no']:2d}. {signal['symbol']:<8} Close: {signal['close']:>10.2f} Date: {date_str}\n")
+            f.write("\n")
         
         if downtrend_signals:
-            f.write("\nDOWNTREND SIGNALS:\n")
-            f.write("-" * 30 + "\n")
+            f.write("🔴 DOWNTREND SIGNALS:\n")
+            f.write("=" * 30 + "\n")
             for signal in downtrend_signals:
-                f.write(f"{signal['no']}. {signal['symbol']} - Close: {signal['close']} (Date: {signal['date']})\n")
+                date_str = signal['date'].strftime('%Y-%m-%d') if hasattr(signal['date'], 'strftime') else signal['date']
+                f.write(f"{signal['no']:2d}. {signal['symbol']:<8} Close: {signal['close']:>10.2f} Date: {date_str}\n")
+            f.write("\n")
+        
+        f.write("📈 MARKET ANALYSIS:\n")
+        f.write("-" * 40 + "\n")
+        
+        if len(uptrend_signals) > len(downtrend_signals):
+            f.write("↗️  Market is showing BULLISH bias\n")
+            f.write(f"   Uptrend signals ({len(uptrend_signals)}) > Downtrend signals ({len(downtrend_signals)})\n")
+        elif len(downtrend_signals) > len(uptrend_signals):
+            f.write("↘️  Market is showing BEARISH bias\n")
+            f.write(f"   Downtrend signals ({len(downtrend_signals)}) > Uptrend signals ({len(uptrend_signals)})\n")
+        else:
+            f.write("➡️  Market is showing NEUTRAL bias\n")
+            f.write(f"   Equal uptrend ({len(uptrend_signals)}) and downtrend ({len(downtrend_signals)}) signals\n")
+        
+        f.write("\n" + "=" * 60 + "\n")
+        f.write("📋 Files Generated:\n")
+        f.write(f"• Uptrend signals: {uptrend_file}\n")
+        f.write(f"• Downtrend signals: {downtrend_file}\n")
+        f.write(f"• Summary report: {summary_file}\n")
+        f.write("=" * 60 + "\n")
+        f.write("✅ Trend signal detection completed!\n")
+        f.write(f"⏰ Next analysis: {datetime.now().strftime('%Y-%m-%d')} 09:00:00\n")
     
     print(f"\n📊 Summary saved to: {summary_file}")
+    
+    # Send summary to Telegram
+    print("\n📤 Sending summary to Telegram...")
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        telegram_sent = send_summary_to_telegram(summary_file)
+        if telegram_sent:
+            print("✅ Summary sent to Telegram successfully!")
+        else:
+            print("⚠️ Failed to send summary to Telegram")
+    else:
+        print("ℹ️ Telegram credentials not set, skipping Telegram send")
+    
     print("\n🎯 Trend signal detection completed!")
 
 def main():
