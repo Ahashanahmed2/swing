@@ -4,13 +4,13 @@ ta
 dotenv
 requests
 #torch==2.3.0+cpu -f https://download.pytorch.org/whl/torch_stable.html
-gymnasium
-stable-baselines3
-shimmy>=2.0
+#gymnasium
+#stable-baselines3
+#shimmy>=2.0
 fpdf2>=2.7.0
 huggingface_hub
 scikit-learn>=1.2.0
-xgboost>=1.7.0
-scipy>=1.10.0
-pytest
-imbalanced-learn
+#xgboost>=1.7.0
+#scipy>=1.10.0
+#pytest
+#imbalanced-learn
