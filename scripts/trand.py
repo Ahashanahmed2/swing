@@ -99,8 +99,8 @@ def check_low_swing(symbol_df, idx):
 def process_symbol(symbol, symbol_df):
     """
     Data sorted DESC
-    Scan starts from LATEST side (index 2)
-    Always keeps latest 2 high & latest 2 low
+    Scan latest → older
+    Output always latest first
     """
 
     symbol_df = symbol_df.sort_values('date', ascending=False).reset_index(drop=True)
@@ -112,34 +112,37 @@ def process_symbol(symbol, symbol_df):
     if n < 5:
         return high_dates, high_prices, low_dates, low_prices
 
-    # ✅ START FROM LATEST POSSIBLE INDEX
-    idx = 2
+    idx = 2  # latest valid index
 
     while idx <= n - 3:
 
         # ---------- HIGH ----------
-        is_high, should_skip = check_high_swing(symbol_df, idx)
+        is_high, _ = check_high_swing(symbol_df, idx)
         if is_high:
-            high_dates.insert(0, symbol_df.iloc[idx]['date'])
-            high_prices.insert(0, symbol_df.iloc[idx]['high'])
-
-            if len(high_dates) > 2:
-                high_dates.pop()
-                high_prices.pop()
+            high_dates.append(symbol_df.iloc[idx]['date'])
+            high_prices.append(symbol_df.iloc[idx]['high'])
 
         # ---------- LOW ----------
         is_low, _ = check_low_swing(symbol_df, idx)
         if is_low:
-            low_dates.insert(0, symbol_df.iloc[idx]['date'])
-            low_prices.insert(0, symbol_df.iloc[idx]['low'])
+            low_dates.append(symbol_df.iloc[idx]['date'])
+            low_prices.append(symbol_df.iloc[idx]['low'])
 
-            if len(low_dates) > 2:
-                low_dates.pop()
-                low_prices.pop()
+        idx += 1
 
-        idx += 1   # 🔥 move from latest → older
+    # 🔥 NOW enforce LATEST FIRST
+    high_df = pd.DataFrame({"date": high_dates, "price": high_prices})
+    low_df  = pd.DataFrame({"date": low_dates,  "price": low_prices})
 
-    return high_dates, high_prices, low_dates, low_prices
+    high_df = high_df.sort_values("date", ascending=False).head(2)
+    low_df  = low_df.sort_values("date", ascending=False).head(2)
+
+    return (
+        high_df["date"].tolist(),
+        high_df["price"].tolist(),
+        low_df["date"].tolist(),
+        low_df["price"].tolist(),
+    )
 
 
 # --------------------------------------------------
