@@ -98,7 +98,8 @@ def check_low_swing(symbol_df, idx):
 # --------------------------------------------------
 def process_symbol(symbol, symbol_df):
     """
-    Scan from LAST candle (latest) backwards
+    Data sorted DESC
+    Scan starts from LATEST side (index 2)
     Always keeps latest 2 high & latest 2 low
     """
 
@@ -111,32 +112,32 @@ def process_symbol(symbol, symbol_df):
     if n < 5:
         return high_dates, high_prices, low_dates, low_prices
 
-    # 🔥 START FROM LATEST SIDE
-    idx = n - 3
+    # ✅ START FROM LATEST POSSIBLE INDEX
+    idx = 2
 
-    while idx >= 2:
+    while idx <= n - 3:
 
         # ---------- HIGH ----------
         is_high, should_skip = check_high_swing(symbol_df, idx)
         if is_high:
-            high_dates.append(symbol_df.iloc[idx]['date'])
-            high_prices.append(symbol_df.iloc[idx]['high'])
+            high_dates.insert(0, symbol_df.iloc[idx]['date'])
+            high_prices.insert(0, symbol_df.iloc[idx]['high'])
 
             if len(high_dates) > 2:
-                high_dates.pop(0)
-                high_prices.pop(0)
+                high_dates.pop()
+                high_prices.pop()
 
         # ---------- LOW ----------
         is_low, _ = check_low_swing(symbol_df, idx)
         if is_low:
-            low_dates.append(symbol_df.iloc[idx]['date'])
-            low_prices.append(symbol_df.iloc[idx]['low'])
+            low_dates.insert(0, symbol_df.iloc[idx]['date'])
+            low_prices.insert(0, symbol_df.iloc[idx]['low'])
 
             if len(low_dates) > 2:
-                low_dates.pop(0)
-                low_prices.pop(0)
+                low_dates.pop()
+                low_prices.pop()
 
-        idx -= 1  # 🔥 MOVE BACKWARD (latest → older)
+        idx += 1   # 🔥 move from latest → older
 
     return high_dates, high_prices, low_dates, low_prices
 
