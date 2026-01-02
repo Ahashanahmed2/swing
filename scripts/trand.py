@@ -119,15 +119,11 @@ def process_symbol(symbol, symbol_df):
         # ---------- HIGH ----------
         is_high, _ = check_high_swing(symbol_df, idx)
         if is_high:
-            high_dates.append(symbol_df.iloc[idx]['date'])
-            high_prices.append(symbol_df.iloc[idx]['high'])
+            high_dates.insert(0, symbol_df.iloc[idx]['date'])
+high_prices.insert(0, symbol_df.iloc[idx]['high'])
 
-        # ---------- LOW ----------
-        is_low, _ = check_low_swing(symbol_df, idx)
-        if is_low:
-            low_dates.append(symbol_df.iloc[idx]['date'])
-            low_prices.append(symbol_df.iloc[idx]['low'])
-
+low_dates.insert(0, symbol_df.iloc[idx]['date'])
+low_prices.insert(0, symbol_df.iloc[idx]['low'])
         idx += 1
 
     # 🔥 NOW enforce LATEST FIRST
