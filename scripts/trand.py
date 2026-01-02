@@ -36,15 +36,33 @@ def check_high_swing(symbol_df, idx):
         hatch = symbol_df.iloc[idx - 2]['high']
         hatcl = symbol_df.iloc[idx - 2]['low']
 
+        # ----------------------------------
+        # 🚫 SKIP CONDITION (YOUR RULE)
+        # ----------------------------------
+        if hoch == haoch and hocl <= haocl:
+            return False, False   # 👉 skip this candle
+
+        # ----------------------------------
+        # ❌ Invalid / fake high
+        # ----------------------------------
         if hoch == hboch and hocl <= hbocl:
             return False, True
 
-        if hoch > hboch and hbocl < hocl and hbtch < hoch and hoch == haoch and hocl <= haocl:
+        if (
+            hoch > hboch
+            and hbocl < hocl
+            and hbtcl < hoch      # future LOW must be below
+            and hoch == haoch
+            and hocl <= haocl
+        ):
             return False, True
 
         if hoch > haoch and haocl < hocl and hatch < hoch:
             return False, True
 
+        # ----------------------------------
+        # ✅ VALID HIGH SWING
+        # ----------------------------------
         if hoch > hboch and hoch > haoch:
             return True, False
 
@@ -75,15 +93,33 @@ def check_low_swing(symbol_df, idx):
         latch = symbol_df.iloc[idx - 2]['high']
         latcl = symbol_df.iloc[idx - 2]['low']
 
+        # ----------------------------------
+        # 🚫 SKIP CONDITION (YOUR RULE)
+        # ----------------------------------
+        if locl == laocl and loch >= laoch:
+            return False, False   # 👉 skip, go next candle
+
+        # ----------------------------------
+        # ❌ Invalid / fake low
+        # ----------------------------------
         if locl == lbocl and loch >= lboch:
             return False, True
 
-        if locl < lbocl and lboch > loch and lbtch > locl and locl == laocl and loch >= laoch:
+        if (
+            locl < lbocl
+            and lboch > loch
+            and lbtcl > locl      # fixed
+            and locl == laocl
+            and loch >= laoch
+        ):
             return False, True
 
         if locl < laocl and laoch > loch and latcl > locl:
             return False, True
 
+        # ----------------------------------
+        # ✅ VALID LOW SWING
+        # ----------------------------------
         if locl < lbocl and locl < laocl:
             return True, False
 
