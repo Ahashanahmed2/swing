@@ -94,7 +94,7 @@ def check_low_swing(symbol_df, idx):
 
 
 # --------------------------------------------------
-# Core processing logic (FIXED)
+# Core processing logic (LATEST FIRST)
 # --------------------------------------------------
 def process_symbol(symbol, symbol_df):
     """
@@ -112,21 +112,22 @@ def process_symbol(symbol, symbol_df):
     if n < 5:
         return high_dates, high_prices, low_dates, low_prices
 
-    idx = 2  # latest valid index
-
-    while idx <= n - 3:
+    # Scan from newest candle (index 2) to older
+    for idx in range(2, n - 2):
 
         # ---------- HIGH ----------
         is_high, _ = check_high_swing(symbol_df, idx)
         if is_high:
-            high_dates.insert(0, symbol_df.iloc[idx]['date'])
-high_prices.insert(0, symbol_df.iloc[idx]['high'])
+            high_dates.append(symbol_df.iloc[idx]['date'])
+            high_prices.append(symbol_df.iloc[idx]['high'])
 
-low_dates.insert(0, symbol_df.iloc[idx]['date'])
-low_prices.insert(0, symbol_df.iloc[idx]['low'])
-        idx += 1
+        # ---------- LOW ----------
+        is_low, _ = check_low_swing(symbol_df, idx)
+        if is_low:
+            low_dates.append(symbol_df.iloc[idx]['date'])
+            low_prices.append(symbol_df.iloc[idx]['low'])
 
-    # 🔥 NOW enforce LATEST FIRST
+    # keep only latest 2 swings
     high_df = pd.DataFrame({"date": high_dates, "price": high_prices})
     low_df  = pd.DataFrame({"date": low_dates,  "price": low_prices})
 
