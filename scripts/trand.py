@@ -52,7 +52,7 @@ def check_high_swing(symbol_df, idx):
             hoch > hboch
             and hbocl < hocl
             and hbtcl < hoch      # future LOW must be below
-            
+
         ):
             return False, True
 
@@ -108,7 +108,7 @@ def check_low_swing(symbol_df, idx):
             locl < lbocl
             and lboch > loch
             and lbtcl > locl      # fixed
-            
+
         ):
             return False, True
 
@@ -128,14 +128,14 @@ def check_low_swing(symbol_df, idx):
 
 
 # --------------------------------------------------
-# Core processing logic (LATEST FIRST)
+# Core processing logic (শেষ থেকে পিছনে মাত্র ২টি করে)
 # --------------------------------------------------
 def process_symbol(symbol, symbol_df):
     """
     Data sorted ASC (oldest first)
-    Scan older → latest
-    But output latest first
+    শেষ row থেকে পিছনে স্ক্যান করে সর্বশেষ ২ high ও ২ low swing খুঁজে আনে
     """
+    # ডেটা পুরানো থেকে নতুন ক্রমে সাজানো (ascending)
     symbol_df = symbol_df.sort_values('date', ascending=True).reset_index(drop=True)
     
     high_dates, high_prices = [], []
@@ -145,31 +145,36 @@ def process_symbol(symbol, symbol_df):
     if n < 5:
         return high_dates, high_prices, low_dates, low_prices
     
-    # Scan from older to newer
-    for idx in range(2, n - 2):
-        is_high, _ = check_high_swing(symbol_df, idx)
-        if is_high:
-            high_dates.append(symbol_df.iloc[idx]['date'])
-            high_prices.append(symbol_df.iloc[idx]['high'])
+    # 🔥 শেষ থেকে পিছনের দিকে স্ক্যান (সর্বশেষ ক্যান্ডেল থেকে শুরু)
+    # range(n-3, 1, -1): শেষ থেকে ৩য় index থেকে শুরু করে index 2 পর্যন্ত
+    for i in range(n - 3, 1, -1):
+        idx = i
         
-        is_low, _ = check_low_swing(symbol_df, idx)
-        if is_low:
-            low_dates.append(symbol_df.iloc[idx]['date'])
-            low_prices.append(symbol_df.iloc[idx]['low'])
+        # শুধুমাত্র HIGH swing চেক (যদি ২টি এখনও না পাওয়া যায়)
+        if len(high_dates) < 2:
+            is_high, is_fake_high = check_high_swing(symbol_df, idx)
+            if is_high and not is_fake_high:
+                high_dates.append(symbol_df.iloc[idx]['date'])
+                high_prices.append(symbol_df.iloc[idx]['high'])
+        
+        # শুধুমাত্র LOW swing চেক (যদি ২টি এখনও না পাওয়া যায়)
+        if len(low_dates) < 2:
+            is_low, is_fake_low = check_low_swing(symbol_df, idx)
+            if is_low and not is_fake_low:
+                low_dates.append(symbol_df.iloc[idx]['date'])
+                low_prices.append(symbol_df.iloc[idx]['low'])
+        
+        # যদি ২টি high এবং ২টি low swing পেয়ে যায়, লুপ বন্ধ করুন
+        if len(high_dates) >= 2 and len(low_dates) >= 2:
+            break
     
-    # Output latest first
-    high_df = pd.DataFrame({"date": high_dates, "price": high_prices})
-    low_df  = pd.DataFrame({"date": low_dates,  "price": low_prices})
+    # 🔥 তারিখের ক্রম ঠিক রাখুন (নতুন থেকে পুরানো) - কারণ আমরা পিছনে স্ক্যান করেছি
+    high_dates.reverse()
+    high_prices.reverse()
+    low_dates.reverse()
+    low_prices.reverse()
     
-    high_df = high_df.sort_values("date", ascending=False).head(2)
-    low_df  = low_df.sort_values("date", ascending=False).head(2)
-    
-    return (
-        high_df["date"].tolist(),
-        high_df["price"].tolist(),
-        low_df["date"].tolist(),
-        low_df["price"].tolist(),
-    )
+    return high_dates[:2], high_prices[:2], low_dates[:2], low_prices[:2]
 
 
 # --------------------------------------------------
