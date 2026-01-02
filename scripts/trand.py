@@ -132,42 +132,38 @@ def check_low_swing(symbol_df, idx):
 # --------------------------------------------------
 def process_symbol(symbol, symbol_df):
     """
-    Data sorted DESC
-    Scan latest → older
-    Output always latest first
+    Data sorted ASC (oldest first)
+    Scan older → latest
+    But output latest first
     """
-
-    symbol_df = symbol_df.sort_values('date', ascending=False).reset_index(drop=True)
-
+    symbol_df = symbol_df.sort_values('date', ascending=True).reset_index(drop=True)
+    
     high_dates, high_prices = [], []
     low_dates, low_prices = [], []
-
+    
     n = len(symbol_df)
     if n < 5:
         return high_dates, high_prices, low_dates, low_prices
-
-    # Scan from newest candle (index 2) to older
+    
+    # Scan from older to newer
     for idx in range(2, n - 2):
-
-        # ---------- HIGH ----------
         is_high, _ = check_high_swing(symbol_df, idx)
         if is_high:
             high_dates.append(symbol_df.iloc[idx]['date'])
             high_prices.append(symbol_df.iloc[idx]['high'])
-
-        # ---------- LOW ----------
+        
         is_low, _ = check_low_swing(symbol_df, idx)
         if is_low:
             low_dates.append(symbol_df.iloc[idx]['date'])
             low_prices.append(symbol_df.iloc[idx]['low'])
-
-    # keep only latest 2 swings
+    
+    # Output latest first
     high_df = pd.DataFrame({"date": high_dates, "price": high_prices})
     low_df  = pd.DataFrame({"date": low_dates,  "price": low_prices})
-
+    
     high_df = high_df.sort_values("date", ascending=False).head(2)
     low_df  = low_df.sort_values("date", ascending=False).head(2)
-
+    
     return (
         high_df["date"].tolist(),
         high_df["price"].tolist(),
