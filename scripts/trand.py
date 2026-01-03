@@ -112,7 +112,7 @@ def check_low_swing(symbol_df, idx):
         ):
             return True, False
 
-        if locl < laocl and laoch > loch and latcl > locl:
+        if locl < laocl and laoch > loch and latcl > laocl:
             return True, False
 
         # ----------------------------------
