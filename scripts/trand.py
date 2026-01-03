@@ -46,7 +46,7 @@ def check_high_swing(symbol_df, idx):
         # ❌ Invalid / fake high
         # ----------------------------------
         if hoch == hboch and hocl <= hbocl:
-            return False, True
+            return False, False
 
         if (
             hoch > hboch
@@ -102,7 +102,7 @@ def check_low_swing(symbol_df, idx):
         # ❌ Invalid / fake low
         # ----------------------------------
         if locl == lbocl and loch >= lboch:
-            return False, True
+            return False, False
 
         if (
             locl < lbocl
