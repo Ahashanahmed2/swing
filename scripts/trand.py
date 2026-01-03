@@ -107,7 +107,7 @@ def check_low_swing(symbol_df, idx):
         if (
             locl < lbocl
             and lboch > loch
-            and lbtcl > locl      # fixed
+            and lbtcl > loch      # fixed
 
         ):
             return True, False
