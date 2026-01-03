@@ -40,13 +40,13 @@ def check_high_swing(symbol_df, idx):
         # 🚫 SKIP CONDITION (YOUR RULE)
         # ----------------------------------
         if hoch == haoch and hocl <= haocl:
-            return False, False   # 👉 skip this candle
+            return False, True   # 👉 skip this candle
 
         # ----------------------------------
         # ❌ Invalid / fake high
         # ----------------------------------
         if hoch == hboch and hocl <= hbocl:
-            return False, False
+            return False, True
 
         if (
             hoch > hboch
@@ -96,13 +96,13 @@ def check_low_swing(symbol_df, idx):
         # 🚫 SKIP CONDITION (YOUR RULE)
         # ----------------------------------
         if locl == laocl and loch >= laoch:
-            return False, False   # 👉 skip, go next candle
+            return False, True   # 👉 skip, go next candle
 
         # ----------------------------------
         # ❌ Invalid / fake low
         # ----------------------------------
         if locl == lbocl and loch >= lboch:
-            return False, False
+            return False, True
 
         if (
             locl < lbocl
