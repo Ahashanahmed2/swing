@@ -21,48 +21,49 @@ def check_high_swing(symbol_df, idx):
         if idx < 2 or idx >= n - 2:
             return False, False
 
-        hoch = symbol_df.iloc[idx]['high']
-        hocl = symbol_df.iloc[idx]['low']
+        # -------- Current candle --------
+        cur_high = symbol_df.iloc[idx]['high']
+        cur_low  = symbol_df.iloc[idx]['low']
 
-        hboch = symbol_df.iloc[idx + 1]['high']
-        hbocl = symbol_df.iloc[idx + 1]['low']
+        # -------- Previous candles --------
+        prev1_high = symbol_df.iloc[idx - 1]['high']
+        prev1_low  = symbol_df.iloc[idx - 1]['low']
 
-        hbtch = symbol_df.iloc[idx + 2]['high']
-        hbtcl = symbol_df.iloc[idx + 2]['low']
+        prev2_high = symbol_df.iloc[idx - 2]['high']
+        prev2_low  = symbol_df.iloc[idx - 2]['low']
 
-        haoch = symbol_df.iloc[idx - 1]['high']
-        haocl = symbol_df.iloc[idx - 1]['low']
+        # -------- Next candles --------
+        next1_high = symbol_df.iloc[idx + 1]['high']
+        next1_low  = symbol_df.iloc[idx + 1]['low']
 
-        hatch = symbol_df.iloc[idx - 2]['high']
-        hatcl = symbol_df.iloc[idx - 2]['low']
+        next2_high = symbol_df.iloc[idx + 2]['high']
+        next2_low  = symbol_df.iloc[idx + 2]['low']
 
         # ----------------------------------
         # 🚫 SKIP CONDITION (YOUR RULE)
+        # same high as previous & low not higher
         # ----------------------------------
-        if hoch == haoch and hocl <= haocl:
-            return False, True   # 👉 skip this candle
+        if cur_high == prev1_high and cur_low <= prev1_low:
+            return False, True   # skip candle
 
         # ----------------------------------
-        # ❌ Invalid / fake high
+        # ❌ Fake high (same as next)
         # ----------------------------------
-        if hoch == hboch and hocl <= hbocl:
+        if cur_high == next1_high and cur_low <= next1_low:
             return False, True
-
-        if (
-            hoch >= hboch
-            and hbocl <= hocl
-            and hbtch < hoch      # future LOW must be below
-
-        ):
-            return True, False
-
-        if hoch >= haoch and haocl <= hocl and hatch < hoch:
-            return True, False
 
         # ----------------------------------
         # ✅ VALID HIGH SWING
+        # hocl > hocl+2 AND hocl > hocl-2
         # ----------------------------------
-        
+        if (
+            cur_high >= next1_high
+            and cur_high >= prev1_high
+            and cur_low > next2_low
+            and cur_low > prev2_low
+        ):
+            return True, False
+
         return False, False
 
     except Exception:
@@ -75,52 +76,48 @@ def check_low_swing(symbol_df, idx):
         if idx < 2 or idx >= n - 2:
             return False, False
 
-        loch = symbol_df.iloc[idx]['high']
-        locl = symbol_df.iloc[idx]['low']
+        # -------- Current candle --------
+        cur_high = symbol_df.iloc[idx]['high']
+        cur_low  = symbol_df.iloc[idx]['low']
 
-        lboch = symbol_df.iloc[idx + 1]['high']
-        lbocl = symbol_df.iloc[idx + 1]['low']
+        # -------- Previous candles --------
+        prev1_high = symbol_df.iloc[idx - 1]['high']
+        prev1_low  = symbol_df.iloc[idx - 1]['low']
 
-        lbtch = symbol_df.iloc[idx + 2]['high']
-        lbtcl = symbol_df.iloc[idx + 2]['low']
+        prev2_high = symbol_df.iloc[idx - 2]['high']
+        prev2_low  = symbol_df.iloc[idx - 2]['low']
 
-        laoch = symbol_df.iloc[idx - 1]['high']
-        laocl = symbol_df.iloc[idx - 1]['low']
+        # -------- Next candles --------
+        next1_high = symbol_df.iloc[idx + 1]['high']
+        next1_low  = symbol_df.iloc[idx + 1]['low']
 
-        latch = symbol_df.iloc[idx - 2]['high']
-        latcl = symbol_df.iloc[idx - 2]['low']
-
-        # ----------------------------------
-        # 🚫 SKIP CONDITION (YOUR RULE)
-        # ----------------------------------
-        if locl == laocl and loch >= laoch:
-            return False, True   # 👉 skip, go next candle
+        next2_high = symbol_df.iloc[idx + 2]['high']
+        next2_low  = symbol_df.iloc[idx + 2]['low']
 
         # ----------------------------------
-        # ❌ Invalid / fake low
+        # 🚫 SKIP CONDITION
+        # same low as previous & high not lower
         # ----------------------------------
-        if locl == lbocl and loch >= lboch:
+        if cur_low == prev1_low and cur_high >= prev1_high:
             return False, True
 
-        if (
-            locl <= lbocl
-            and lboch >= loch
-            and lbtcl > locl     # fixed
-
-        ):
-            return True, False
-
-        if (
-            locl <= laocl 
-            and laoch >= loch 
-            and latcl > locl
-        ):
-            return True, False
+        # ----------------------------------
+        # ❌ Fake low (same as next)
+        # ----------------------------------
+        if cur_low == next1_low and cur_high >= next1_high:
+            return False, True
 
         # ----------------------------------
         # ✅ VALID LOW SWING
+        # locl < locl+2 AND locl < locl-2
         # ----------------------------------
-        
+        if (
+            cur_low <= next1_low
+            and cur_low <= prev1_low
+            and cur_low < next2_low
+            and cur_low < prev2_low
+        ):
+            return True, False
 
         return False, False
 
