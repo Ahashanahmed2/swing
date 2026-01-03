@@ -62,9 +62,7 @@ def check_high_swing(symbol_df, idx):
         # ----------------------------------
         # ✅ VALID HIGH SWING
         # ----------------------------------
-        if hoch > hboch and hoch > haoch:
-            return True, False
-
+        
         return False, False
 
     except Exception:
@@ -112,14 +110,17 @@ def check_low_swing(symbol_df, idx):
         ):
             return True, False
 
-        if locl < laocl and laoch > loch and latcl > laocl:
+        if (
+            locl < laocl 
+            and laoch > loch 
+            and latcl > loch
+        ):
             return True, False
 
         # ----------------------------------
         # ✅ VALID LOW SWING
         # ----------------------------------
-        if locl < lbocl and locl < laocl:
-            return True, False
+        
 
         return False, False
 
