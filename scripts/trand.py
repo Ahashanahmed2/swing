@@ -51,13 +51,13 @@ def check_high_swing(symbol_df, idx):
         if (
             hoch > hboch
             and hbocl < hocl
-            and hbtcl < hoch      # future LOW must be below
+            and hbtch < hoch      # future LOW must be below
 
         ):
-            return False, True
+            return True, False
 
         if hoch > haoch and haocl < hocl and hatch < hoch:
-            return False, True
+            return True, False
 
         # ----------------------------------
         # ✅ VALID HIGH SWING
@@ -110,10 +110,10 @@ def check_low_swing(symbol_df, idx):
             and lbtcl > locl      # fixed
 
         ):
-            return False, True
+            return True, False
 
         if locl < laocl and laoch > loch and latcl > locl:
-            return False, True
+            return True, False
 
         # ----------------------------------
         # ✅ VALID LOW SWING
