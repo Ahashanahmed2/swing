@@ -63,6 +63,8 @@ def check_high_swing(symbol_df, idx):
             and cur_low > prev1_low
             and cur_high > prev2_high
             and cur_high > next2_high
+            and cur_low > prev2_low
+            and cur_low > next2_low
         ):
             return True, False
 
@@ -120,6 +122,8 @@ def check_low_swing(symbol_df, idx):
             and cur_high < prev1_high
             and cur_low < next2_low
             and cur_low < prev2_low
+            and cur_high < next2_low
+            and cur_high < prev2_low
         ):
             return True, False
 
