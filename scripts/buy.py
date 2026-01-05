@@ -1,9 +1,9 @@
 import pandas as pd
 import os
 
-# --------------------------------------------------
-# Paths
-# --------------------------------------------------
+# -----------------------------
+# Input buy files
+# -----------------------------
 BUY_FILES = {
     "rsi": "./csv/rsi_30_buy.csv",
     "short": "./csv/short_buy.csv",
@@ -14,110 +14,117 @@ BUY_FILES = {
 UPTREND_FILE = "./csv/uptrand.csv"
 DOWNTREND_FILE = "./csv/downtrand.csv"
 
-OUTPUT_FILE = "./output/ai_signal/buy.csv"
-os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
+OUTPUT_FILE = "./output/ai-signal/buy.csv"
 
-# --------------------------------------------------
-# Required columns (buy files)
-# --------------------------------------------------
+# -----------------------------
+# Base columns
+# -----------------------------
 BASE_COLUMNS = [
     "No", "date", "symbol", "buy", "SL", "tp",
     "position_size", "exposure_bdt",
     "actual_risk_bdt", "diff", "RRR"
 ]
 
-# --------------------------------------------------
-# Load trend files
-# --------------------------------------------------
-trend_map = {}
+# -----------------------------
+# Load trend symbols
+# -----------------------------
+def load_trend_symbols(path):
+    if os.path.exists(path):
+        df = pd.read_csv(path)
+        if "symbol" in df.columns:
+            return set(df["symbol"].astype(str))
+    return set()
 
-if os.path.exists(UPTREND_FILE):
-    up_df = pd.read_csv(UPTREND_FILE)
-    for s in up_df["symbol"].dropna().unique():
-        trend_map[s] = "uptrend"
+uptrend_symbols = load_trend_symbols(UPTREND_FILE)
+downtrend_symbols = load_trend_symbols(DOWNTREND_FILE)
 
-if os.path.exists(DOWNTREND_FILE):
-    down_df = pd.read_csv(DOWNTREND_FILE)
-    for s in down_df["symbol"].dropna().unique():
-        trend_map[s] = "downtrend"
-
-print(f"✅ Trend symbols loaded: {len(trend_map)}")
-
-# --------------------------------------------------
+# -----------------------------
 # Process buy files
-# --------------------------------------------------
-final_rows = []
+# -----------------------------
+all_rows = []
 
-for file_tag, file_path in BUY_FILES.items():
-
+for file_key, file_path in BUY_FILES.items():
     if not os.path.exists(file_path):
-        print(f"⚠️ Buy file not found, skipped: {file_path}")
         continue
 
-    print(f"📂 Processing: {file_path}")
     df = pd.read_csv(file_path)
 
-    # Column validation
-    missing_cols = [c for c in BASE_COLUMNS if c not in df.columns]
-    if missing_cols:
-        print(f"❌ Missing columns in {file_path}: {missing_cols}")
+    if "symbol" not in df.columns:
         continue
 
-    # Ensure RRR numeric
-    df["RRR"] = pd.to_numeric(df["RRR"], errors="coerce")
+    # ensure base columns exist
+    for col in BASE_COLUMNS:
+        if col not in df.columns:
+            df[col] = None
 
-    for _, row in df.iterrows():
-        symbol = row["symbol"]
+    df = df[BASE_COLUMNS]
 
-        # Skip if not in trend
-        if symbol not in trend_map:
-            continue
+    # add file column
+    df["file"] = file_key
 
-        new_row = {col: row[col] for col in BASE_COLUMNS}
-        new_row["file"] = file_tag
-        new_row["trand"] = trend_map[symbol]
+    # detect trand
+    def detect_trand(symbol):
+        symbol = str(symbol)
+        if symbol in uptrend_symbols:
+            return "uptrand"
+        elif symbol in downtrend_symbols:
+            return "downtrand"
+        else:
+            return "sideways"
 
-        final_rows.append(new_row)
+    df["trand"] = df["symbol"].apply(detect_trand)
 
-# --------------------------------------------------
-# Create final DataFrame
-# --------------------------------------------------
-if not final_rows:
-    print("\n❌ No matching buy signals found. buy.csv not created.")
-    exit()
+    all_rows.append(df)
 
-final_df = pd.DataFrame(final_rows)
+# -----------------------------
+# Merge all
+# -----------------------------
+final_df = pd.concat(all_rows, ignore_index=True) if all_rows else \
+           pd.DataFrame(columns=BASE_COLUMNS + ["file", "trand"])
 
-# --------------------------------------------------
-# Sort by best RRR (DESC)
-# --------------------------------------------------
-final_df = final_df.sort_values(
-    by="RRR",
-    ascending=False
-).reset_index(drop=True)
+# -----------------------------
+# Format date & RRR
+# -----------------------------
+final_df["date"] = pd.to_datetime(final_df["date"], errors="coerce")
+final_df["RRR"] = pd.to_numeric(final_df["RRR"], errors="coerce")
 
-# Reassign No column
-final_df["No"] = range(1, len(final_df) + 1)
+# -----------------------------
+# Trend wise sorting
+# -----------------------------
+up_df = final_df[final_df["trand"] == "uptrand"].copy()
+side_df = final_df[final_df["trand"] == "sideways"].copy()
+down_df = final_df[final_df["trand"] == "downtrand"].copy()
 
-# --------------------------------------------------
-# Reorder columns
-# --------------------------------------------------
-FINAL_COLUMNS = BASE_COLUMNS + ["file", "trand"]
-final_df = final_df[FINAL_COLUMNS]
+# uptrand → latest date, then highest RRR
+up_df = up_df.sort_values(
+    by=["date", "RRR"],
+    ascending=[False, False]
+)
 
-# --------------------------------------------------
+# sideways → highest RRR
+side_df = side_df.sort_values(
+    by=["RRR"],
+    ascending=[False]
+)
+
+# downtrand → highest RRR
+down_df = down_df.sort_values(
+    by=["RRR"],
+    ascending=[False]
+)
+
+# -----------------------------
+# Final merge (priority order)
+# -----------------------------
+final_df = pd.concat(
+    [up_df, side_df, down_df],
+    ignore_index=True
+)
+
+# -----------------------------
 # Save output
-# --------------------------------------------------
+# -----------------------------
+os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
 final_df.to_csv(OUTPUT_FILE, index=False)
 
-print("\n✅ buy.csv generated successfully!")
-print(f"📁 Output path: {OUTPUT_FILE}")
-print(f"📊 Total signals: {len(final_df)}")
-
-# Show top 5
-print("\n🔥 Top 5 signals by RRR:")
-print(
-    final_df[["No", "symbol", "RRR", "file", "trand"]]
-    .head(5)
-    .to_string(index=False)
-)
+print("✅ Final sorted buy.csv created:", OUTPUT_FILE)
