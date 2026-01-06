@@ -20,14 +20,13 @@ except Exception as e:
 
 gape_file = "./csv/gape.csv"
 mongodb_file = "./csv/mongodb.csv"
-output_file1 = "./output/ai_signal/gape_buy.csv"
 output_file2 = "./csv/gape_buy.csv"
 
-os.makedirs(os.path.dirname(output_file1), exist_ok=True)
+
 os.makedirs(os.path.dirname(output_file2), exist_ok=True)
 
 # Delete old files
-for f in [output_file1, output_file2]:
+for f in [output_file2]:
     if os.path.exists(f):
         os.remove(f)
 
@@ -187,7 +186,6 @@ else:
     ])
 
 # Save
-df.to_csv(output_file1, index=False)
 df.to_csv(output_file2, index=False)
 
 print(f"✅ gape_buy.csv saved with {len(df)} signals:")
