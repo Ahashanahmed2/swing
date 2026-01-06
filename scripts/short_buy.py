@@ -21,14 +21,14 @@ except Exception as e:
 # Paths
 rsi_path = './csv/rsi_diver_retest.csv'
 mongo_path = './csv/mongodb.csv'
-output_path1 = './output/ai_signal/short_buy.csv'   # ⚠️ Note: saving as short_buy.csv (per your path)
+short_buy.csv'   # ⚠️ Note: saving as short_buy.csv (per your path)
 output_path2 = './csv/short_buy.csv'
 
-os.makedirs(os.path.dirname(output_path1), exist_ok=True)
+
 os.makedirs(os.path.dirname(output_path2), exist_ok=True)
 
 # Delete old files
-for path in [output_path1, output_path2]:
+for path in [output_path2]:
     if os.path.exists(path):
         os.remove(path)
 
@@ -189,7 +189,7 @@ else:
     ])
 
 # Save
-df.to_csv(output_path1, index=False)
+
 df.to_csv(output_path2, index=False)
 
 print(f"✅ short_buy.csv saved with {len(df)} signals (DSE-compliant position sizing)")
