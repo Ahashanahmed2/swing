@@ -22,11 +22,11 @@ except Exception as e:
 # Paths
 # ---------------------------------------------------------
 input_path = "./csv/mongodb.csv"
-output_path1 = "./csv/swing_buy.csv"
-output_path2 = "./output/ai_signal/swing_buy.csv"
+output_path = "./csv/swing_buy.csv"
 
-os.makedirs(os.path.dirname(output_path1), exist_ok=True)
-os.makedirs(os.path.dirname(output_path2), exist_ok=True)
+
+os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
 
 # ---------------------------------------------------------
 # Clear old results
@@ -199,8 +199,8 @@ else:
 # ---------------------------------------------------------
 # Save
 # ---------------------------------------------------------
-result_df.to_csv(output_path1, index=False)
-result_df.to_csv(output_path2, index=False)
+result_df.to_csv(output_path, index=False)
+
 
 print(f"✅ swing_buy.csv updated with {len(result_df)} signals:")
 if len(result_df) > 0:
