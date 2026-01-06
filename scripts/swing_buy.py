@@ -33,8 +33,8 @@ os.makedirs(os.path.dirname(output_path), exist_ok=True)
 # ---------------------------------------------------------
 full_cols = ["no", "date", "symbol", "buy", "SL", "tp", "position_size", "exposure_bdt", "actual_risk_bdt", "diff", "RRR"]
 empty_df = pd.DataFrame(columns=full_cols)
-empty_df.to_csv(output_path1, index=False)
-empty_df.to_csv(output_path2, index=False)
+empty_df.to_csv(output_path, index=False)
+
 
 # ---------------------------------------------------------
 # Load & validate
