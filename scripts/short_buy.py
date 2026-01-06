@@ -21,7 +21,7 @@ except Exception as e:
 # Paths
 rsi_path = './csv/rsi_diver_retest.csv'
 mongo_path = './csv/mongodb.csv'
-short_buy.csv'   # ⚠️ Note: saving as short_buy.csv (per your path)
+# ⚠️ Note: saving as 
 output_path2 = './csv/short_buy.csv'
 
 
