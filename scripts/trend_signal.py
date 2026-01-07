@@ -1,196 +1,114 @@
+# uptrend_cond12_only.py
+# কন্ডিশন ১ ও ২ ঠিক রেখে শুধু UPTREND সিগন্যাল তৈরি
 import pandas as pd
-import os
-import json
+import os, json, numpy as np
 from datetime import datetime
 
-# --------------------------------------------------
-# Load config
-# --------------------------------------------------
-CONFIG_PATH = "./config.json"
+# ---------- 1. Config ----------
+CFG = "./config.json"
 try:
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        config = json.load(f)
-    TOTAL_CAPITAL = float(config.get("total_capital", 500_000))
-    RISK_PERCENT  = float(config.get("risk_percent", 0.01))
+    with open(CFG) as f:
+        c = json.load(f)
+    CAPITAL = float(c.get("total_capital", 500_000))
+    RISK_PCT = float(c.get("risk_percent", 0.01))
 except Exception as e:
-    print(f"⚠️ Config load error: {e}, using defaults")
-    TOTAL_CAPITAL = 500_000
-    RISK_PERCENT  = 0.01
+    print("⚠️ Config fail → defaults")
+    CAPITAL, RISK_PCT = 500_000, 0.01
 
-# --------------------------------------------------
-# Signal maintenance helper
-# --------------------------------------------------
-def merge_and_track_new_symbols(old_df, new_df, symbol_col="symbol"):
-    if old_df is None or old_df.empty:
-        return new_df, new_df.copy()
-    if new_df.empty:
-        return old_df, pd.DataFrame()
+# ---------- 2. Paths ----------
+IN_FILE   = "./csv/mongodb.csv"
+OUT_FILE  = "./csv/uptrand.csv"
+os.makedirs(os.path.dirname(OUT_FILE), exist_ok=True)
 
-    old_symbols = set(old_df[symbol_col])
-    new_symbols = set(new_df[symbol_col])
+# ---------- 3. Load & prep ----------
+if not os.path.exists(IN_FILE):
+    raise FileNotFoundError(IN_FILE)
 
-    common      = old_symbols & new_symbols
-    preserved   = old_df[old_df[symbol_col].isin(common)]
-    brand_new   = new_df[~new_df[symbol_col].isin(old_symbols)]
+df = pd.read_csv(IN_FILE)
+req = ["date","symbol","close","high","low"]
+assert all(c in df.columns for c in req), "Required cols missing"
 
-    final_df = pd.concat([preserved, brand_new], ignore_index=True)
-    return final_df, brand_new
+df["date"] = pd.to_datetime(df["date"], errors="coerce")
+df = df.dropna(subset=["date"]).sort_values(["symbol","date"])
 
-# --------------------------------------------------
-# MAIN
-# --------------------------------------------------
-def create_uptrend_downtrend_signals():
-    mongodb_csv   = "./csv/mongodb.csv"
-    trand_base_dir= "./csv/trand/"
-    output_dir    = "./csv/"
-    ai_output_dir = "./output/ai_signal"
+# ---------- 4. Signal engine ----------
+signals = []
 
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(ai_output_dir, exist_ok=True)
-    os.makedirs(trand_base_dir, exist_ok=True)
+for sym, g in df.groupby("symbol", sort=False):
+    if len(g) < 5:
+        continue
+    A,B,C,D,E = [g.iloc[-i] for i in range(1,6)]
+    buy = sl = tp = None
 
-    uptrend_file   = os.path.join(output_dir, "uptrand.csv")
-    downtrend_file = os.path.join(output_dir, "downtrand.csv")
+    # === Condition-1 ===
+    if (A["close"] > B["high"] and
+        B["low"]  < C["low"]  and
+        B["high"] < C["high"] and
+        C["high"] < D["high"] and
+        C["low"]  < D["low"]):
+        buy, sl = A["close"], B["low"]
 
-    # old uptrend load
+    # === Condition-2 ===
+    elif (A["close"] > B["high"] and
+          B["high"] < C["high"] and
+          B["low"]  > C["low"]  and
+          C["high"] < D["high"] and
+          C["low"]  < D["low"]  and
+          D["high"] < E["high"] and
+          D["low"]  < E["low"]):
+        buy, sl = A["close"], C["low"]
+
+    if buy is None or sl is None or sl >= buy:
+        continue
+
+    # --- TP scan backward from SL-source row ---
+    sl_row = B if sl == B["low"] else C
     try:
-        old_up_df = pd.read_csv(uptrend_file) if os.path.exists(uptrend_file) and os.path.getsize(uptrend_file) > 0 else None
-    except Exception as e:
-        print(f"⚠️ Error loading old uptrend file: {e}")
-        old_up_df = None
+        sl_idx = g[g["date"]==sl_row["date"]].index[0]
+    except IndexError:
+        sl_idx = (abs(g["date"] - sl_row["date"])).idxmin()
 
-    # mongodb load
-    if not os.path.exists(mongodb_csv):
-        print(f"❌ mongodb.csv not found at {mongodb_csv}")
-        return
-    try:
-        df = pd.read_csv(mongodb_csv)
-        if df.empty:
-            print("⚠️ mongodb.csv is empty"); return
-    except Exception as e:
-        print(f"❌ Error reading mongodb.csv: {e}"); return
+    for i in range(sl_idx-1, 1, -1):
+        try:
+            sb, sa, s = g.iloc[i-2], g.iloc[i-1], g.iloc[i]
+        except IndexError:
+            break
+        if s["high"] > sa["high"] >= sb["high"]:
+            tp = s["high"]
+            break
+    if tp is None or tp <= buy:
+        continue
 
-    # preprocess
-    df["date"] = pd.to_datetime(df["date"], errors='coerce')
-    df = df.dropna(subset=['date']).sort_values(["symbol", "date"])
-    groups = df.groupby("symbol", sort=False)
+    # --- Position sizing ---
+    risk_share = buy - sl
+    if risk_share <= 0:
+        continue
+    pos = max(1, int((CAPITAL * RISK_PCT) / risk_share))
+    signals.append({
+        "date": A["date"],
+        "symbol": sym,
+        "buy": round(float(buy),2),
+        "sl":  round(float(sl),2),
+        "tp":  round(float(tp),2),
+        "position_size": pos,
+        "exposure_bdt": round(pos * buy, 2),
+        "actual_risk_bdt": round(pos * risk_share, 2),
+        "diff": round(risk_share, 4),
+        "RRR": round((tp - buy) / risk_share, 2)
+    })
 
-    uptrend_rows   = []
-    downtrend_rows = []
+# ---------- 5. Build DataFrame ----------
+if signals:
+    res = pd.DataFrame(signals)
+    res = res[(res["buy"]>res["sl"]) & (res["tp"]>res["buy"]) & (res["RRR"]>0)]
+    res = res.sort_values(["RRR","diff"], ascending=[False,True])
+    res.insert(0, "no", range(1, len(res)+1))
+    res["date"] = res["date"].dt.strftime("%Y-%m-%d")
+else:
+    res = pd.DataFrame(columns=["no","date","symbol","buy","sl","tp",
+                                "position_size","exposure_bdt","actual_risk_bdt",
+                                "diff","RRR"])
 
-    for symbol, group in groups:
-        if len(group) < 5:               # still need 5 for fallback calc
-            continue
-
-        latest      = group.iloc[-1]
-        latest_close= float(latest["close"])
-        latest_date = latest["date"]
-
-        symbol_dir  = os.path.join(trand_base_dir, symbol)
-        high_file   = os.path.join(symbol_dir, "high.csv")
-        low_file    = os.path.join(symbol_dir, "low.csv")
-
-        # --------------- UPTREND ---------------
-        if os.path.exists(high_file) and os.path.getsize(high_file) > 0:
-            try:
-                high_df = pd.read_csv(high_file)
-                high_df["date"] = pd.to_datetime(high_df["date"], errors='coerce')
-                high_df = high_df.dropna(subset=['date'])
-                if len(high_df) < 2:
-                    continue
-
-                p1, p2 = high_df.iloc[0], high_df.iloc[1]
-                if float(p1["price"]) < float(p2["price"]) < latest_close:
-                    buy = latest_close
-
-                    # SL / TP optional
-                    sl = find_sl_from_buy(group) or buy * 0.95          # 5% fallback
-                    tp = find_tp_from_anchor(group, p2["date"]) or buy * 1.5  # 1.5R fallback
-
-                    risk = buy - sl
-                    pos  = max(1, int((TOTAL_CAPITAL * RISK_PERCENT) / risk))
-                    rrr  = (tp - buy) / risk if risk > 0 else 1.5
-
-                    uptrend_rows.append({
-                        "date": latest_date,
-                        "symbol": symbol,
-                        "buy": round(buy, 2),
-                        "sl": round(sl, 2),
-                        "tp": round(tp, 2),
-                        "position_size": pos,
-                        "exposure_bdt": round(pos * buy, 2),
-                        "actual_risk_bdt": round(pos * risk, 2),
-                        "diff": round(risk, 4),
-                        "RRR": round(rrr, 2),
-                        "p1": p1["date"],
-                        "p2": p2["date"]
-                    })
-            except Exception as e:
-                print(f"Error processing {symbol} uptrend: {e}")
-                continue
-
-        # --------------- DOWNTREND ---------------
-        if os.path.exists(low_file) and os.path.getsize(low_file) > 0:
-            try:
-                low_df = pd.read_csv(low_file)
-                low_df["date"] = pd.to_datetime(low_df["date"], errors='coerce')
-                low_df = low_df.dropna(subset=['date'])
-                if len(low_df) < 2:
-                    continue
-
-                p1, p2 = low_df.iloc[0], low_df.iloc[1]
-                if float(p1["price"]) > float(p2["price"]) > latest_close:
-                    downtrend_rows.append({
-                        "date": latest_date.strftime("%Y-%m-%d"),
-                        "symbol": symbol,
-                        "close": round(latest_close, 2),
-                        "p1": p1["date"].strftime("%Y-%m-%d") if hasattr(p1["date"], 'strftime') else str(p1["date"]),
-                        "p2": p2["date"].strftime("%Y-%m-%d") if hasattr(p2["date"], 'strftime') else str(p2["date"])
-                    })
-            except Exception as e:
-                print(f"Error processing {symbol} downtrend: {e}")
-                continue
-
-    # --------------- SAVE UPTREND ---------------
-    try:
-        if uptrend_rows:
-            new_up = pd.DataFrame(uptrend_rows)
-            new_up["date"] = pd.to_datetime(new_up["date"]).dt.strftime("%Y-%m-%d")
-            new_up["p1"]   = pd.to_datetime(new_up["p1"]).dt.strftime("%Y-%m-%d")
-            new_up["p2"]   = pd.to_datetime(new_up["p2"]).dt.strftime("%Y-%m-%d")
-
-            final_up, brand_new = merge_and_track_new_symbols(old_up_df, new_up)
-            if not final_up.empty:
-                final_up = final_up.sort_values(["RRR", "diff"], ascending=[False, True])
-                final_up.insert(0, "no", range(1, len(final_up) + 1))
-                final_up.to_csv(uptrend_file, index=False)
-
-                if not brand_new.empty:
-                    brand_new.to_csv(os.path.join(ai_output_dir, "uptrand.csv"), index=False)
-        else:
-            # no new signal → keep old or empty header
-            if old_up_df is not None and not old_up_df.empty:
-                old_up_df.to_csv(uptrend_file, index=False)
-            else:
-                pd.DataFrame(columns=["no", "date", "symbol", "buy", "sl", "tp", "position_size",
-                                      "exposure_bdt", "actual_risk_bdt", "diff", "RRR", "p1", "p2"]) \
-                  .to_csv(uptrend_file, index=False)
-    except Exception as e:
-        print(f"❌ Error saving uptrend: {e}")
-
-    # --------------- SAVE DOWNTREND ---------------
-    try:
-        if downtrend_rows:
-            down_df = pd.DataFrame(downtrend_rows)
-            down_df.insert(0, "no", range(1, len(down_df) + 1))
-            down_df.to_csv(downtrend_file, index=False)
-        else:
-            pd.DataFrame(columns=["no", "date", "symbol", "close", "p1", "p2"]) \
-              .to_csv(downtrend_file, index=False)
-    except Exception as e:
-        print(f"❌ Error saving downtrend: {e}")
-
-# --------------------------------------------------
-if __name__ == "__main__":
-    create_uptrend_downtrend_signals()
-    print("✅ Signal generation completed")
+# ---------- 6. Save ----------
+res.to_csv(OUT_FILE, index=False)
+print(f"✅ Uptrend signals saved: {len(res)} rows → {OUT_FILE}")
