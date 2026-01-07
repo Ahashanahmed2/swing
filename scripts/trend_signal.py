@@ -104,7 +104,7 @@ def create_uptrend_downtrend_signals():
             except Exception as e:
                 print(f"⚠️ High error ({symbol}): {e}")
 
-        # ---------------- DOWNTREND ----------------
+                # ---------------- DOWNTREND ----------------
         if os.path.exists(low_file):
             try:
                 low_df = pd.read_csv(low_file)
@@ -117,7 +117,7 @@ def create_uptrend_downtrend_signals():
                     p1_date = low_df.iloc[0]['date']
                     p2_date = low_df.iloc[1]['date']
 
-if p1_price > latest_close < p2_price and p1_price > p2_price:
+                    if p1_price > latest_close < p2_price and p1_price > p2_price:
                         downtrend_signals.append({
                             'date': latest_date,
                             'symbol': symbol,
@@ -127,6 +127,7 @@ if p1_price > latest_close < p2_price and p1_price > p2_price:
                         })
             except Exception as e:
                 print(f"⚠️ Low error ({symbol}): {e}")
+
 
     # --------------------------------------------------
     # SAVE UPTREND
