@@ -14,7 +14,7 @@ BUY_FILES = {
 UPTREND_FILE = "./csv/uptrend.csv"
 DOWNTREND_FILE = "./csv/downtrend.csv"
 
-OUTPUT_FILE = "./csc/buy.csv"
+OUTPUT_FILE = "./csv/buy.csv"
 
 # -----------------------------
 # Base columns
