@@ -101,8 +101,7 @@ def detect_patterns(symbol_data):
           B["high"] < C["high"] and
           B["low"] > C["low"] and
           C["high"] < D["high"] and
-
-C["low"] < D["low"] and
+          C["low"] < D["low"] and
           D["high"] < E["high"] and
           D["low"] < E["low"]):
         buy, SL = A["close"], C["low"]
@@ -211,8 +210,7 @@ for idx, buy_row in buy_df.iterrows():
     
     # যদি প্যাটার্ন থেকে TP পাওয়া যায়, সেটা ব্যবহার করুন
     if pattern_tp is not None and pattern_used:
-
-tp = pattern_tp
+        tp = pattern_tp
         if pattern_p2_date is not None:
             final_p2_date = pattern_p2_date
     else:
@@ -318,8 +316,7 @@ if results:
         # Sort by RRR and diff
         result_df = result_df.sort_values(["RRR", "diff"], 
                                          ascending=[False, True]).reset_index(drop=True)
-
-result_df.insert(0, "no", range(1, len(result_df) + 1))
+        result_df.insert(0, "no", range(1, len(result_df) + 1))
         
         # Format dates for output
         result_df["date"] = pd.to_datetime(result_df["date"]).dt.strftime("%Y-%m-%d")
