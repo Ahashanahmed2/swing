@@ -23,7 +23,7 @@ except Exception as e:
 # ---------------------------------------------------------
 buy_csv_path = "./csv/buy.csv"
 mongodb_path = "./csv/mongodb.csv"
-output_path = "./output/ai_signal/buy.csv"
+output_path = "./output/ai_signal/uptrand.csv"
 
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
