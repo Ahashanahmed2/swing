@@ -29,13 +29,14 @@ def create_uptrend_downtrend_signals():
     mongodb_csv = './csv/mongodb.csv'
     trand_base_dir = './csv/trand/'
     output_dir = './csv/'
-    ai_output_dir = './csv'
+    ai_output_dir = './output/ai_signal/
+   
 
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(ai_output_dir, exist_ok=True)
 
     uptrend_file = os.path.join(output_dir, 'uptrand.csv')
-    downtrend_file = os.path.join(output_dir, 'downtrand.csv')
+    downtrend_file = os.path.join(ai_output_dir, 'downtrand.csv')
 
     print(f"Reading {mongodb_csv}...")
 
