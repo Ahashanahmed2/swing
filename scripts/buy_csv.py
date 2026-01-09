@@ -1,168 +1,193 @@
+মুকতার:
 import pandas as pd
 import os
+from datetime import datetime
 
-# -----------------------------
-# Input buy files
-# -----------------------------
-BUY_FILES = {
-    "rsi": "./csv/rsi_30_buy.csv",
-    "short": "./csv/short_buy.csv",
-    "swing": "./csv/swing_buy.csv",
-    "gape": "./csv/gape_buy.csv",
-}
 
-UPTREND_FILE = "./csv/uptrend.csv"
-DOWNTREND_FILE = "./csv/downtrend.csv"
+# --------------------------------------------------
+# Helper: merge old + new & detect new symbols
+# --------------------------------------------------
+def merge_and_track_new_symbols(old_df, new_df, symbol_col='symbol'):
+    if old_df is None or old_df.empty:
+        return new_df, new_df.copy()
 
-OUTPUT_FILE = "./csv/buy.csv"
+    old_symbols = set(old_df[symbol_col])
+    new_symbols = set(new_df[symbol_col])
 
-# -----------------------------
-# Base columns
-# -----------------------------
-BASE_COLUMNS = [
-    "No", "date", "symbol", "buy", "SL", "tp",
-    "position_size", "exposure_bdt",
-    "actual_risk_bdt", "diff", "RRR"
-]
+    # keep only still-valid symbols
+    common_symbols = old_symbols & new_symbols
+    preserved_df = old_df[old_df[symbol_col].isin(common_symbols)]
 
-# -----------------------------
-# Load trend symbols (CLEAN)
-# -----------------------------
-def load_trend_symbols(path):
-    if not os.path.exists(path):
-        print(f"⚠️ Trend file not found: {path}")
-        return set()
+    # brand new symbols
+    new_only_df = new_df[~new_df[symbol_col].isin(old_symbols)]
 
-    df = pd.read_csv(path)
+    final_df = pd.concat([preserved_df, new_only_df], ignore_index=True)
+    return final_df, new_only_df
 
-    if "symbol" not in df.columns:
-        print(f"⚠️ 'symbol' column missing in {path}")
-        return set()
 
-    return set(
-        df["symbol"]
-        .astype(str)
-        .str.strip()
-        .str.upper()
-    )
+def create_uptrend_downtrend_signals():
 
-uptrend_symbols = load_trend_symbols(UPTREND_FILE)
-downtrend_symbols = load_trend_symbols(DOWNTREND_FILE)
+    mongodb_csv = './csv/mongodb.csv'
+    trand_base_dir = './csv/trand/'
+    output_dir = './csv/'
+    ai_output_dir = './csv'
 
-# -----------------------------
-# Process buy files
-# -----------------------------
-all_rows = []
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(ai_output_dir, exist_ok=True)
 
-for file_key, file_path in BUY_FILES.items():
-    if not os.path.exists(file_path):
-        print(f"⚠️ Buy file not found: {file_path}")
-        continue
+    uptrend_file = os.path.join(output_dir, 'uptrand.csv')
+    downtrend_file = os.path.join(output_dir, 'downtrand.csv')
 
-    df = pd.read_csv(file_path)
+    print(f"Reading {mongodb_csv}...")
 
-    if "symbol" not in df.columns:
-        print(f"⚠️ 'symbol' column missing in {file_path}")
-        continue
+    try:
+        mongodb_df = pd.read_csv(mongodb_csv)
+    except FileNotFoundError:
+        print(f"❌ Error: {mongodb_csv} not found!")
+        return
 
-    # Ensure all base columns exist
-    for col in BASE_COLUMNS:
-        if col not in df.columns:
-            df[col] = None
+    for col in ['symbol', 'date', 'close']:
+        if col not in mongodb_df.columns:
+            print(f"❌ Missing column: {col}")
+            return
 
-    df = df[BASE_COLUMNS]
+    mongodb_df['date'] = pd.to_datetime(mongodb_df['date'])
 
-    # Clean symbol
-    df["symbol"] = (
-        df["symbol"]
-        .astype(str)
-        .str.strip()
-        .str.upper()
-    )
+    # latest candle per symbol
+    latest_data = {}
+    for symbol in mongodb_df['symbol'].unique():
+        df = mongodb_df[mongodb_df['symbol'] == symbol] \
+            .sort_values('date', ascending=False)
 
-    # File source
-    df["file"] = file_key
+        if not df.empty:
+            latest_data[symbol] = {
+                'close': df.iloc[0]['close'],
+                'date': df.iloc[0]['date']
+            }
 
-    # Detect trend
-    def detect_trend(symbol):
-        if symbol in uptrend_symbols:
-            return "uptrend"
-        elif symbol in downtrend_symbols:
-            return "downtrend"
-        else:
-            return "sideways"
+    print(f"✅ Found {len(latest_data)} symbols")
 
-    df["trend"] = df["symbol"].apply(detect_trend)
+    uptrend_signals = []
+    downtrend_signals = []
 
-    all_rows.append(df)
+    # --------------------------------------------------
+    # Signal detection
+    # --------------------------------------------------
+    for symbol, info in latest_data.items():
+        symbol_dir = os.path.join(trand_base_dir, symbol)
+        high_file = os.path.join(symbol_dir, 'high.csv')
+        low_file = os.path.join(symbol_dir, 'low.csv')
 
-# -----------------------------
-# Merge all
-# -----------------------------
-if all_rows:
-    final_df = pd.concat(all_rows, ignore_index=True)
-else:
-    final_df = pd.DataFrame(columns=BASE_COLUMNS + ["file", "trend"])
+        latest_close = info['close']
+        latest_date = info['date']
 
-# -----------------------------
-# Safe type conversion
-# -----------------------------
-if not final_df.empty:
-    # Date handling (NaT → very old date)
-    final_df["date"] = pd.to_datetime(
-        final_df["date"], errors="coerce"
-    ).fillna(pd.Timestamp("1970-01-01"))
+        # ---------------- UPTREND ----------------
+        if os.path.exists(high_file):
+            try:
+                high_df = pd.read_csv(high_file)
+                high_df['date'] = pd.to_datetime(high_df['date'])
 
-    # RRR handling (NaN → very low)
-    final_df["RRR"] = pd.to_numeric(
-        final_df["RRR"], errors="coerce"
-    ).fillna(-999)
+                if len(high_df) >= 2:
+                    p1_price = float(high_df.iloc[0]['price'])
+                    p2_price = float(high_df.iloc[1]['price'])
 
-# -----------------------------
-# Trend-wise sorting
-# -----------------------------
-up_df = final_df[final_df["trend"] == "uptrend"].copy()
-side_df = final_df[final_df["trend"] == "sideways"].copy()
-down_df = final_df[final_df["trend"] == "downtrend"].copy()
+                    p1_date = high_df.iloc[0]['date']
+                    p2_date = high_df.iloc[1]['date']
 
-# uptrend → latest date → highest RRR
-if not up_df.empty:
-    up_df = up_df.sort_values(
-        by=["date", "RRR"],
-        ascending=[False, False]
-    )
+                    if p1_price < latest_close > p2_price and p1_price < p2_price:
+                        uptrend_signals.append({
+                            'date': latest_date,
+                            'symbol': symbol,
+                            'close': latest_close,
+                            'p1_date': p1_date,
+                            'p2_date': p2_date
+                        })
+            except Exception as e:
+                print(f"⚠️ High error ({symbol}): {e}")
 
-# sideways → highest RRR
-if not side_df.empty:
-    side_df = side_df.sort_values(
-        by=["RRR"],
-        ascending=[False]
-    )
+        # ---------------- DOWNTREND ----------------
+        if os.path.exists(low_file):
+            try:
+                low_df = pd.read_csv(low_file)
+                low_df['date'] = pd.to_datetime(low_df['date'])
 
-# downtrend → highest RRR
-if not down_df.empty:
-    down_df = down_df.sort_values(
-        by=["RRR"],
-        ascending=[False]
-    )
+                if len(low_df) >= 2:
+                    p1_price = float(low_df.iloc[0]['price'])
+                    p2_price = float(low_df.iloc[1]['price'])
 
-# -----------------------------
-# Final merge (priority order)
-# -----------------------------
-final_df = pd.concat(
-    [up_df, side_df, down_df],
-    ignore_index=True
-)
+                    p1_date = low_df.iloc[0]['date']
+                    p2_date = low_df.iloc[1]['date']
 
-# -----------------------------
-# Save output
-# -----------------------------
-os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
-final_df.to_csv(OUTPUT_FILE, index=False)
+if p1_price > latest_close < p2_price and p1_price > p2_price:
+                        downtrend_signals.append({
+                            'date': latest_date,
+                            'symbol': symbol,
+                            'close': latest_close,
+                            'p1_date': p1_date,
+                            'p2_date': p2_date
+                        })
+            except Exception as e:
+                print(f"⚠️ Low error ({symbol}): {e}")
 
-print("✅ Final sorted buy.csv created")
-print(f"📂 Path: {OUTPUT_FILE}")
-print(f"📊 Total records: {len(final_df)}")
-print(
-    f"🔼 Uptrend: {len(up_df)} | ➖ Sideways: {len(side_df)} | 🔽 Downtrend: {len(down_df)}"
-)
+    # --------------------------------------------------
+    # SAVE UPTREND
+    # --------------------------------------------------
+    if uptrend_signals:
+        new_up_df = pd.DataFrame(uptrend_signals)
+        old_up_df = pd.read_csv(uptrend_file) if os.path.exists(uptrend_file) else None
+
+        final_up_df, new_up_symbols = merge_and_track_new_symbols(
+            old_up_df, new_up_df
+        )
+
+        final_up_df.to_csv(uptrend_file, index=False)
+
+        if not new_up_symbols.empty:
+            new_up_symbols.to_csv(
+                os.path.join(ai_output_dir, 'uptrand.csv'),
+                index=False
+            )
+
+        print("✅ Uptrend updated")
+
+    else:
+        pd.DataFrame().to_csv(uptrend_file, index=False)
+        print("❌ No uptrend → cleared")
+
+    # --------------------------------------------------
+    # SAVE DOWNTREND
+    # --------------------------------------------------
+    if downtrend_signals:
+        new_down_df = pd.DataFrame(downtrend_signals)
+        old_down_df = pd.read_csv(downtrend_file) if os.path.exists(downtrend_file) else None
+
+        final_down_df, new_down_symbols = merge_and_track_new_symbols(
+            old_down_df, new_down_df
+        )
+
+        final_down_df.to_csv(downtrend_file, index=False)
+
+        if not new_down_symbols.empty:
+            new_down_symbols.to_csv(
+                os.path.join(ai_output_dir, 'downtrand.csv'),
+                index=False
+            )
+
+        print("✅ Downtrend updated")
+
+    else:
+        pd.DataFrame().to_csv(downtrend_file, index=False)
+        print("❌ No downtrend → cleared")
+
+    print("\n🎯 Trend breakout / breakdown detection completed!")
+
+
+def main():
+    print("=" * 60)
+    print("TREND BREAKOUT / BREAKDOWN DETECTION")
+    print("=" * 60)
+    create_uptrend_downtrend_signals()
+
+
+if name == "main":
+    main()
