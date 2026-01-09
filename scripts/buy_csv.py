@@ -70,63 +70,64 @@ def create_uptrend_downtrend_signals():
     downtrend_signals = []
 
     # --------------------------------------------------
-    # Signal detection
-    # --------------------------------------------------
-    for symbol, info in latest_data.items():
-        symbol_dir = os.path.join(trand_base_dir, symbol)
-        high_file = os.path.join(symbol_dir, 'high.csv')
-        low_file = os.path.join(symbol_dir, 'low.csv')
+   # --------------------------------------------------
+# Signal detection
+# --------------------------------------------------
+for symbol, info in latest_data.items():
+    symbol_dir = os.path.join(trand_base_dir, symbol)
+    high_file = os.path.join(symbol_dir, 'high.csv')
+    low_file = os.path.join(symbol_dir, 'low.csv')
 
-        latest_close = info['close']
-        latest_date = info['date']
+    latest_close = info['close']
+    latest_date = info['date']
 
-        # ---------------- UPTREND ----------------
-        if os.path.exists(high_file):
-            try:
-                high_df = pd.read_csv(high_file)
-                high_df['date'] = pd.to_datetime(high_df['date'])
+    # ---------------- UPTREND ----------------
+    if os.path.exists(high_file):
+        try:
+            high_df = pd.read_csv(high_file)
+            high_df['date'] = pd.to_datetime(high_df['date'])
 
-                if len(high_df) >= 2:
-                    p1_price = float(high_df.iloc[0]['price'])
-                    p2_price = float(high_df.iloc[1]['price'])
+            if len(high_df) >= 2:
+                p1_price = float(high_df.iloc[0]['price'])
+                p2_price = float(high_df.iloc[1]['price'])
 
-                    p1_date = high_df.iloc[0]['date']
-                    p2_date = high_df.iloc[1]['date']
+                p1_date = high_df.iloc[0]['date']
+                p2_date = high_df.iloc[1]['date']
 
-                    if p1_price < latest_close > p2_price and p1_price < p2_price:
-                        uptrend_signals.append({
-                            'date': latest_date,
-                            'symbol': symbol,
-                            'close': latest_close,
-                            'p1_date': p1_date,
-                            'p2_date': p2_date
-                        })
-            except Exception as e:
-                print(f"⚠️ High error ({symbol}): {e}")
+                if p1_price < latest_close > p2_price and p1_price < p2_price:
+                    uptrend_signals.append({
+                        'date': latest_date,
+                        'symbol': symbol,
+                        'close': latest_close,
+                        'p1_date': p1_date,
+                        'p2_date': p2_date
+                    })
+        except Exception as e:
+            print(f"⚠️ High error ({symbol}): {e}")
 
-        # ---------------- DOWNTREND ----------------
-        if os.path.exists(low_file):
-            try:
-                low_df = pd.read_csv(low_file)
-                low_df['date'] = pd.to_datetime(low_df['date'])
+    # ---------------- DOWNTREND ----------------
+    if os.path.exists(low_file):
+        try:
+            low_df = pd.read_csv(low_file)
+            low_df['date'] = pd.to_datetime(low_df['date'])
 
-                if len(low_df) >= 2:
-                    p1_price = float(low_df.iloc[0]['price'])
-                    p2_price = float(low_df.iloc[1]['price'])
+            if len(low_df) >= 2:
+                p1_price = float(low_df.iloc[0]['price'])
+                p2_price = float(low_df.iloc[1]['price'])
 
-                    p1_date = low_df.iloc[0]['date']
-                    p2_date = low_df.iloc[1]['date']
+                p1_date = low_df.iloc[0]['date']
+                p2_date = low_df.iloc[1]['date']
 
-if p1_price > latest_close < p2_price and p1_price > p2_price:
-                        downtrend_signals.append({
-                            'date': latest_date,
-                            'symbol': symbol,
-                            'close': latest_close,
-                            'p1_date': p1_date,
-                            'p2_date': p2_date
-                        })
-            except Exception as e:
-                print(f"⚠️ Low error ({symbol}): {e}")
+                if p1_price > latest_close < p2_price and p1_price > p2_price:  # সংশোধিত লাইন
+                    downtrend_signals.append({
+                        'date': latest_date,
+                        'symbol': symbol,
+                        'close': latest_close,
+                        'p1_date': p1_date,
+                        'p2_date': p2_date
+                    })
+        except Exception as e:
+            print(f"⚠️ Low error ({symbol}): {e}")
 
     # --------------------------------------------------
     # SAVE UPTREND
