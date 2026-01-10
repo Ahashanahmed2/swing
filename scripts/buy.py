@@ -28,25 +28,12 @@ output_path = "./output/ai_signal/uptrand.csv"
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
 # ---------------------------------------------------------
-# 🆕 CLEAR OLD buy.csv DATA
+# Clear old results
 # ---------------------------------------------------------
-print(f"🔄 Clearing old data from {buy_csv_path}...")
-try:
-    # শুধু হেডার সহ একটি খালি DataFrame সেভ করুন
-    buy_required_columns = ["date", "symbol", "close", "p1_date", "p2_date"]
-    empty_buy_df = pd.DataFrame(columns=buy_required_columns)
-    empty_buy_df.to_csv(buy_csv_path, index=False)
-    print(f"✅ Cleared old data from buy.csv")
-except Exception as e:
-    print(f"⚠️ Could not clear buy.csv: {e}")
-
-# ---------------------------------------------------------
-# Clear old results in output file
-# ---------------------------------------------------------
+# p1_date এবং p2_date কলাম যোগ করা হয়েছে
 full_cols = ["no", "date", "symbol", "buy", "SL", "tp", "p1_date", "p2_date", 
              "position_size", "exposure_bdt", "actual_risk_bdt", "diff", "RRR"]
 pd.DataFrame(columns=full_cols).to_csv(output_path, index=False)
-print(f"✅ Cleared old data from output file")
 
 # ---------------------------------------------------------
 # Load and validate files
@@ -61,13 +48,6 @@ if not os.path.exists(mongodb_path):
 
 buy_df = pd.read_csv(buy_csv_path)
 mongo_df = pd.read_csv(mongodb_path)
-
-# Check if buy.csv is empty after clearing
-if len(buy_df) == 0:
-    print("ℹ️ buy.csv is empty after clearing. Waiting for new data...")
-    # এখানে আপনি নতুন ডাটা যুক্ত করার লজিক যোগ করতে পারেন
-    # অথবা প্রোগ্রাম বন্ধ করে দিতে পারেন
-    exit()
 
 # Check required columns
 required_buy_cols = ["date", "symbol", "close", "p1_date", "p2_date"]
@@ -345,17 +325,6 @@ if results:
 
         # Final column order
         result_df = result_df[full_cols]
-        
-        # 🆕 SAVE NEW DATA TO buy.csv (APPEND MODE)
-        # যদি আপনি buy.csv এ নতুন ডাটা রাখতে চান
-        new_buy_data = result_df[["date", "symbol", "buy", "p1_date", "p2_date"]].copy()
-        new_buy_data = new_buy_data.rename(columns={"buy": "close"})
-        
-        # পুরানো buy.csv এর সাথে নতুন ডাটা যুক্ত করুন
-        existing_buy_df = pd.read_csv(buy_csv_path)
-        updated_buy_df = pd.concat([existing_buy_df, new_buy_data], ignore_index=True)
-        updated_buy_df.to_csv(buy_csv_path, index=False)
-        print(f"✅ Added {len(new_buy_data)} new records to buy.csv")
     else:
         result_df = pd.DataFrame(columns=full_cols)
 else:
@@ -366,7 +335,7 @@ else:
 # ---------------------------------------------------------
 result_df.to_csv(output_path, index=False)
 
-print(f"\n✅ ai_signal/buy.csv updated with {len(result_df)} signals:")
+print(f"✅ ai_signal/buy.csv updated with {len(result_df)} signals:")
 if len(result_df) > 0:
     print(f"   📈 Top RRR: {result_df['RRR'].max():.2f} | Avg RRR: {result_df['RRR'].mean():.2f}")
     print(f"   📉 Min diff: {result_df['diff'].min():.4f}")
@@ -376,3 +345,6 @@ if len(result_df) > 0:
     print(f"   📅 p2_date range: {result_df['p2_date'].min()} to {result_df['p2_date'].max()}")
 else:
     print("   ⚠️ No valid signals found")
+
+এই স্ক্রিপ্ট run হওয়ার সময় 
+./csv/buy.csv এতে কোন ডাটা থাকলে, উক্ত ডাটা প্রথমে ডিলিট হবে,তারপর নতুন ডাটা যুক্ত হবে
