@@ -23,7 +23,7 @@ except Exception as e:
 #r ---------------------------------------------------------
 buy_csv_path = "./csv/uptrand.csv"
 mongodb_path = "./csv/mongodb.csv"
-output_path = "./csv/buy.csv"
+buy_path = "./csv/buy.csv"
 
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
@@ -333,7 +333,7 @@ else:
 # ---------------------------------------------------------
 # Save results
 # ---------------------------------------------------------
-result_df.to_csv(output_path, index=False)
+result_df.to_csv(buy_path, index=False)
 
 print(f"✅ ai_signal/buy.csv updated with {len(result_df)} signals:")
 if len(result_df) > 0:
