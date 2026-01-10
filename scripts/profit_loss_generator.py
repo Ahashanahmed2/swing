@@ -31,7 +31,7 @@ short_path = "./csv/short_buy.csv"
 gape_path = "./csv/gape_buy.csv"
 rsi_path = "./csv/rsi_30_buy.csv"
 swing_path = "./csv/swing_buy.csv"
-buy_path = "./csv/buy.csv"  # ✅ নতুন যুক্ত
+buy_path = "./csv/uptrand.csv"  # ✅ নতুন যুক্ত
 
 mongodb_path = "./csv/mongodb.csv"
 trade_stock_path = "./csv/trade_stock.csv"
