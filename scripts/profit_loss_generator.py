@@ -25,12 +25,13 @@ except Exception as e:
 
 
 # ---------------------------------------------------------
-# Paths
+# Paths - ✅ buy.csv যোগ করা হয়েছে
 # ---------------------------------------------------------
 short_path = "./csv/short_buy.csv"
 gape_path = "./csv/gape_buy.csv"
 rsi_path = "./csv/rsi_30_buy.csv"
 swing_path = "./csv/swing_buy.csv"
+buy_path = "./csv/buy.csv"  # ✅ নতুন যুক্ত
 
 mongodb_path = "./csv/mongodb.csv"
 trade_stock_path = "./csv/trade_stock.csv"
@@ -100,14 +101,16 @@ def get_dsex_k(market_cap_million, atr_pct):
 
 
 # ---------------------------------------------------------
-# Load signals
+# Load signals - ✅ buy_df যুক্ত করা হয়েছে
 # ---------------------------------------------------------
 short_df = load_file(short_path, "short", "buy")
 gape_df = load_file(gape_path, "gape", "buy")
 rsi_df = load_file(rsi_path, "rsi", "buy")
 swing_df = load_file(swing_path, "swing", "buy")
+buy_df = load_file(buy_path, "buy", "buy")  # ✅ নতুন যুক্ত
 
-trade_df = pd.concat([short_df, gape_df, rsi_df, swing_df], ignore_index=True)
+# ✅ সবগুলো DataFrame একত্রিত করা
+trade_df = pd.concat([short_df, gape_df, rsi_df, swing_df, buy_df], ignore_index=True)  # ✅ buy_df যোগ করা হয়েছে
 print(f"✅ Loaded {len(trade_df)} trade signals.")
 
 if trade_df.empty:
@@ -293,11 +296,11 @@ if results:
 
 
 # ---------------------------------------------------------
-# ✅ STRATEGY-BASED METRICS (by Reference)
+# ✅ STRATEGY-BASED METRICS (by Reference) - ✅ "buy" যুক্ত করা হয়েছে
 # ---------------------------------------------------------
 strategy_metrics = []
 if results:
-    for ref in ["swing", "gape", "rsi", "short"]:
+    for ref in ["swing", "gape", "rsi", "short", "buy"]:  # ✅ "buy" যোগ করা হয়েছে
         ref_results = [r for r in results if r[10] == ref]
         if not ref_results:
             continue
@@ -340,12 +343,12 @@ if results:
 
 
 # ---------------------------------------------------------
-# ✅ SYMBOL × REFERENCE METRICS (2D Win%)
+# ✅ SYMBOL × REFERENCE METRICS (2D Win%) - ✅ "buy" যুক্ত করা হয়েছে
 # ---------------------------------------------------------
 symbol_ref_metrics = []
 if results:
     symbols = sorted(set(r[1] for r in results))
-    refs = ["swing", "gape", "rsi", "short"]
+    refs = ["swing", "gape", "rsi", "short", "buy"]  # ✅ "buy" যোগ করা হয়েছে
 
     for sym in symbols:
         for ref in refs:
@@ -528,3 +531,4 @@ print(f"   Columns saved: {', '.join(final_trades.columns.tolist())}")
 print("\n🎉 SYSTEM READY — DSE-Optimized, Risk-Exact, 3-Layer Metrics!")
 print("   → Every trade risks exactly `risk_percent` of capital.")
 print("   → 1 share allowed — no artificial rounding or caps.")
+print("   → ✅ Now includes 'buy' strategy from buy.csv")
