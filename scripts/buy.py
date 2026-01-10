@@ -20,8 +20,8 @@ except Exception as e:
 
 # ---------------------------------------------------------
 # Paths
-# ---------------------------------------------------------
-buy_csv_path = "./csv/buy.csv"
+#r ---------------------------------------------------------
+buy_csv_path = "./csv/uptrand.csv"
 mongodb_path = "./csv/mongodb.csv"
 output_path = "./output/ai_signal/uptrand.csv"
 
