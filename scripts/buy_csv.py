@@ -29,7 +29,7 @@ def create_uptrend_downtrend_signals():
     mongodb_csv = './csv/mongodb.csv'
     trand_base_dir = './csv/trand/'
     output_dir = './csv/'
-    ai_output_dir = './output/ai_signal/
+    ai_output_dir = './output/ai_signal/'
    
 
     os.makedirs(output_dir, exist_ok=True)
