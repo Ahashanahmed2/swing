@@ -31,7 +31,7 @@ buy_path = "./csv/buy.csv"
 # p1_date এবং p2_date কলাম যোগ করা হয়েছে
 full_cols = ["no", "date", "symbol", "buy", "SL", "tp", "p1_date", "p2_date", 
              "position_size", "exposure_bdt", "actual_risk_bdt", "diff", "RRR"]
-pd.DataFrame(columns=full_cols).to_csv(output_path, index=False)
+pd.DataFrame(columns=full_cols).to_csv(buy_path, index=False)
 
 # ---------------------------------------------------------
 # Load and validate files
