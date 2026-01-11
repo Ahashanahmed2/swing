@@ -333,7 +333,7 @@ else:
 # ---------------------------------------------------------
 result_df.to_csv(buy_path, index=False)
 
-print(f"✅ ai_signal/buy.csv updated with {len(result_df)} signals:")
+print(f"✅./csv/buy.csv updated with {len(result_df)} signals:")
 if len(result_df) > 0:
     print(f"   📈 Top RRR: {result_df['RRR'].max():.2f} | Avg RRR: {result_df['RRR'].mean():.2f}")
     print(f"   📉 Min diff: {result_df['diff'].min():.4f}")
