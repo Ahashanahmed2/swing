@@ -25,8 +25,6 @@ buy_csv_path = "./csv/uptrand.csv"
 mongodb_path = "./csv/mongodb.csv"
 buy_path = "./csv/buy.csv"
 
-os.makedirs(os.path.dirname(output_path), exist_ok=True)
-
 # ---------------------------------------------------------
 # Clear old results
 # ---------------------------------------------------------
