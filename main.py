@@ -27,6 +27,7 @@ scripts = [
     "scripts/rsi_crose_above_30.py",
     "scripts/profit_loss_generator.py",
     #"scripts/ppo_trading.py",
+    "scripts/daily_buy.csv",
     "scripts/generate_pdf.py",
     "scripts/dayliMassage.py",
     #"scripts/email_reports.py",
