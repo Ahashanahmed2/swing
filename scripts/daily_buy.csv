@@ -9,7 +9,7 @@ files_info = {
     "gape": "./csv/gape_buy.csv", 
     "rsi": "./csv/rsi_30_buy.csv",
     "swing": "./csv/swing_buy.csv",
-    "uptrend": "./csv/uptrand .csv"  # স্পেস আছে ফাইলনেমে
+    "uptrend": "./csv/uptrand.csv"  # স্পেস আছে ফাইলনেমে
 }
 
 # আউটপুট ডিরেক্টরি ও ফাইল
