@@ -1,0 +1,91 @@
+import pandas as pd
+import os
+from pathlib import Path
+
+# ফাইল পাথগুলি
+file_paths = [
+    "./csv/short_buy.csv",
+    "./csv/gape_buy.csv", 
+    "./csv/rsi_30_buy.csv",
+    "./csv/swing_buy.csv",
+    "./csv/uptrand.csv"  # স্পেস আছে ফাইলনেমে
+]
+
+# আউটপুট ডিরেক্টরি ও ফাইল
+output_dir = "./output/ai_signal/"
+output_file = os.path.join(output_dir, "daily_buy.csv")
+
+# আউটপুট ডিরেক্টরি তৈরি করুন (যদি না থাকে)
+Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+# সব সিম্বল সংরক্ষণ করার জন্য ডিকশনারি
+all_symbols_data = {}
+
+# প্রতিটি ফাইল প্রসেস করুন
+for file_path in file_paths:
+    try:
+        # ফাইলটি বিদ্যমান কিনা পরীক্ষা করুন
+        if not os.path.exists(file_path):
+            print(f"Warning: File '{file_path}' not found. Skipping...")
+            continue
+        
+        # CSV ফাইল পড়ুন
+        df = pd.read_csv(file_path)
+        
+        # ফাইলে কোনো ডাটা আছে কিনা পরীক্ষা করুন
+        if df.empty:
+            print(f"Warning: File '{file_path}' is empty. Skipping...")
+            continue
+        
+        # প্রতিটি সারির জন্য, সিম্বল সংগ্রহ করুন এবং কলামগুলি সংরক্ষণ করুন
+        for index, row in df.iterrows():
+            # 'symbol' কলাম আছে কিনা পরীক্ষা করুন
+            if 'symbol' in df.columns:
+                symbol = str(row['symbol'])
+                # সিম্বলকে কী হিসেবে ব্যবহার করে পুরো সারি সংরক্ষণ করুন
+                all_symbols_data[symbol] = row.to_dict()
+            else:
+                print(f"Warning: 'symbol' column not found in '{file_path}'. Checking for common column names...")
+                
+                # সাধারণ কলাম নামগুলি পরীক্ষা করুন
+                common_symbol_columns = ['SYMBOL', 'Symbol', 'Ticker', 'ticker', 'name', 'Name']
+                found = False
+                
+                for col in common_symbol_columns:
+                    if col in df.columns:
+                        symbol = str(row[col])
+                        all_symbols_data[symbol] = row.to_dict()
+                        found = True
+                        break
+                
+                if not found:
+                    print(f"Error: No symbol column found in '{file_path}'. Skipping this file.")
+                    break
+    
+    except Exception as e:
+        print(f"Error processing file '{file_path}': {str(e)}")
+        continue
+
+# যদি কোনো সিম্বল পাওয়া যায়
+if all_symbols_data:
+    # ডিকশনারি থেকে DataFrame তৈরি করুন
+    result_df = pd.DataFrame.from_dict(all_symbols_data, orient='index')
+    
+    # 'symbol' কলামটি নিশ্চিত করুন (যদি ইতিমধ্যে না থাকে)
+    if 'symbol' not in result_df.columns:
+        # সূচকটিকে 'symbol' কলামে রূপান্তর করুন
+        result_df = result_df.reset_index().rename(columns={'index': 'symbol'})
+    
+    # ফলাফল CSV হিসেবে সংরক্ষণ করুন
+    result_df.to_csv(output_file, index=False)
+    
+    print(f"Successfully saved {len(result_df)} unique symbols to '{output_file}'")
+    print(f"Columns in output file: {list(result_df.columns)}")
+else:
+    print("No symbols found in any of the input files.")
+
+# অপশনাল: ফলাফল দেখান
+if os.path.exists(output_file):
+    result = pd.read_csv(output_file)
+    print("\nFirst few rows of the generated file:")
+    print(result.head())
