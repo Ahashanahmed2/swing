@@ -371,7 +371,7 @@ else:
 # Save results
 # ---------------------------------------------------------
 result_df.to_csv(buy_path, index=False)
-result_df.to_csv(output_path, index=False)
+result_df.to_csv(output_buy, index=False)
 print(f"\n{'='*60}")
 print(f"💾 SAVED TO: {buy_path}")
 print(f"{'='*60}")
