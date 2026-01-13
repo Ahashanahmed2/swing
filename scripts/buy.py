@@ -25,7 +25,7 @@ except Exception as e:
 buy_csv_path = "./csv/uptrand.csv"
 mongodb_path = "./csv/mongodb.csv"
 buy_path = "./csv/buy.csv"
-
+output_buy ="./output/ai_signal/buy.csv"
 # ---------------------------------------------------------
 # Clear old results
 # ---------------------------------------------------------
@@ -371,7 +371,7 @@ else:
 # Save results
 # ---------------------------------------------------------
 result_df.to_csv(buy_path, index=False)
-
+result_df.to_csv(output_path, index=False)
 print(f"\n{'='*60}")
 print(f"💾 SAVED TO: {buy_path}")
 print(f"{'='*60}")
