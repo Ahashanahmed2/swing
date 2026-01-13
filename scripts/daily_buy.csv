@@ -51,8 +51,6 @@ for file_key, file_path in files_info.items():
                 for col in common_symbol_columns:
                     if col in df.columns:
                         symbol = str(row[col])
-                        # কলাম নাম 'symbol' এ পরিবর্তন করুন
-                        df = df.rename(columns={col: 'symbol'})
                         break
             
             if symbol:
@@ -118,7 +116,8 @@ if all_data:
     multi_symbols = symbol_counts[symbol_counts > 1]
     if not multi_symbols.empty:
         print(f"\nSymbols appearing in multiple files: {len(multi_symbols)}")
-        for symbol, count in multi_symbols.head().iteritems():
+        # items() ব্যবহার করুন iteritems() এর পরিবর্তে
+        for symbol, count in multi_symbols.head().items():
             files = result_df[result_df['symbol'] == symbol]['file'].unique()
             print(f"  {symbol}: {count} times (files: {', '.join(files)})")
 else:
