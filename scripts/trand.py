@@ -2,13 +2,13 @@ import pandas as pd
 import os
 from datetime import datetime
 
-from hf_uploader import download_from_hf_or_run_script
+#from hf_uploader import download_from_hf_or_run_script
 
 
 # --------------------------------------------------
 # Step 1: Download CSV from HF if needed
 # --------------------------------------------------
-if download_from_hf_or_run_script():
+#if download_from_hf_or_run_script():
     print("HF data download success")
 
 
