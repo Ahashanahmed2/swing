@@ -28,6 +28,7 @@ scripts = [
     "scripts/profit_loss_generator.py",
     #"scripts/ppo_trading.py",
     "scripts/daily_buy.csv",
+    "scripts/csv_to_ai_signal_file_transport.py",
     "scripts/generate_pdf.py",
     "scripts/dayliMassage.py",
     #"scripts/email_reports.py",
