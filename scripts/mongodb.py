@@ -103,7 +103,7 @@ if not csv_df.empty:
 # -------------------------------------------------------------------
 def apply_indicators(group):
 
-    # If data <14 rows → skip indicators to avoid IndexError
+    # If data <26 rows → skip indicators to avoid IndexError
     if len(group) < 35:
         group['bb_upper'] = np.nan
         group['bb_middle'] = np.nan
