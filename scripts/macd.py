@@ -26,22 +26,23 @@ results = []
 for symbol, group in valid_symbols.groupby('symbol'):
     # Sort by date to ensure correct ordering
     group = group.sort_values('date')
-    
+
     # Get previous and last row
     previous_row = group.iloc[0]
     last_row = group.iloc[1]
-    
+
     # Check conditions
     condition1 = last_row['macd'] > last_row['macd_signal']
     condition2 = previous_row['macd'] < 0
     condition3 = last_row['macd'] > 0
-    
+
     if condition1 and condition2 and condition3:
         results.append({
             'symbol': symbol,
             'close': round(last_row['close'], 2),
             'previous_row_macd': round(previous_row['macd'], 2),
-            'last_row_macd': round(last_row['macd'], 2)
+            'last_row_macd': round(last_row['macd'], 2),
+            'rsi': round(last_row['rsi'], 2)  # RSI কলাম যুক্ত করা হয়েছে
         })
 
 # Create result DataFrame
@@ -56,8 +57,8 @@ result_df = result_df.rename(columns={
     'last_row_macd': 'lrm'
 })
 
-# Reorder columns
-result_df = result_df[['No', 'symbol', 'close', 'prm', 'lrm']]
+# Reorder columns (RSI কলাম যোগ করা হয়েছে)
+result_df = result_df[['No', 'symbol', 'close', 'prm', 'lrm', 'rsi']]
 
 # Save to CSV
 result_df.to_csv('./output/ai_signal/macd.csv', index=False)
