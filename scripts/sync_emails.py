@@ -119,7 +119,7 @@ def sync():
 
 if __name__ == "__main__":
     # MONGODB_URI সেট করা আছে কিনা চেক করুন
-    if not MONGODB_URI:
+    if not MONGODBEMAIL_URI:
         logger.error("MONGODB_URI environment variable সেট করা নেই!")
         logger.error("দয়া করে .env ফাইল বা GitHub Secrets-এ MONGODB_URI সেট করুন।")
         sys.exit(1)
