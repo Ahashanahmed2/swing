@@ -33,7 +33,7 @@ def read_local_emails():
 def get_mongodb_emails():
     """MongoDB থেকে ইমেল লিস্ট নেয়"""
     try:
-        client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
+        client = MongoClient(MONGODBEMAIL_URI, serverSelectionTimeoutMS=5000)
         client.admin.command('ping')
         db = client["email_bot_db"]
         collection = db["emails"]
