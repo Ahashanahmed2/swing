@@ -9,7 +9,7 @@ import subprocess
 import os
 
 scripts = [
-    "scripts/mongodb.py",
+    #"scripts/mongodb.py",
     "scripts/trand.py",
     #"scripts/trend_signal.py",
     "scripts/buy_csv.py",
