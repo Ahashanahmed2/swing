@@ -1,4 +1,4 @@
-import os
+URI os
 from pymongo import MongoClient
 import logging
 import sys
