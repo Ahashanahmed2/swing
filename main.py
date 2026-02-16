@@ -33,7 +33,7 @@ scripts = [
     "scripts/macd_daily.py",
     "scripts/generate_pdf.py",
     "scripts/dayliMassage.py",
-    #"scripts/email_reports.py",
+    "scripts/email_reports.py",
     
 ]
 
