@@ -144,7 +144,7 @@ if __name__ == "__main__":
                 generate_pdf_report(csv_path, pdf_path)
 
     # ✅ HF আপলোড
-    upload_to_hf()
+    #upload_to_hf()
 
     # ✅ PDF না থাকলে নোটিফিকেশন
     if not check_pdf_generation(output_pdf_dir):
