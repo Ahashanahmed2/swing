@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Environment Variables
-MONGODBEMAIL_URI = os.environ.get('MONGODBMAIL_URI')
+MONGODBEMAIL_URI = os.environ.get('MONGODBEMAIL_URI')
 CSV_FILE_PATH = './csv/emails.txt'  # লোকাল ফাইল পাথ
 
 def read_local_emails():
