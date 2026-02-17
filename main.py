@@ -32,6 +32,7 @@ scripts = [
     "scripts/csv_to_ai_signal_file_transport.py",
     "scripts/macd.py",
     "scripts/macd_daily.py",
+    "scripts/down_macd.py",
     "scripts/generate_pdf.py",
     "scripts/dayliMassage.py",
     "scripts/email_reports.py",
