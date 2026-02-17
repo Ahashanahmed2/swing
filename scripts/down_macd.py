@@ -78,7 +78,7 @@ def process_macd_signal():
                 prev_row = symbol_data.iloc[current_idx - 1]
                 
                 # শর্ত চেক করা
-                if (current_row['macd'] > current_row['macd_signal'] and 
+                if (current_row['macd'] >= current_row['macd_signal'] and 
                     prev_row['macd'] < prev_row['macd_signal']):
                     
                     # daily_buy.csv থেকে সম্পূর্ণ রো যোগ করা
