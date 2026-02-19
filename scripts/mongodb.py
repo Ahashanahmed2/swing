@@ -5,13 +5,13 @@ import ta
 import os
 import sys
 from dotenv import load_dotenv
-# hf_uploader import download_from_hf_or_run_script
+from hf_uploader import download_from_hf_or_run_script
 
 # -------------------------------------------------------------------
 # Step 1: Download CSV from HF if needed
 # -------------------------------------------------------------------
-#if download_from_hf_or_run_script():
-    #print(f"HF data download success")
+if download_from_hf_or_run_script():
+    print(f"HF data download success")
 
 # -------------------------------------------------------------------
 # CSV File Path
