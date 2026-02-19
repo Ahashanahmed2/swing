@@ -11,7 +11,7 @@ import os
 scripts = [
     #"scripts/mongodb.py",
     "scripts/sync_emails.py",
-    "scripts/fh.py",
+    "scripts/hf.py",
     "scripts/trand.py",
     #"scripts/trend_signal.py",
     "scripts/buy_csv.py",
