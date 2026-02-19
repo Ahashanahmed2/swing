@@ -10,8 +10,8 @@ import os
 
 scripts = [
     #"scripts/mongodb.py",
-    "scripts/sync_emails.py",
     "scripts/hf.py",
+    "scripts/sync_emails.py",
     "scripts/trand.py",
     #"scripts/trend_signal.py",
     "scripts/buy_csv.py",
