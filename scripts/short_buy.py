@@ -1,42 +1,22 @@
 import pandas as pd
 import os
-import json
-import numpy as np
-
-# ---------------------------------------------------------
-# 🔧 Load config.json (only 2 params)
-# ---------------------------------------------------------
-CONFIG_PATH = "./config.json"
-try:
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        config = json.load(f)
-    TOTAL_CAPITAL = float(config.get("total_capital", 500000))
-    RISK_PERCENT = float(config.get("risk_percent", 0.01))
-    print(f"✅ Config: capital={TOTAL_CAPITAL:,.0f} BDT, risk={RISK_PERCENT*100:.1f}% per trade")
-except Exception as e:
-    print(f"⚠️ Config load failed → using defaults: 5,00,000 BDT, 1% risk")
-    TOTAL_CAPITAL = 500000
-    RISK_PERCENT = 0.01
 
 # Paths
 rsi_path = './csv/rsi_diver_retest.csv'
 mongo_path = './csv/mongodb.csv'
-# ⚠️ Note: saving as 
 output_path2 = './csv/short_buy.csv'
-
 
 os.makedirs(os.path.dirname(output_path2), exist_ok=True)
 
-# Delete old files
-for path in [output_path2]:
-    if os.path.exists(path):
-        os.remove(path)
+# Delete old file
+if os.path.exists(output_path2):
+    os.remove(output_path2)
 
 # Read data
 rsi_df = pd.read_csv(rsi_path)
 mongo_df = pd.read_csv(mongo_path)
 
-# Clean column names
+# Clean column names (spaces to underscores)
 rsi_df.columns = rsi_df.columns.str.replace(" ", "_")
 
 # Ensure MongoDB date is datetime
@@ -45,6 +25,10 @@ mongo_df = mongo_df.dropna(subset=['date'])
 mongo_groups = mongo_df.groupby('symbol')
 
 output_rows = []
+
+print("\n" + "="*80)
+print("PROCESSING SIGNALS:")
+print("="*80)
 
 for _, rsi_row in rsi_df.iterrows():
     symbol = str(rsi_row['symbol']).strip().upper()
@@ -92,8 +76,11 @@ for _, rsi_row in rsi_df.iterrows():
     low_candle = between_rows.loc[between_rows['low'].idxmin()]
     SL_price = low_candle['low']
     buy_price = last_row['close']
+    
+    # diff ক্যালকুলেশন (buy - SL)
+    diff = round(buy_price - SL_price, 4)
 
-    # 🔑 Find tp: backward from low_candle
+    # Find tp (optional - you can remove if not needed)
     tp_price = None
     try:
         low_idx = symbol_group[symbol_group['date'] == low_candle['date']].index[0]
@@ -118,83 +105,40 @@ for _, rsi_row in rsi_df.iterrows():
     if tp_price is None:
         continue
 
-    # ✅ DSE-COMPLIANT POSITION SIZING (1 share allowed)
-    risk_per_trade = TOTAL_CAPITAL * RISK_PERCENT
-    risk_per_share = buy_price - SL_price  # since buy > SL for long
-
-    if risk_per_share <= 0:
-        continue
-
-    position_size = int(risk_per_trade / risk_per_share)  # floor
-    position_size = max(1, position_size)  # min 1 share (DSE allows it!)
-
-    exposure_bdt = position_size * buy_price
-    actual_risk_bdt = position_size * risk_per_share
-
-    # Append with position info
+    # symbol, date, buy, sl, diff স্টোর করছি
     output_rows.append({
         'symbol': symbol,
         'date': last_row['date'].date(),
         'buy': buy_price,
-        'SL': SL_price,
-        'tp': tp_price,
-        'position_size': position_size,
-        'exposure_bdt': round(exposure_bdt, 2),
-        'actual_risk_bdt': round(actual_risk_bdt, 2)
+        'sl': SL_price,
+        'diff': diff
     })
+    
+    print(f"✅ Signal: {symbol} | Buy={buy_price:.2f} | SL={SL_price:.2f} | Diff={diff:.4f}")
 
-# Build DataFrame
+# DataFrame তৈরি করা
 if output_rows:
     df = pd.DataFrame(output_rows)
-    df['buy'] = pd.to_numeric(df['buy'], errors='coerce')
-    df['SL'] = pd.to_numeric(df['SL'], errors='coerce')
-    df['tp'] = pd.to_numeric(df['tp'], errors='coerce')
-    df['position_size'] = df['position_size'].astype(int)
-    df['exposure_bdt'] = pd.to_numeric(df['exposure_bdt'], errors='coerce')
-    df['actual_risk_bdt'] = pd.to_numeric(df['actual_risk_bdt'], errors='coerce')
-
-    # Compute RRR & diff
-    df['diff'] = (df['buy'] - df['SL']).round(4)
-    df['RRR'] = ((df['tp'] - df['buy']) / (df['buy'] - df['SL'])).round(2)
-
-    # Filter valid signals
-    df = df[
-        (df['buy'] > df['SL']) & 
-        (df['tp'] > df['buy']) & 
-        (df['RRR'] > 0)
-    ].reset_index(drop=True)
-
-    if len(df) > 0:
-        # Sort: highest RRR first → then smallest risk (diff) first
-        df = df.sort_values(['RRR', 'diff'], ascending=[False, True]).reset_index(drop=True)
-        df.insert(0, 'No', range(1, len(df) + 1))
-        
-        # ✅ Final column order (with position sizing)
-        df = df[[
-            'No', 'symbol', 'date', 'buy', 'SL', 'tp',
-            'position_size', 'exposure_bdt', 'actual_risk_bdt',
-            'diff', 'RRR'
-        ]]
-    else:
-        df = pd.DataFrame(columns=[
-            'No', 'symbol', 'date', 'buy', 'SL', 'tp',
-            'position_size', 'exposure_bdt', 'actual_risk_bdt',
-            'diff', 'RRR'
-        ])
+    
+    # diff অনুযায়ী সর্ট (ছোট diff প্রথমে)
+    df = df.sort_values('diff', ascending=True).reset_index(drop=True)
+    
+    # প্রথম কলাম হিসেবে সিরিয়াল নাম্বার যোগ করা
+    df.insert(0, 'no', range(1, len(df) + 1))
+    
+    # কলামের অর্ডার ঠিক করা: no, symbol, date, buy, sl, diff
+    df = df[['no', 'symbol', 'date', 'buy', 'sl', 'diff']]
+    
+    print(f"\n{'='*80}")
+    print(f"✅ TOTAL SIGNALS: {len(df)}")
+    print(f"{'='*80}")
+    print(df.to_string())
+    
 else:
-    df = pd.DataFrame(columns=[
-        'No', 'symbol', 'date', 'buy', 'SL', 'tp',
-        'position_size', 'exposure_bdt', 'actual_risk_bdt',
-        'diff', 'RRR'
-    ])
+    print(f"\n❌ No signals generated")
+    df = pd.DataFrame(columns=['no', 'symbol', 'date', 'buy', 'sl', 'diff'])
 
-# Save
-
+# Save to CSV
 df.to_csv(output_path2, index=False)
-
-print(f"✅ short_buy.csv saved with {len(df)} signals (DSE-compliant position sizing)")
-if len(df) > 0:
-    print(f"   📈 Max RRR: {df['RRR'].max():.2f} | Avg RRR: {df['RRR'].mean():.2f}")
-    print(f"   📉 Min diff: {df['diff'].min():.4f}")
-    print(f"   💰 Avg position: {df['position_size'].mean():.0f} shares | Max: {df['position_size'].max()}")
-    print(f"   🎯 Avg actual risk: {df['actual_risk_bdt'].mean():,.0f} BDT (target: {TOTAL_CAPITAL*RISK_PERCENT:,.0f})")
+print(f"\n✅ Saved to {output_path2}")
+print(f"📁 File contains columns: {', '.join(df.columns)}")
