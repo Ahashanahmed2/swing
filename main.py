@@ -21,7 +21,7 @@ scripts = [
     "scripts/orderblock.py",
     "scripts/rsi_diver.py",
     "scripts/rsi_diver_retest.py",
-    "scripts/rsi_30_buy.csv",
+    "scripts/rsi_crose_above_30.csv",
     "scripts/short_buy.py",
     "scripts/gape.py",
     "scripts/gape_buy.py",
