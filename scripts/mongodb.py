@@ -5,8 +5,7 @@ import ta
 import os
 import sys
 from dotenv import load_dotenv
-from hf_uploader import  download_from_hf_or_run_script
-
+from hf_uploader import download_from_hf, SmartDatasetUploader, REPO_ID, HF_TOKEN
 # -------------------------------------------------------------------
 # Step 1: Download CSV from HF if needed
 # -------------------------------------------------------------------
