@@ -3,7 +3,7 @@ import pandas as pd
 from fpdf.enums import XPos, YPos
 from fpdf import FPDF
 from datetime import datetime, timedelta
-from hf_uploader import upload_to_hf
+from hf_uploader import upload_to_hf, SmartDatasetUploader, REPO_ID, HF_TOKEN  # 👈 ইম্পোর্ট আপডেট
 import requests
 import smtplib
 from email.message import EmailMessage
@@ -130,6 +130,7 @@ if __name__ == "__main__":
     output_pdf_dir = os.path.join(folder_path, "pdfs")
     os.makedirs(output_pdf_dir, exist_ok=True)
 
+    # CSV ফাইল প্রসেসিং
     if not os.path.exists(folder_path):
         print(f"❌ ডিরেক্টরি পাওয়া যায়নি: {folder_path}")
     else:
@@ -144,15 +145,24 @@ if __name__ == "__main__":
                 generate_pdf_report(csv_path, pdf_path)
 
     # -------------------------------------------------------------------
-              # Step 9: Upload updated CSV to    Hugging Face (optional)
-# -------------------------------------------------------------------
-               print("\n📤 Uploading updated   CSV to Hugging Face...")
-               uploader = SmartDatasetUploader(REPO_ID, HF_TOKEN)
-               uploader.smart_upload(
-               local_folder=csv_folder,
-               unique_columns=['symbol', 'date']  # আপনার CSV অনুযায়ী adjust করুন
-)
-               print("✅ Upload to Hugging Face complete!")
+    # Step 9: Upload updated CSV to Hugging Face (optional)
+    # -------------------------------------------------------------------
+    print("\n📤 Uploading CSV files to Hugging Face...")
+    
+    # csv_folder ডিফাইন করুন
+    csv_folder = folder_path  # অথবা যেখানে আপনার CSV আছে
+    
+    # Hugging Face আপলোড
+    try:
+        uploader = SmartDatasetUploader(REPO_ID, HF_TOKEN)
+        uploader.smart_upload(
+            local_folder=csv_folder,
+            unique_columns=['symbol', 'date']  # আপনার CSV অনুযায়ী adjust করুন
+        )
+        print("✅ Upload to Hugging Face complete!")
+    except Exception as e:
+        print(f"❌ Hugging Face upload failed: {e}")
+
     # ✅ PDF না থাকলে নোটিফিকেশন
     if not check_pdf_generation(output_pdf_dir):
         alert = "⚠️ কোনো PDF তৈরি হয়নি। CSV ফাইল খালি বা ত্রুটিপূর্ণ হতে পারে।"
