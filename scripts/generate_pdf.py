@@ -143,9 +143,16 @@ if __name__ == "__main__":
                 print(f"\n📄 রিপোর্ট তৈরি হচ্ছে: {csv_file}")
                 generate_pdf_report(csv_path, pdf_path)
 
-    # ✅ HF আপলোড
-    upload_to_hf()
-
+    # -------------------------------------------------------------------
+              # Step 9: Upload updated CSV to    Hugging Face (optional)
+# -------------------------------------------------------------------
+               print("\n📤 Uploading updated   CSV to Hugging Face...")
+               uploader = SmartDatasetUploader(REPO_ID, HF_TOKEN)
+               uploader.smart_upload(
+               local_folder=csv_folder,
+               unique_columns=['symbol', 'date']  # আপনার CSV অনুযায়ী adjust করুন
+)
+               print("✅ Upload to Hugging Face complete!")
     # ✅ PDF না থাকলে নোটিফিকেশন
     if not check_pdf_generation(output_pdf_dir):
         alert = "⚠️ কোনো PDF তৈরি হয়নি। CSV ফাইল খালি বা ত্রুটিপূর্ণ হতে পারে।"
