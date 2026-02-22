@@ -6,11 +6,27 @@ import os
 import sys
 from dotenv import load_dotenv
 from hf_uploader import download_from_hf, SmartDatasetUploader, REPO_ID, HF_TOKEN
+
 # -------------------------------------------------------------------
 # Step 1: Download CSV from HF if needed
 # -------------------------------------------------------------------
-if download_from_hf_or_run_script():
-    print(f"HF data download success")
+print("📥 Checking for CSV files from Hugging Face...")
+
+# CSV ফোল্ডার তৈরি করুন
+csv_folder = './csv'
+os.makedirs(csv_folder, exist_ok=True)
+
+# HF থেকে ডাউনলোড করার চেষ্টা করুন
+download_success = download_from_hf(csv_folder, REPO_ID, HF_TOKEN)
+
+if download_success:
+    print(f"✅ HF data download success")
+    
+    # ডাউনলোড করা ফাইলগুলো দেখান
+    csv_files = [f for f in os.listdir(csv_folder) if f.endswith('.csv')]
+    print(f"📊 Found {len(csv_files)} CSV files: {csv_files}")
+else:
+    print(f"⚠️ No data found in HF. Will work with existing local data or create new.")
 
 # -------------------------------------------------------------------
 # CSV File Path
@@ -33,7 +49,7 @@ if os.path.exists(csv_path):
         csv_df = pd.DataFrame()
         csv_last_date = None
 else:
-    print("🆕 CSV file not found. Downloading full data from MongoDB...")
+    print("🆕 CSV file not found. Will download full data from MongoDB...")
     csv_df = pd.DataFrame()
     csv_last_date = None
 
@@ -235,3 +251,14 @@ df = df.groupby('symbol', group_keys=False).apply(detect_patterns)
 # -------------------------------------------------------------------
 df.to_csv(csv_path, index=False, encoding='utf-8-sig')
 print(f"✅ {csv_path} updated with new data, ATR and patterns.")
+
+# -------------------------------------------------------------------
+# Step 9: Upload updated CSV to Hugging Face (optional)
+# -------------------------------------------------------------------
+print("\n📤 Uploading updated CSV to Hugging Face...")
+uploader = SmartDatasetUploader(REPO_ID, HF_TOKEN)
+uploader.smart_upload(
+    local_folder=csv_folder,
+    unique_columns=['symbol', 'date']  # আপনার CSV অনুযায়ী adjust করুন
+)
+print("✅ Upload to Hugging Face complete!")
