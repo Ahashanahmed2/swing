@@ -5,7 +5,7 @@ import ta
 import os
 import sys
 from dotenv import load_dotenv
-from hf_uploader import download_from_hf, SmartDatasetUploader, REPO_ID, HF_TOKEN
+from hf_uploader import download_from_hf, REPO_ID, HF_TOKEN
 
 # -------------------------------------------------------------------
 # Step 1: Download CSV from HF if needed
@@ -251,14 +251,3 @@ df = df.groupby('symbol', group_keys=False).apply(detect_patterns)
 # -------------------------------------------------------------------
 df.to_csv(csv_path, index=False, encoding='utf-8-sig')
 print(f"✅ {csv_path} updated with new data, ATR and patterns.")
-
-# -------------------------------------------------------------------
-# Step 9: Upload updated CSV to Hugging Face (optional)
-# -------------------------------------------------------------------
-print("\n📤 Uploading updated CSV to Hugging Face...")
-uploader = SmartDatasetUploader(REPO_ID, HF_TOKEN)
-uploader.smart_upload(
-    local_folder=csv_folder,
-    unique_columns=['symbol', 'date']  # আপনার CSV অনুযায়ী adjust করুন
-)
-print("✅ Upload to Hugging Face complete!")
