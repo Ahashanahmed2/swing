@@ -3,7 +3,7 @@ import pandas as pd
 from fpdf.enums import XPos, YPos
 from fpdf import FPDF
 from datetime import datetime, timedelta
-from hf_uploader import upload_to_hf, SmartDatasetUploader, REPO_ID, HF_TOKEN  # 👈 ইম্পোর্ট আপডেট
+from hf_uploader import SmartDatasetUploader, REPO_ID, HF_TOKEN  # 👈 upload_to_hf বাদ
 import requests
 import smtplib
 from email.message import EmailMessage
@@ -148,16 +148,16 @@ if __name__ == "__main__":
     # Step 9: Upload updated CSV to Hugging Face (optional)
     # -------------------------------------------------------------------
     print("\n📤 Uploading CSV files to Hugging Face...")
-    
+
     # csv_folder ডিফাইন করুন
     csv_folder = folder_path  # অথবা যেখানে আপনার CSV আছে
-    
+
     # Hugging Face আপলোড
     try:
         uploader = SmartDatasetUploader(REPO_ID, HF_TOKEN)
         uploader.smart_upload(
             local_folder=csv_folder,
-            unique_columns=['symbol', 'date']  # আপনার CSV অনুযায়ী adjust করুন
+            unique_columns=['symbol']  # 👈 'date' বাদ দিয়েছি, কারণ ai_signal CSV-তে date নাও থাকতে পারে
         )
         print("✅ Upload to Hugging Face complete!")
     except Exception as e:
