@@ -3,7 +3,7 @@ import pandas as pd
 from fpdf.enums import XPos, YPos
 from fpdf import FPDF
 from datetime import datetime, timedelta
-#from hf_uploader import SmartDatasetUploader, REPO_ID, HF_TOKEN
+from hf_uploader import SmartDatasetUploader, REPO_ID, HF_TOKEN
 import requests
 import smtplib
 from email.message import EmailMessage
