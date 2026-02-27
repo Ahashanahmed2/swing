@@ -20,6 +20,7 @@ scripts = [
     "scripts/liquidly.py",
     "scripts/orderblock.py",
     "scripts/rsi_diver.py",
+    "scripts/confirm_rsi_divergence.py",
     "scripts/rsi_diver_retest.py",
     "scripts/rsi_crose_above_30.py",
     "scripts/short_buy.py",
