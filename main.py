@@ -14,6 +14,7 @@ scripts = [
     "scripts/sync_emails.py",
     "scripts/trand.py",
     #"scripts/trend_signal.py",
+    "scripts/pattarn.py",
     "scripts/buy_csv.py",
     #"scripts/buy.py",
     "scripts/swing_buy.py",
