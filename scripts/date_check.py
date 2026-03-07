@@ -3,7 +3,6 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import re
 import sys
-import os
 
 def check_date_and_continue():
     url = "https://dsebd.org/dseX_share.php"
@@ -13,7 +12,7 @@ def check_date_and_continue():
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
         print(f"❌ ওয়েবসাইট থেকে ডেটা আনতে সমস্যা হয়েছে: {e}")
-        sys.exit(1)  # স্ক্রিপ্ট বন্ধ
+        sys.exit(1)
     
     soup = BeautifulSoup(response.text, 'html.parser')
     
@@ -26,7 +25,7 @@ def check_date_and_continue():
     
     if not match:
         print("❌ পৃষ্ঠায় 'Share On' তারিখ খুঁজে পাওয়া যায়নি।")
-        sys.exit(1)  # স্ক্রিপ্ট বন্ধ
+        sys.exit(2)
     
     month_name, day, year, time_str = match.groups()
     
@@ -39,7 +38,7 @@ def check_date_and_continue():
     month = month_map.get(month_name[:3])
     if not month:
         print(f"❌ অবৈধ মাস: {month_name}")
-        sys.exit(1)  # স্ক্রিপ্ট বন্ধ
+        sys.exit(3)
     
     day = int(day)
     year = int(year)
@@ -51,13 +50,11 @@ def check_date_and_continue():
     if not (today.year == year and today.month == month and today.day == day):
         print(f"❌ আজকের তারিখ ({today.strftime('%Y-%m-%d')}) এবং পৃষ্ঠার তারিখ ({year}-{month:02d}-{day:02d}) মিলছে না।")
         print("📅 ডেটা আপডেট না হওয়া পর্যন্ত অপেক্ষা করুন।")
-        sys.exit(0)  # স্ক্রিপ্ট সফলভাবে বন্ধ (কিন্তু তারিখ না মেলায় পরবর্তী স্ক্রিপ্টে যাবে না)
+        sys.exit(100)  # বিশেষ exit code: তারিখ মেলেনি
     
     print(f"✅ তারিখ মিলেছে! ({today.strftime('%Y-%m-%d')})")
     print("🔄 পরবর্তী স্ক্রিপ্টে যাওয়া হচ্ছে...\n")
-    
-    # এখানে কোনো সিগনাল বা ইন্ডিকেটর তৈরি না করে শুধু চেক করে পাস করবে
-    # কারণ main.py প্রতিটি স্ক্রিপ্ট আলাদাভাবে চালাচ্ছে
+    sys.exit(0)  # সফল
 
 if __name__ == "__main__":
     check_date_and_continue()
