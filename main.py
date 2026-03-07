@@ -9,6 +9,7 @@ import subprocess
 import os
 
 scripts = [
+    "scripts/dse_scraper.py",
     "scripts/date_check.py",
     "scripts/mongodb.py",
     #"scripts/hf.py",
