@@ -2,6 +2,7 @@ pandas
 pymongo
 ta
 dotenv
+bs4
 requests
 #torch==2.3.0+cpu -f https://download.pytorch.org/whl/torch_stable.html
 #gymnasium
