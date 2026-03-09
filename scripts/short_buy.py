@@ -27,15 +27,14 @@ mongo_groups = mongo_df.groupby('symbol')
 output_rows = []
 
 print("\n" + "="*80)
-print("PROCESSING SIGNALS:")
+print("PROCESSING SIGNALS (CLOSE > LAST_LOW LOGIC):")
 print("="*80)
 
 for _, rsi_row in rsi_df.iterrows():
     symbol = str(rsi_row['symbol']).strip().upper()
-    last_high = rsi_row['last_row_high']
+    last_low = rsi_row['last_row_low']  # last_high এর পরিবর্তে last_row_low ব্যবহার
     last_row_date = pd.to_datetime(rsi_row['last_row_date'], errors='coerce')
-    last_row_low = rsi_row['last_row_low']
-
+    
     if pd.isna(last_row_date) or symbol not in mongo_groups.groups:
         continue
 
@@ -46,97 +45,40 @@ for _, rsi_row in rsi_df.iterrows():
         continue
     last_row = last_row_candidates.iloc[-1]
 
-    if not (last_row['close'] > last_high):
+    # নতুন কন্ডিশন: close > last_low
+    if not (last_row['close'] > last_low):
         continue
 
-    prev_rows = symbol_group[symbol_group['date'] < last_row_date]
-    if prev_rows.empty:
-        continue
-    prev_row = prev_rows.iloc[-1]
-
-    if not (last_row_low > prev_row['low'] and last_row['close'] > prev_row['high']):
-        continue
-
-    pre_candle = None
-    for i in range(len(prev_rows)-1, -1, -1):
-        row = prev_rows.iloc[i]
-        if (row['low'] <= last_high <= row['high']) or (row['low'] <= last_row_low <= row['high']):
-            pre_candle = row
-            break
-    if pre_candle is None:
-        continue
-
-    between_rows = symbol_group[
-        (symbol_group['date'] > pre_candle['date']) & 
-        (symbol_group['date'] < last_row_date)
-    ]
-    if between_rows.empty:
-        continue
-
-    low_candle = between_rows.loc[between_rows['low'].idxmin()]
-    SL_price = low_candle['low']
-    buy_price = last_row['close']
-    
-    # diff ক্যালকুলেশন (buy - SL)
-    diff = round(buy_price - SL_price, 4)
-
-    # Find tp (optional - you can remove if not needed)
-    tp_price = None
-    try:
-        low_idx = symbol_group[symbol_group['date'] == low_candle['date']].index[0]
-    except IndexError:
-        low_idx = (abs(symbol_group['date'] - low_candle['date'])).idxmin()
-
-    for i in range(low_idx - 1, 1, -1):
-        try:
-            sb = symbol_group.iloc[i - 2]
-            sa = symbol_group.iloc[i - 1]
-            s  = symbol_group.iloc[i]
-        except IndexError:
-            break
-
-        if not (sb['date'] < sa['date'] < s['date'] < low_candle['date']):
-            continue
-
-        if (s['high'] > sa['high']) and (sa['high'] >= sb['high']):
-            tp_price = s['high']
-            break
-
-    if tp_price is None:
-        continue
-
-    # symbol, date, buy, sl, diff স্টোর করছি
+    # সিম্পল সিগন্যাল: শুধু symbol, date, buy (close) প্রাইস স্টোর করছি
     output_rows.append({
         'symbol': symbol,
         'date': last_row['date'].date(),
-        'buy': buy_price,
-        'sl': SL_price,
-        'diff': diff
+        'buy': last_row['close']
     })
-    
-    print(f"✅ Signal: {symbol} | Buy={buy_price:.2f} | SL={SL_price:.2f} | Diff={diff:.4f}")
+
+    print(f"✅ Signal: {symbol} | Date={last_row['date'].date()} | Buy={last_row['close']:.2f} | Last_Low={last_low:.2f}")
 
 # DataFrame তৈরি করা
 if output_rows:
     df = pd.DataFrame(output_rows)
-    
-    # diff অনুযায়ী সর্ট (ছোট diff প্রথমে)
-    df = df.sort_values('diff', ascending=True).reset_index(drop=True)
-    
+
+    # ডুপ্লিকেট রিমুভ (যদি একই symbol এবং date একাধিকবার আসে)
+    df = df.drop_duplicates(subset=['symbol', 'date'])
+
     # প্রথম কলাম হিসেবে সিরিয়াল নাম্বার যোগ করা
     df.insert(0, 'no', range(1, len(df) + 1))
-    
-    # কলামের অর্ডার ঠিক করা: no, symbol, date, buy, sl, diff
-    df = df[['no', 'symbol', 'date', 'buy', 'sl', 'diff']]
-    
+
+    # কলামের অর্ডার ঠিক করা: no, symbol, date, buy
+    df = df[['no', 'symbol', 'date', 'buy']]
+
     print(f"\n{'='*80}")
     print(f"✅ TOTAL SIGNALS: {len(df)}")
     print(f"{'='*80}")
     print(df.to_string())
-    
+
 else:
     print(f"\n❌ No signals generated")
-    df = pd.DataFrame(columns=['no', 'symbol', 'date', 'buy', 'sl', 'diff'])
+    df = pd.DataFrame(columns=['no', 'symbol', 'date', 'buy'])
 
 # Save to CSV
 df.to_csv(output_path2, index=False)
