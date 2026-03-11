@@ -27,14 +27,14 @@ mongo_groups = mongo_df.groupby('symbol')
 output_rows = []
 
 print("\n" + "="*80)
-print("PROCESSING SIGNALS (CLOSE > LAST_LOW LOGIC):")
+print("PROCESSING SIGNALS (CLOSE > LAST_LOW AND LOW > LAST_LOW LOGIC):")
 print("="*80)
 
 for _, rsi_row in rsi_df.iterrows():
     symbol = str(rsi_row['symbol']).strip().upper()
-    last_low = rsi_row['last_row_low']  # last_high এর পরিবর্তে last_row_low ব্যবহার
+    last_low = rsi_row['last_row_low']
     last_row_date = pd.to_datetime(rsi_row['last_row_date'], errors='coerce')
-    
+
     if pd.isna(last_row_date) or symbol not in mongo_groups.groups:
         continue
 
@@ -45,18 +45,18 @@ for _, rsi_row in rsi_df.iterrows():
         continue
     last_row = last_row_candidates.iloc[-1]
 
-    # নতুন কন্ডিশন: close > last_low
-    if not (last_row['close'] > last_low):
+    # দুটি কন্ডিশন একসাথে চেক করা হচ্ছে
+    if not (last_row['close'] > last_low and last_row['low'] > last_low):
         continue
 
-    # সিম্পল সিগন্যাল: শুধু symbol, date, buy (close) প্রাইস স্টোর করছি
+    # সিগন্যাল স্টোর করছি
     output_rows.append({
         'symbol': symbol,
         'date': last_row['date'].date(),
         'buy': last_row['close']
     })
 
-    print(f"✅ Signal: {symbol} | Date={last_row['date'].date()} | Buy={last_row['close']:.2f} | Last_Low={last_low:.2f}")
+    print(f"✅ Signal: {symbol} | Date={last_row['date'].date()} | Buy={last_row['close']:.2f} | Low={last_row['low']:.2f} | Last_Low={last_low:.2f}")
 
 # DataFrame তৈরি করা
 if output_rows:
