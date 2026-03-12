@@ -27,7 +27,7 @@ mongo_groups = mongo_df.groupby('symbol')
 output_rows = []
 
 print("\n" + "="*80)
-print("PROCESSING SIGNALS (CLOSE > LAST_LOW AND LOW > LAST_LOW LOGIC):")
+print("PROCESSING SIGNALS (LOW > LAST_LOW LOGIC):")
 print("="*80)
 
 for _, rsi_row in rsi_df.iterrows():
@@ -50,8 +50,8 @@ for _, rsi_row in rsi_df.iterrows():
     
     last_row = last_row_candidates.iloc[-1]
 
-    # Check conditions
-    if not (last_row['close'] > last_low and last_row['low'] > last_low):
+    # শুধু low > last_low চেক করা হচ্ছে (close চেক করা হচ্ছে না)
+    if not (last_row['low'] > last_low):
         continue
 
     # Count rows between second_row_date and last_row_date (exclusive of both dates)
@@ -63,12 +63,12 @@ for _, rsi_row in rsi_df.iterrows():
         'symbol': symbol,
         'date': last_row['date'].date(),
         'buy': last_row['close'],
-        'gap': rows_between_count,  # rows between second_row_date and last_row_date (সংক্ষিপ্ত নাম)
+        'gap': rows_between_count,  # rows between second_row_date and last_row_date
         'second_row_date': second_row_date.date()
     })
 
     print(f"✅ Signal: {symbol} | Date={last_row['date'].date()} | Buy={last_row['close']:.2f} | "
-          f"Gap: {rows_between_count}")
+          f"Low={last_row['low']:.2f} > Last_Low={last_low:.2f} | Gap: {rows_between_count}")
 
 # DataFrame তৈরি করা
 if output_rows:
@@ -83,7 +83,7 @@ if output_rows:
     # প্রথম কলাম হিসেবে সিরিয়াল নাম্বার যোগ করা
     df.insert(0, 'no', range(1, len(df) + 1))
 
-    # কলামের অর্ডার ঠিক করা (last_row_date বাদ, gap সংক্ষিপ্ত নাম)
+    # কলামের অর্ডার ঠিক করা
     df = df[['no', 'symbol', 'date', 'buy', 'gap', 'second_row_date']]
 
     print(f"\n{'='*80}")
