@@ -4,7 +4,7 @@ import os
 
 
 # Ensure the output directory exists
-os.makedirs('./output/ai_signal', exist_ok=True)
+#os.makedirs('./output/ai_signal', exist_ok=True)
 
 # Load and prepare data
 df = pd.read_csv('./csv/mongodb.csv')
