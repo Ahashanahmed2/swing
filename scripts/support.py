@@ -1,100 +1,122 @@
 import pandas as pd
 import numpy as np
 import os
+from datetime import datetime
 
-def find_support_levels(input_file, output_file, touch_tolerance=0.02):
+def process_stock_data(input_file, output_file):
     """
-    Improved support level detection
+    Process stock data from CSV file and find support levels
     
     Args:
-        input_file: input CSV path
-        output_file: output CSV path
-        touch_tolerance: price tolerance for support touches (2% default)
+        input_file: path to input CSV file (mongodb.csv)
+        output_file: path to output CSV file (./output/ai_signal/support.csv)
     """
     
+    # Read the CSV file
     df = pd.read_csv(input_file)
+    
+    # Ensure date column is datetime type
     df['date'] = pd.to_datetime(df['date'])
-    df = df.sort_values(['symbol', 'date'])
+    
+    # Sort by symbol and date (descending to get latest first)
+    df = df.sort_values(['symbol', 'date'], ascending=[True, False])
     
     results = []
     
+    # Process each symbol separately
     for symbol in df['symbol'].unique():
         symbol_data = df[df['symbol'] == symbol].copy()
+        symbol_data = symbol_data.sort_values('date', ascending=True)  # Sort ascending for processing
         
-        if len(symbol_data) < 3:
+        if len(symbol_data) < 2:
             continue
+            
+        # Get the latest row (last row after sorting ascending)
+        latest_row = symbol_data.iloc[-1]
+        a_price = latest_row['low']
+        a_date = latest_row['date']
         
-        # Latest price
-        latest = symbol_data.iloc[-1]
-        current_low = latest['low']
-        current_date = latest['date']
-        
-        # Find potential support levels
+        # Process previous rows (excluding the latest)
         for i in range(len(symbol_data) - 2, -1, -1):
-            potential_support = symbol_data.iloc[i]
-            support_low = potential_support['low']
-            support_high = potential_support['high']
-            support_date = potential_support['date']
+            current_row = symbol_data.iloc[i]
+            b_low = current_row['low']
+            b_high = current_row['high']
+            b_date = current_row['date']
             
-            # Check if current low is near the support low (within tolerance)
-            price_diff = abs(current_low - support_low) / support_low
-            if price_diff > touch_tolerance:
-                continue
-            
-            # Check if price is within support range
-            if not (support_low <= current_low <= support_high):
-                continue
-            
-            # Check intermediate bars
-            intermediate = symbol_data.iloc[i+1:-1]
-            valid = True
-            touch_count = 1  # Current touch
-            
-            # Count how many times price touched this support zone
-            for _, row in intermediate.iterrows():
-                # If price came near support zone
-                if abs(row['low'] - support_low) / support_low <= touch_tolerance:
-                    touch_count += 1
+            # Check if a_price is within b's low-high range
+            if b_low <= a_price <= b_high:
+                # Found potential support level at row b
+                # Now check rows between b and a
+                rows_between = symbol_data.iloc[i+1:-1]  # Exclude b and a
                 
-                # If price broke below support significantly
-                if row['low'] < support_low * (1 - touch_tolerance):
-                    valid = False
-                    break
-            
-            if valid and touch_count >= 2:  # At least 2 touches including current
-                gap = len(intermediate)
+                valid_support = True
+                gap_count = len(rows_between)
                 
-                # Calculate support strength
-                strength = "Strong" if touch_count >= 3 else "Moderate"
+                # Check each row between b and a
+                for _, row in rows_between.iterrows():
+                    # If any row's low is within b's low-high range, it's not valid
+                    if b_low <= row['low'] <= b_high:
+                        valid_support = False
+                        break
                 
-                results.append({
-                    'date': current_date.strftime('%Y-%m-%d'),
-                    'support_date': support_date.strftime('%Y-%m-%d'),
-                    'symbol': symbol,
-                    'close': latest['close'],
-                    'gap': gap,
-                    'touch_count': touch_count,
-                    'strength': strength,
-                    'support_level': round(support_low, 2)
-                })
+                if valid_support and gap_count > 0:
+                    results.append({
+                        'a_date': a_date.strftime('%Y-%m-%d'),
+                        'b_date': b_date.strftime('%Y-%m-%d'),
+                        'symbol': symbol,
+                        'close': latest_row['close'],
+                        'gap': gap_count,
+                        'a_low': a_price,
+                        'b_low': b_low,
+                        'b_high': b_high
+                    })
     
-    # Save results
+    # Create output dataframe
     if results:
         output_df = pd.DataFrame(results)
-        output_df = output_df[['date', 'support_date', 'symbol', 'close', 'gap', 'touch_count', 'strength', 'support_level']]
+        # Select required columns (including b_date)
+        output_df = output_df[['a_date', 'b_date', 'symbol', 'close', 'gap']]
         
+        # Rename columns for better understanding
+        output_df.columns = ['date', 'support_date', 'symbol', 'close', 'gap']
+        
+        # Create output directory if it doesn't exist
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
-        output_df.to_csv(output_file, index=False)
         
-        print(f"Found {len(output_df)} support levels")
-        print("\nSample with strength:")
+        # Save to CSV
+        output_df.to_csv(output_file, index=False)
+        print(f"Successfully saved {len(output_df)} records to {output_file}")
+        print("\nSample output:")
         print(output_df.head())
+        
+        # Print summary statistics
+        print("\nSummary Statistics:")
+        print(f"Total records: {len(output_df)}")
+        print(f"Unique symbols: {output_df['symbol'].nunique()}")
+        print(f"Gap range: {output_df['gap'].min()} - {output_df['gap'].max()}")
+        
     else:
-        # Create empty file with headers
-        empty_df = pd.DataFrame(columns=['date', 'support_date', 'symbol', 'close', 'gap', 'touch_count', 'strength', 'support_level'])
+        print("No matching patterns found")
+        # Create empty dataframe with headers
+        empty_df = pd.DataFrame(columns=['date', 'support_date', 'symbol', 'close', 'gap'])
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
         empty_df.to_csv(output_file, index=False)
-        print("No support levels found")
+        print(f"Created empty file with headers at {output_file}")
+
+def main():
+    # Define file paths
+    input_file = './csv/mongodb.csv'
+    output_file = './output/ai_signal/support.csv'
+    
+    # Check if input file exists
+    if not os.path.exists(input_file):
+        print(f"Error: Input file {input_file} not found!")
+        return
+    
+    # Process the data
+    process_stock_data(input_file, output_file)
+    
+    print("\nProcessing complete!")
 
 if __name__ == "__main__":
-    find_support_levels('./csv/mongodb.csv', './output/ai_signal/support.csv')
+    main()
