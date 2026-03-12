@@ -128,6 +128,7 @@ def apply_indicators(group):
         group['macd_hist'] = np.nan
         group['rsi'] = np.nan
         group['atr'] = np.nan
+        group['ema_200'] = np.nan
         return group
 
     # Bollinger Bands
@@ -153,7 +154,7 @@ def apply_indicators(group):
         window=14
     )
     group['atr'] = atr.average_true_range()
-
+    group['ema_200'] = ta.trend.EMAIndicator(close=group['close'], window=200).ema_indicator()
     return group
 
 df = df.groupby('symbol', group_keys=False).apply(apply_indicators)
