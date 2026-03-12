@@ -34,29 +34,41 @@ for _, rsi_row in rsi_df.iterrows():
     symbol = str(rsi_row['symbol']).strip().upper()
     last_low = rsi_row['last_row_low']
     last_row_date = pd.to_datetime(rsi_row['last_row_date'], errors='coerce')
+    second_row_date = pd.to_datetime(rsi_row['second_row_date'], errors='coerce')
 
-    if pd.isna(last_row_date) or symbol not in mongo_groups.groups:
+    if pd.isna(last_row_date) or pd.isna(second_row_date) or symbol not in mongo_groups.groups:
         continue
 
     symbol_group = mongo_groups.get_group(symbol).sort_values('date').reset_index(drop=True)
 
+    # Find last_row and second_row in MongoDB data
     last_row_candidates = symbol_group[symbol_group['date'] == last_row_date]
-    if last_row_candidates.empty:
+    second_row_candidates = symbol_group[symbol_group['date'] == second_row_date]
+    
+    if last_row_candidates.empty or second_row_candidates.empty:
         continue
+    
     last_row = last_row_candidates.iloc[-1]
 
-    # দুটি কন্ডিশন একসাথে চেক করা হচ্ছে
+    # Check conditions
     if not (last_row['close'] > last_low and last_row['low'] > last_low):
         continue
 
-    # সিগন্যাল স্টোর করছি
+    # Count rows between second_row_date and last_row_date (exclusive of both dates)
+    mask = (symbol_group['date'] > second_row_date) & (symbol_group['date'] < last_row_date)
+    rows_between_count = mask.sum()
+
+    # Store signal with row counts
     output_rows.append({
         'symbol': symbol,
         'date': last_row['date'].date(),
-        'buy': last_row['close']
+        'buy': last_row['close'],
+        'gap': rows_between_count,  # rows between second_row_date and last_row_date (সংক্ষিপ্ত নাম)
+        'second_row_date': second_row_date.date()
     })
 
-    print(f"✅ Signal: {symbol} | Date={last_row['date'].date()} | Buy={last_row['close']:.2f} | Low={last_row['low']:.2f} | Last_Low={last_low:.2f}")
+    print(f"✅ Signal: {symbol} | Date={last_row['date'].date()} | Buy={last_row['close']:.2f} | "
+          f"Gap: {rows_between_count}")
 
 # DataFrame তৈরি করা
 if output_rows:
@@ -65,20 +77,32 @@ if output_rows:
     # ডুপ্লিকেট রিমুভ (যদি একই symbol এবং date একাধিকবার আসে)
     df = df.drop_duplicates(subset=['symbol', 'date'])
 
+    # Sort by gap in descending order (more rows first)
+    df = df.sort_values('gap', ascending=False).reset_index(drop=True)
+
     # প্রথম কলাম হিসেবে সিরিয়াল নাম্বার যোগ করা
     df.insert(0, 'no', range(1, len(df) + 1))
 
-    # কলামের অর্ডার ঠিক করা: no, symbol, date, buy
-    df = df[['no', 'symbol', 'date', 'buy']]
+    # কলামের অর্ডার ঠিক করা (last_row_date বাদ, gap সংক্ষিপ্ত নাম)
+    df = df[['no', 'symbol', 'date', 'buy', 'gap', 'second_row_date']]
 
     print(f"\n{'='*80}")
     print(f"✅ TOTAL SIGNALS: {len(df)}")
     print(f"{'='*80}")
     print(df.to_string())
 
+    # Show summary statistics
+    print(f"\n{'='*80}")
+    print("SUMMARY STATISTICS:")
+    print(f"{'='*80}")
+    print(f"Average gap: {df['gap'].mean():.2f}")
+    print(f"Max gap: {df['gap'].max()}")
+    print(f"Min gap: {df['gap'].min()}")
+    print(f"Total gap sum: {df['gap'].sum()}")
+
 else:
     print(f"\n❌ No signals generated")
-    df = pd.DataFrame(columns=['no', 'symbol', 'date', 'buy'])
+    df = pd.DataFrame(columns=['no', 'symbol', 'date', 'buy', 'gap', 'second_row_date'])
 
 # Save to CSV
 df.to_csv(output_path2, index=False)
