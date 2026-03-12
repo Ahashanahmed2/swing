@@ -18,6 +18,7 @@ scripts = [
     #"scripts/trend_signal.py",
     "scripts/pattarn.py",
     "scripts/ema_200.py",
+    "scripts/support.py",
     "scripts/buy_csv.py",
     #"scripts/buy.py",
     "scripts/swing_buy.py",
