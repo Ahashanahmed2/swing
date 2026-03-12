@@ -35,7 +35,6 @@ def process_stock_data(input_file, output_file):
         latest_row = symbol_data.iloc[-1]
         a_price = latest_row['low']
         a_date = latest_row['date']
-        a_close = latest_row['close']
 
         # Process previous rows (excluding the latest)
         for i in range(len(symbol_data) - 2, -1, -1):
@@ -43,7 +42,6 @@ def process_stock_data(input_file, output_file):
             b_low = current_row['low']
             b_high = current_row['high']
             b_date = current_row['date']
-            b_close = current_row['close']
 
             # Check if a_price is within b's low-high range
             if b_low <= a_price <= b_high:
@@ -53,34 +51,37 @@ def process_stock_data(input_file, output_file):
 
                 valid_support = True
                 gap_count = len(rows_between)
-
+                
+                # Check if any row's low is below both b_low and a_price
+                low_below_both = False
+                
                 # Check each row between b and a
                 for _, row in rows_between.iterrows():
-                    # If any row's low is within b's low-high range, it's not valid
+                    # Original condition: If any row's low is within b's low-high range, it's not valid
                     if b_low <= row['low'] <= b_high:
                         valid_support = False
                         break
                     
-                    # NEW CHECK: If any row's close is below a_price or b_low, it's not valid
-                    if row['close'] < a_price or row['close'] < b_low:
-                        valid_support = False
-                        break
+                    # NEW CONDITION: Check if any row's low is below BOTH b_low and a_price
+                    if row['low'] < b_low and row['low'] < a_price:
+                        low_below_both = True
+                        # No need to break, we can continue checking but mark as invalid
 
-                if valid_support and gap_count > 0:
-                    # Also check if the close prices of a and b are valid
-                    if a_close >= b_low and b_close >= b_low:
-                        results.append({
-                            'a_date': a_date.strftime('%Y-%m-%d'),
-                            'b_date': b_date.strftime('%Y-%m-%d'),
-                            'symbol': symbol,
-                            'close': latest_row['close'],
-                            'gap': gap_count,
-                            'a_low': a_price,
-                            'b_low': b_low,
-                            'b_high': b_high,
-                            'a_close': a_close,
-                            'b_close': b_close
-                        })
+                # Only add to results if:
+                # 1. Valid support (no row's low within b's range)
+                # 2. No rows with low below both b_low and a_price
+                # 3. At least one gap
+                if valid_support and not low_below_both and gap_count > 0:
+                    results.append({
+                        'a_date': a_date.strftime('%Y-%m-%d'),
+                        'b_date': b_date.strftime('%Y-%m-%d'),
+                        'symbol': symbol,
+                        'close': latest_row['close'],
+                        'gap': gap_count,
+                        'a_low': a_price,
+                        'b_low': b_low,
+                        'b_high': b_high
+                    })
 
     # Create output dataframe
     if results:
