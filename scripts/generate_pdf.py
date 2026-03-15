@@ -201,12 +201,12 @@ if __name__ == "__main__":
     # -------------------------------------------------------------------
     # Step 9: Upload updated CSV to Hugging Face (optional)
     # -------------------------------------------------------------------
-   """ print("\n📤 Uploading CSV files to Hugging Face...")
+     print("\n📤 Uploading CSV files to Hugging Face...")
 
     # csv_folder ডিফাইন করুন
     csv_folder = folder_path
 
-    # Hugging Face আপলোড
+    """# Hugging Face আপলোড
     try:
         uploader = SmartDatasetUploader(REPO_ID, HF_TOKEN)
         uploader.smart_upload(
