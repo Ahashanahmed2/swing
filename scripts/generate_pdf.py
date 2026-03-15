@@ -3,7 +3,7 @@ import pandas as pd
 from fpdf.enums import XPos, YPos
 from fpdf import FPDF
 from datetime import datetime, timedelta
-from hf_uploader import SmartDatasetUploader, REPO_ID, HF_TOKEN
+#from hf_uploader import SmartDatasetUploader, REPO_ID, HF_TOKEN
 import requests
 import smtplib
 from email.message import EmailMessage
@@ -201,7 +201,7 @@ if __name__ == "__main__":
     # -------------------------------------------------------------------
     # Step 9: Upload updated CSV to Hugging Face (optional)
     # -------------------------------------------------------------------
-    print("\n📤 Uploading CSV files to Hugging Face...")
+   """ print("\n📤 Uploading CSV files to Hugging Face...")
 
     # csv_folder ডিফাইন করুন
     csv_folder = folder_path
@@ -215,7 +215,7 @@ if __name__ == "__main__":
         )
         print("✅ Upload to Hugging Face complete!")
     except Exception as e:
-        print(f"❌ Hugging Face upload failed: {e}")
+        print(f"❌ Hugging Face upload failed: {e}")"""
 
     # ✅ PDF না থাকলে নোটিফিকেশন
     if not pdf_generated:
