@@ -40,7 +40,7 @@ else:
 
         # Check if any future row has close > last_high
         for _, future_row in future_rows.iterrows():
-            if future_row['close'] > last_high:
+            if future_row['close'] >= last_high:
                 confirmed_list.append(row)
                 break  # Only one confirmation needed
 
