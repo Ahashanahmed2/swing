@@ -62,8 +62,8 @@ def process_stock_data(input_file, output_file):
                 
                 # Check each row between b and a
                 for _, row in rows_between.iterrows():
-                    if row['low'] <= b_low:
-                        print(f"    ❌ Invalid: Intermediate row at {row['date'].strftime('%Y-%m-%d')} has low {row['low']} <= {b_low}")
+                    if row['low'] < b_low:
+                        print(f"    ❌ Invalid: Intermediate row at {row['date'].strftime('%Y-%m-%d')} has low {row['low']} < {b_low}")
                         valid_support = False
                         break
                 
