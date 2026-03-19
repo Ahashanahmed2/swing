@@ -231,6 +231,6 @@ def main(csv_path, output_csv='elliott_wave_output.csv'):
     return all_patterns
 
 if __name__ == "__main__":
-    csv_file = "/csv/mongodb.csv"  # আপনার ইনপুট ফাইলের পাথ দিন
+    csv_file = "./csv/mongodb.csv"  # আপনার ইনপুট ফাইলের পাথ দিন
     output_path = "./output/ai_signal/elliott_wave_output.csv"  # কাঙ্ক্ষিত আউটপুট পাথ
     main(csv_file, output_csv=output_path)
