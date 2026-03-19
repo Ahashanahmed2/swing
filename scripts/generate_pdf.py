@@ -200,10 +200,9 @@ if __name__ == "__main__":
 
     # -------------------------------------------------------------------
     # Step 9: Upload updated CSV to Hugging Face (optional)
-    # -------------------------------------------------------------------
-"""
+    # ------------------------------------------------------------------
     print("\n📤 Uploading CSV files to Hugging Face...")
-    
+    """
     # csv_folder ডিফাইন করুন
     csv_folder = folder_path
     
@@ -216,8 +215,8 @@ if __name__ == "__main__":
         )
         print("✅ Upload to Hugging Face complete!")
     except Exception as e:
-        print(f"❌ Hugging Face upload failed: {e}")
-"""
+        print(f"❌ Hugging Face upload failed: {e}")"""
+
 
     # ✅ PDF না থাকলে নোটিফিকেশন
     if not pdf_generated:
