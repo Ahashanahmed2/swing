@@ -29,12 +29,12 @@ latest_rows = mongo_df.sort_values('date').groupby('symbol').last().reset_index(
 output_rows = []
 
 print("\n" + "="*80)
-print("PROCESSING SIGNALS (LATEST LOW > DIVERGENCE LAST LOW):")
+print("PROCESSING SIGNALS (LATEST LOW > DIVERGENCE LOW):")
 print("="*80)
 
 for _, rsi_row in rsi_df.iterrows():
     symbol = str(rsi_row['symbol']).strip().upper()
-    divergence_last_low = rsi_row['last_row_low']
+    divergence_low = rsi_row['last_row_low']
     
     # Check if symbol exists in latest_rows
     symbol_data = latest_rows[latest_rows['symbol'] == symbol]
@@ -45,24 +45,24 @@ for _, rsi_row in rsi_df.iterrows():
     # Get the latest row for this symbol
     latest_row = symbol_data.iloc[0]
     
-    # Check condition: latest low > divergence last low
-    if latest_row['low'] > divergence_last_low:
+    # Check condition: latest low > divergence low
+    if latest_row['low'] > divergence_low:
         
         # Store signal
         output_rows.append({
             'symbol': symbol,
-            'divergence_last_low': divergence_last_low,
-            'latest_date': latest_row['date'].date(),
-            'latest_low': latest_row['low'],
-            'latest_close': latest_row['close'],
-            'latest_high': latest_row['high']
+            'divergence_low': divergence_low,
+            'date': latest_row['date'].date(),
+            'low': latest_row['low'],
+            'close': latest_row['close'],
+            'high': latest_row['high']
         })
         
         print(f"✅ Signal: {symbol} | "
-              f"Divergence Low={divergence_last_low:.2f} | "
-              f"Latest Date={latest_row['date'].date()} | "
-              f"Latest Low={latest_row['low']:.2f} | "
-              f"Latest Close={latest_row['close']:.2f}")
+              f"Divergence Low={divergence_low:.2f} | "
+              f"Date={latest_row['date'].date()} | "
+              f"Low={latest_row['low']:.2f} | "
+              f"Close={latest_row['close']:.2f}")
 
 # Create DataFrame
 if output_rows:
@@ -78,8 +78,7 @@ if output_rows:
     df.insert(0, 'no', range(1, len(df) + 1))
     
     # Set column order
-    df = df[['no', 'symbol', 'divergence_last_low', 'latest_date', 
-             'latest_low', 'latest_close', 'latest_high']]
+    df = df[['no', 'symbol', 'divergence_low', 'date', 'low', 'close', 'high']]
     
     print(f"\n{'='*80}")
     print(f"✅ TOTAL SIGNALS: {len(df)}")
@@ -90,17 +89,16 @@ if output_rows:
     print(f"\n{'='*80}")
     print("SUMMARY STATISTICS:")
     print(f"{'='*80}")
-    print(f"Average latest low: {df['latest_low'].mean():.2f}")
-    print(f"Max latest low: {df['latest_low'].max():.2f}")
-    print(f"Min latest low: {df['latest_low'].min():.2f}")
-    print(f"\nAverage latest close: {df['latest_close'].mean():.2f}")
-    print(f"Max latest close: {df['latest_close'].max():.2f}")
-    print(f"Min latest close: {df['latest_close'].min():.2f}")
+    print(f"Average low: {df['low'].mean():.2f}")
+    print(f"Max low: {df['low'].max():.2f}")
+    print(f"Min low: {df['low'].min():.2f}")
+    print(f"\nAverage close: {df['close'].mean():.2f}")
+    print(f"Max close: {df['close'].max():.2f}")
+    print(f"Min close: {df['close'].min():.2f}")
 
 else:
     print(f"\n❌ No signals generated")
-    df = pd.DataFrame(columns=['no', 'symbol', 'divergence_last_low', 'latest_date', 
-                               'latest_low', 'latest_close', 'latest_high'])
+    df = pd.DataFrame(columns=['no', 'symbol', 'divergence_low', 'date', 'low', 'close', 'high'])
 
 # Save to CSV
 df.to_csv(output_path2, index=False)
