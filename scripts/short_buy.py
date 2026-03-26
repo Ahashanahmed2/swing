@@ -22,87 +22,85 @@ rsi_df.columns = rsi_df.columns.str.replace(" ", "_")
 # Ensure MongoDB date is datetime
 mongo_df['date'] = pd.to_datetime(mongo_df['date'], errors='coerce')
 mongo_df = mongo_df.dropna(subset=['date'])
-mongo_groups = mongo_df.groupby('symbol')
+
+# Get latest row for each symbol from MongoDB
+latest_rows = mongo_df.sort_values('date').groupby('symbol').last().reset_index()
 
 output_rows = []
 
 print("\n" + "="*80)
-print("PROCESSING SIGNALS (LOW > LAST_LOW LOGIC):")
+print("PROCESSING SIGNALS (LATEST LOW > DIVERGENCE LAST LOW):")
 print("="*80)
 
 for _, rsi_row in rsi_df.iterrows():
     symbol = str(rsi_row['symbol']).strip().upper()
-    last_low = rsi_row['last_row_low']
-    last_row_date = pd.to_datetime(rsi_row['last_row_date'], errors='coerce')
-    second_row_date = pd.to_datetime(rsi_row['second_row_date'], errors='coerce')
-
-    if pd.isna(last_row_date) or pd.isna(second_row_date) or symbol not in mongo_groups.groups:
-        continue
-
-    symbol_group = mongo_groups.get_group(symbol).sort_values('date').reset_index(drop=True)
-
-    # Find last_row and second_row in MongoDB data
-    last_row_candidates = symbol_group[symbol_group['date'] == last_row_date]
-    second_row_candidates = symbol_group[symbol_group['date'] == second_row_date]
+    divergence_last_low = rsi_row['last_row_low']
     
-    if last_row_candidates.empty or second_row_candidates.empty:
+    # Check if symbol exists in latest_rows
+    symbol_data = latest_rows[latest_rows['symbol'] == symbol]
+    
+    if symbol_data.empty:
         continue
     
-    last_row = last_row_candidates.iloc[-1]
+    # Get the latest row for this symbol
+    latest_row = symbol_data.iloc[0]
+    
+    # Check condition: latest low > divergence last low
+    if latest_row['low'] > divergence_last_low:
+        
+        # Store signal
+        output_rows.append({
+            'symbol': symbol,
+            'divergence_last_low': divergence_last_low,
+            'latest_date': latest_row['date'].date(),
+            'latest_low': latest_row['low'],
+            'latest_close': latest_row['close'],
+            'latest_high': latest_row['high']
+        })
+        
+        print(f"✅ Signal: {symbol} | "
+              f"Divergence Low={divergence_last_low:.2f} | "
+              f"Latest Date={latest_row['date'].date()} | "
+              f"Latest Low={latest_row['low']:.2f} | "
+              f"Latest Close={latest_row['close']:.2f}")
 
-    # শুধু low > last_low চেক করা হচ্ছে (close চেক করা হচ্ছে না)
-    if not (last_row['low'] > last_low):
-        continue
-
-    # Count rows between second_row_date and last_row_date (exclusive of both dates)
-    mask = (symbol_group['date'] > second_row_date) & (symbol_group['date'] < last_row_date)
-    rows_between_count = mask.sum()
-
-    # Store signal with row counts
-    output_rows.append({
-        'symbol': symbol,
-        'date': last_row['date'].date(),
-        'buy': last_row['close'],
-        'gap': rows_between_count,  # rows between second_row_date and last_row_date
-        'second_row_date': second_row_date.date()
-    })
-
-    print(f"✅ Signal: {symbol} | Date={last_row['date'].date()} | Buy={last_row['close']:.2f} | "
-          f"Low={last_row['low']:.2f} > Last_Low={last_low:.2f} | Gap: {rows_between_count}")
-
-# DataFrame তৈরি করা
+# Create DataFrame
 if output_rows:
     df = pd.DataFrame(output_rows)
-
-    # ডুপ্লিকেট রিমুভ (যদি একই symbol এবং date একাধিকবার আসে)
-    df = df.drop_duplicates(subset=['symbol', 'date'])
-
-    # Sort by gap in descending order (more rows first)
-    df = df.sort_values('gap', ascending=False).reset_index(drop=True)
-
-    # প্রথম কলাম হিসেবে সিরিয়াল নাম্বার যোগ করা
+    
+    # Remove duplicates if any
+    df = df.drop_duplicates(subset=['symbol'])
+    
+    # Sort by symbol
+    df = df.sort_values('symbol').reset_index(drop=True)
+    
+    # Add serial number as first column
     df.insert(0, 'no', range(1, len(df) + 1))
-
-    # কলামের অর্ডার ঠিক করা
-    df = df[['no', 'symbol', 'date', 'buy', 'gap', 'second_row_date']]
-
+    
+    # Set column order
+    df = df[['no', 'symbol', 'divergence_last_low', 'latest_date', 
+             'latest_low', 'latest_close', 'latest_high']]
+    
     print(f"\n{'='*80}")
     print(f"✅ TOTAL SIGNALS: {len(df)}")
     print(f"{'='*80}")
     print(df.to_string())
-
-    # Show summary statistics
+    
+    # Summary statistics
     print(f"\n{'='*80}")
     print("SUMMARY STATISTICS:")
     print(f"{'='*80}")
-    print(f"Average gap: {df['gap'].mean():.2f}")
-    print(f"Max gap: {df['gap'].max()}")
-    print(f"Min gap: {df['gap'].min()}")
-    print(f"Total gap sum: {df['gap'].sum()}")
+    print(f"Average latest low: {df['latest_low'].mean():.2f}")
+    print(f"Max latest low: {df['latest_low'].max():.2f}")
+    print(f"Min latest low: {df['latest_low'].min():.2f}")
+    print(f"\nAverage latest close: {df['latest_close'].mean():.2f}")
+    print(f"Max latest close: {df['latest_close'].max():.2f}")
+    print(f"Min latest close: {df['latest_close'].min():.2f}")
 
 else:
     print(f"\n❌ No signals generated")
-    df = pd.DataFrame(columns=['no', 'symbol', 'date', 'buy', 'gap', 'second_row_date'])
+    df = pd.DataFrame(columns=['no', 'symbol', 'divergence_last_low', 'latest_date', 
+                               'latest_low', 'latest_close', 'latest_high'])
 
 # Save to CSV
 df.to_csv(output_path2, index=False)
