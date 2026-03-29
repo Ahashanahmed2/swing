@@ -1,28 +1,16 @@
-# ai_trade.py - GitHub Actions এর জন্য অপটিমাইজড (টেলিগ্রাম ছাড়া)
+# ai_trade.py - GitHub Actions এর জন্য অপটিমাইজড (শুধু একবার রান করে)
 
 import os
 import csv
 import time
 import logging
 import smtplib
-import schedule
-import pandas as pd
-import numpy as np
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 from email.message import EmailMessage
 from dataclasses import dataclass
 from collections import defaultdict
-
-# ==================== টেলিগ্রাম ইম্পোর্ট (অপশনাল) ====================
-try:
-    from telegram import Bot
-    from telegram.error import TelegramError
-    TELEGRAM_AVAILABLE = True
-except ImportError:
-    TELEGRAM_AVAILABLE = False
-    print("⚠️ Telegram module not available - notifications will be email only")
 
 # ==================== CONFIGURATION ====================
 
@@ -34,10 +22,6 @@ ED_FILE = f"{CSV_DATA_DIR}/ed.csv"
 RD_FILE = f"{CSV_DATA_DIR}/rd.csv"
 SL_FILE = f"{CSV_DATA_DIR}/sl.csv"
 TP_FILE = f"{CSV_DATA_DIR}/tp.csv"
-
-# Telegram Configuration (ঐচ্ছিক)
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # Email Configuration
 EMAIL_USER = os.getenv("EMAIL_USER")
@@ -75,7 +59,7 @@ ED_HEADERS = ['symbol', 'wave', 'subwave', 'entry_zone', 'stop_loss',
 
 @dataclass
 class StockData:
-    """Stock data structure"""
+    """Stock data structure - date ফাইলের নাম থেকে আসে"""
     symbol: str
     entry_zone: str
     stop_loss: float
@@ -87,12 +71,12 @@ class StockData:
     insight: str
     wave: str
     subwave: str
-    date: str
+    date: str  # ফাইলের নাম থেকে আসা তারিখ (dd-mm-yyyy)
     original_row: List[str]
     
     @classmethod
     def from_row(cls, row: List[str], date: str):
-        """Create StockData from CSV row"""
+        """Create StockData from CSV row - date প্যারামিটার ফাইলের নাম থেকে আসে"""
         def parse_price(price_str: str) -> float:
             try:
                 if '-' in price_str:
@@ -182,14 +166,9 @@ def read_csv_file(filepath: str) -> Optional[List[List[str]]]:
         return None
 
 
-def write_csv_file(filepath: str, data: List[List[str]], headers: List[str] = None):
-    """Write data to CSV file with proper headers"""
+def write_csv_file(filepath: str, data: List[List[str]]):
+    """Write data to CSV file"""
     try:
-        if headers and (not data or len(data) == 0):
-            data = [headers]
-        elif headers and data and len(data) > 0 and data[0] != headers:
-            data = [headers] + data
-            
         with open(filepath, 'w', encoding='utf-8-sig', newline='') as f:
             writer = csv.writer(f)
             writer.writerows(data)
@@ -238,7 +217,10 @@ def get_latest_mongodb_data(mongodb_data: Dict[str, List[MongoDBData]], symbol: 
 
 
 def load_stock_files() -> List[Tuple[str, List[StockData]]]:
-    """Load all stock CSV files from stock directory"""
+    """
+    Load all stock CSV files from stock directory
+    ফাইলের নাম থেকে তারিখ নেয় (যেমন: 29-03-2026.csv → date = "29-03-2026")
+    """
     stock_files = []
     if not os.path.exists(CSV_STOCK_DIR):
         logger.warning(f"Stock directory not found: {CSV_STOCK_DIR}")
@@ -247,9 +229,10 @@ def load_stock_files() -> List[Tuple[str, List[StockData]]]:
     for filename in os.listdir(CSV_STOCK_DIR):
         if filename.endswith('.csv'):
             filepath = os.path.join(CSV_STOCK_DIR, filename)
-            date = filename.replace('.csv', '')
+            # ফাইলের নাম থেকে তারিখ নিন
+            file_date = filename.replace('.csv', '')
+            
             data = read_csv_file(filepath)
-
             if data and len(data) > 1:
                 start_idx = 0
                 if data[0] and data[0][0].lower() == 'symbol':
@@ -259,14 +242,14 @@ def load_stock_files() -> List[Tuple[str, List[StockData]]]:
                 for row in data[start_idx:]:
                     if row and len(row) >= 11 and row[0].strip():
                         try:
-                            stocks.append(StockData.from_row(row, date))
+                            stocks.append(StockData.from_row(row, file_date))
                         except Exception as e:
                             logger.debug(f"Error creating StockData: {e}")
                             continue
 
                 if stocks:
-                    stock_files.append((date, stocks))
-                    logger.info(f"Loaded {len(stocks)} stocks from {filename}")
+                    stock_files.append((file_date, stocks))
+                    logger.info(f"Loaded {len(stocks)} stocks from {filename} (date: {file_date})")
 
     return sorted(stock_files, key=lambda x: x[0])
 
@@ -311,28 +294,45 @@ def load_existing_rd() -> Dict[str, Dict]:
     return result
 
 
-def save_to_ed(stock: StockData, entry_date: str):
-    """Save entry to ED file"""
+def is_duplicate_entry(symbol: str, date: str) -> bool:
+    """একই তারিখে একই সিম্বল আগে এন্ট্রি হয়েছে কিনা চেক করে"""
+    ed_data = read_csv_file(ED_FILE)
+    if not ed_data or len(ed_data) <= 1:
+        return False
+    
+    for row in ed_data[1:]:
+        if len(row) > 11 and row[0] == symbol and row[11] == date:
+            return True
+    return False
+
+
+def save_to_ed(stock: StockData) -> bool:
+    """একই তারিখে একই সিম্বল ডুপ্লিকেট হবে না"""
     ed_data = read_csv_file(ED_FILE)
     if not ed_data:
         ed_data = [ED_HEADERS]
-
-    new_row = stock.original_row + [entry_date]
+    
+    if is_duplicate_entry(stock.symbol, stock.date):
+        logger.warning(f"⚠️ Duplicate skipped: {stock.symbol} already entered on {stock.date}")
+        return False
+    
+    new_row = stock.original_row + [stock.date]
     ed_data.append(new_row)
     write_csv_file(ED_FILE, ed_data)
-    logger.info(f"Saved to ED: {stock.symbol} on {entry_date}")
+    logger.info(f"✅ Saved to ED: {stock.symbol} on {stock.date}")
+    return True
 
 
-def save_to_rd(stock: StockData, entry_date: str, running_date: str):
+def save_to_rd(stock: StockData, running_date: str):
     """Save to RD file"""
     rd_data = read_csv_file(RD_FILE)
     if not rd_data:
         rd_data = [RD_HEADERS]
 
-    new_row = stock.original_row + [entry_date, running_date]
+    new_row = stock.original_row + [stock.date, running_date]
     rd_data.append(new_row)
     write_csv_file(RD_FILE, rd_data)
-    logger.info(f"Saved to RD: {stock.symbol} from {entry_date} to {running_date}")
+    logger.info(f"✅ Saved to RD: {stock.symbol} (entry: {stock.date}, running: {running_date})")
 
 
 def update_rd_with_running_date(symbol: str, running_date: str):
@@ -462,7 +462,7 @@ def remove_old_records():
             logger.info(f"Removed {removed_count} old records from {filepath}")
 
 
-# ==================== NOTIFICATION (Email Only for GitHub Actions) ====================
+# ==================== NOTIFICATION ====================
 
 def send_email(subject: str, body: str):
     """Send email notification"""
@@ -472,7 +472,7 @@ def send_email(subject: str, body: str):
 
     try:
         msg = EmailMessage()
-        msg.set_content(body.replace('<b>', '').replace('</b>', ''))
+        msg.set_content(body)
         msg['Subject'] = subject
         msg['From'] = EMAIL_USER
         msg['To'] = EMAIL_RECIPIENT
@@ -486,7 +486,7 @@ def send_email(subject: str, body: str):
 
 
 def generate_notification(stock: StockData, action: str, price: float, date: str, gap: int = None):
-    """Generate notification message (email only for GitHub Actions)"""
+    """Generate notification message"""
     emoji = stock.get_score_emoji()
     
     if action == "entry":
@@ -496,7 +496,8 @@ def generate_notification(stock: StockData, action: str, price: float, date: str
 📊 Symbol: {stock.symbol} {emoji}
 💰 Entry Zone: {stock.entry_zone}
 🎯 Current Price: {price}
-📅 Date: {date}
+📅 Entry Date: {stock.date}
+📅 Signal Date: {date}
 ⭐ Score: {stock.score}/100
 
 📈 Wave: {stock.wave} → {stock.subwave}
@@ -513,7 +514,8 @@ def generate_notification(stock: StockData, action: str, price: float, date: str
 📊 Symbol: {stock.symbol} {emoji}
 💰 Stop Loss: {stock.stop_loss}
 🎯 Exit Price: {price}
-📅 Date: {date}
+📅 Entry Date: {stock.date}
+📅 Exit Date: {date}
 📈 Holding Period: {gap} days
 
 📊 Wave: {stock.wave}
@@ -527,7 +529,8 @@ def generate_notification(stock: StockData, action: str, price: float, date: str
 📊 Symbol: {stock.symbol} {emoji}
 💰 Target Price: {price}
 🎯 Exit Price: {price}
-📅 Date: {date}
+📅 Entry Date: {stock.date}
+📅 Exit Date: {date}
 📈 Holding Period: {gap} days
 
 📊 Wave: {stock.wave}
@@ -536,7 +539,6 @@ def generate_notification(stock: StockData, action: str, price: float, date: str
     else:
         return
 
-    # Send email only (Telegram optional)
     send_email(f"Trade Alert: {stock.symbol} - {action}", message)
     logger.info(f"Notification sent for {stock.symbol}: {action}")
 
@@ -554,10 +556,11 @@ def calculate_gap_days(date1: str, date2: str) -> int:
 
 
 def monitor_trades():
-    """Main monitoring function"""
+    """Main monitoring function - শুধু একবার রান করে"""
     logger.info("=" * 50)
     logger.info("Starting trade monitoring...")
 
+    # Load all data
     mongodb_data = load_mongodb_data()
     stock_files = load_stock_files()
     existing_rd = load_existing_rd()
@@ -570,8 +573,10 @@ def monitor_trades():
         logger.warning("No stock files found")
         return
 
+    # Track processed symbols for this run
     processed = set()
 
+    # Process each stock file
     for file_date, stocks in stock_files:
         logger.info(f"Processing {file_date} with {len(stocks)} stocks")
 
@@ -583,20 +588,27 @@ def monitor_trades():
             if not latest_data:
                 continue
 
+            # Check if already in RD
             in_rd = stock.symbol in existing_rd
 
+            # Check entry condition (not in RD)
             if not in_rd and check_entry_conditions(stock, latest_data):
                 logger.info(f"✅ Entry signal for {stock.symbol} at {latest_data.close}")
-                save_to_ed(stock, latest_data.date)
-                save_to_rd(stock, file_date, latest_data.date)
-                generate_notification(stock, "entry", latest_data.close, latest_data.date)
-                processed.add(stock.symbol)
+                
+                if save_to_ed(stock):
+                    save_to_rd(stock, latest_data.date)
+                    generate_notification(stock, "entry", latest_data.close, latest_data.date)
+                    processed.add(stock.symbol)
+                    existing_rd[stock.symbol] = {'row': None, 'rd_date': latest_data.date, 'ed_date': stock.date}
 
+            # Check existing trades in RD
             elif in_rd:
                 rd_info = existing_rd[stock.symbol]
                 rd_date = rd_info['rd_date']
-                gap = calculate_gap_days(rd_date, latest_data.date) if rd_date else 0
+                ed_date = rd_info.get('ed_date', stock.date)
+                gap = calculate_gap_days(ed_date, latest_data.date) if ed_date else 0
 
+                # Check take profits in order (highest first)
                 tp_hit = False
                 for level in [3, 2, 1]:
                     if check_take_profit(stock, latest_data, level):
@@ -608,6 +620,7 @@ def monitor_trades():
                         processed.add(stock.symbol)
                         break
 
+                # Check stop loss if no TP hit
                 if not tp_hit and check_stop_loss(stock, latest_data):
                     logger.info(f"⚠️ Stop loss hit for {stock.symbol} at {latest_data.close}")
                     save_to_sl(stock, rd_info['row'], rd_date, latest_data.date, gap)
@@ -615,98 +628,21 @@ def monitor_trades():
                     remove_from_rd(stock.symbol)
                     processed.add(stock.symbol)
 
+                # Update RD with latest running date
                 elif not tp_hit:
                     update_rd_with_running_date(stock.symbol, latest_data.date)
 
+    # Remove old records
     remove_old_records()
+
     logger.info("Trade monitoring completed")
     logger.info("=" * 50)
-
-
-def generate_summary_report():
-    """Generate and send summary report"""
-    logger.info("Generating summary report...")
-
-    ed_data = read_csv_file(ED_FILE)
-    rd_data = read_csv_file(RD_FILE)
-    sl_data = read_csv_file(SL_FILE)
-    tp_data = read_csv_file(TP_FILE)
-
-    stats = {
-        'total_entries': len(ed_data) - 1 if ed_data and len(ed_data) > 1 else 0,
-        'active_trades': len(rd_data) - 1 if rd_data and len(rd_data) > 1 else 0,
-        'stop_loss_hits': len(sl_data) - 1 if sl_data and len(sl_data) > 1 else 0,
-        'take_profit_hits': len(tp_data) - 1 if tp_data and len(tp_data) > 1 else 0,
-    }
-
-    total_closed = stats['stop_loss_hits'] + stats['take_profit_hits']
-    win_rate = (stats['take_profit_hits'] / total_closed * 100) if total_closed > 0 else 0
-
-    top_performers = []
-    if tp_data and len(tp_data) > 1:
-        tp_counts = defaultdict(int)
-        for row in tp_data[1:]:
-            if row and row[0]:
-                tp_counts[row[0]] += 1
-        top_performers = sorted(tp_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-
-    message = f"""
-📊 TRADING SUMMARY REPORT
-📅 Date: {datetime.now().strftime('%d-%m-%Y %H:%M')}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📈 PERFORMANCE METRICS
-
-• Total Entries: {stats['total_entries']}
-• Active Trades: {stats['active_trades']}
-• Stop Loss Hits: {stats['stop_loss_hits']}
-• Take Profit Hits: {stats['take_profit_hits']}
-• Win Rate: {win_rate:.1f}%
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-🎯 TOP PERFORMERS
-"""
-    if top_performers:
-        for sym, count in top_performers:
-            message += f"• {sym}: {count} TP hits\n"
-    else:
-        message += "• No TP hits yet\n"
-
-    message += f"""
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-⚠️ RISK METRICS
-• Loss Rate: {100 - win_rate:.1f}%
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🤖 AI Trade Monitor Active
-"""
-
-    send_email("Trading Summary Report", message)
-    logger.info("Summary report sent")
-
-
-# ==================== SCHEDULER ====================
-
-def run_scheduler():
-    """Run scheduled tasks"""
-    schedule.every(5).minutes.do(monitor_trades)
-    schedule.every().day.at("18:00").do(generate_summary_report)
-    schedule.every().day.at("00:00").do(remove_old_records)
-
-    logger.info("Scheduler started - Monitoring every 5 minutes")
-
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
 
 
 # ==================== MAIN ====================
 
 def main():
-    """Main function"""
+    """Main function - GitHub Actions এর জন্য (শুধু একবার রান করে)"""
     print("=" * 60)
     print("🤖 AI TRADE MONITOR - Automated Trading System")
     print("=" * 60)
@@ -714,23 +650,23 @@ def main():
     print(f"📁 Data Directory: {CSV_DATA_DIR}")
     print(f"📧 Email: {'✅' if EMAIL_USER else '❌'}")
     print("=" * 60)
+    print("📅 Date source: Filename (stock/date.csv)")
+    print("📌 Duplicate check: Same symbol + same date = blocked")
+    print("▶️ Running once mode (for GitHub Actions)")
+    print("=" * 60)
 
+    # Ensure directories exist
     ensure_directories()
 
+    # Run once and exit
     try:
-        logger.info("Running initial scan...")
         monitor_trades()
+        print("\n✅ Script completed successfully!")
+        logger.info("✅ Script completed successfully!")
     except Exception as e:
-        logger.error(f"Initial scan error: {e}")
-
-    try:
-        run_scheduler()
-    except KeyboardInterrupt:
-        logger.info("Shutting down...")
-        print("\n👋 Shutting down AI Trade Monitor...")
-    except Exception as e:
-        logger.error(f"Scheduler error: {e}")
-
+        logger.error(f"❌ Error: {e}")
+        print(f"\n❌ Error: {e}")
+        raise
 
 if __name__ == "__main__":
     main()
