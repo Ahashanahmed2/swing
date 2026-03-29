@@ -1,4 +1,4 @@
-# ai_trade.py - সম্পূর্ণ আপডেটেড অটোমেটেড ট্রেড মনিটরিং সিস্টেম
+# ai_trade.py - GitHub Actions এর জন্য অপটিমাইজড (টেলিগ্রাম ছাড়া)
 
 import os
 import csv
@@ -15,13 +15,14 @@ from email.message import EmailMessage
 from dataclasses import dataclass
 from collections import defaultdict
 
-from telegram import Bot
-from telegram.error import TelegramError
-import asyncio
-import nest_asyncio
-
-# Apply nest_asyncio for running async in sync context
-nest_asyncio.apply()
+# ==================== টেলিগ্রাম ইম্পোর্ট (অপশনাল) ====================
+try:
+    from telegram import Bot
+    from telegram.error import TelegramError
+    TELEGRAM_AVAILABLE = True
+except ImportError:
+    TELEGRAM_AVAILABLE = False
+    print("⚠️ Telegram module not available - notifications will be email only")
 
 # ==================== CONFIGURATION ====================
 
@@ -34,7 +35,7 @@ RD_FILE = f"{CSV_DATA_DIR}/rd.csv"
 SL_FILE = f"{CSV_DATA_DIR}/sl.csv"
 TP_FILE = f"{CSV_DATA_DIR}/tp.csv"
 
-# Telegram Configuration
+# Telegram Configuration (ঐচ্ছিক)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
@@ -197,18 +198,6 @@ def write_csv_file(filepath: str, data: List[List[str]], headers: List[str] = No
         logger.error(f"Error writing {filepath}: {e}")
 
 
-def safe_read_pandas(filepath: str) -> Optional[pd.DataFrame]:
-    """Safely read CSV with pandas"""
-    try:
-        if not os.path.exists(filepath):
-            return None
-        df = pd.read_csv(filepath, encoding='utf-8-sig')
-        return df if not df.empty else None
-    except Exception as e:
-        logger.error(f"Pandas read error {filepath}: {e}")
-        return None
-
-
 # ==================== DATA LOADING ====================
 
 def load_mongodb_data() -> Dict[str, List[MongoDBData]]:
@@ -262,7 +251,6 @@ def load_stock_files() -> List[Tuple[str, List[StockData]]]:
             data = read_csv_file(filepath)
 
             if data and len(data) > 1:
-                # Find header or assume first row is data
                 start_idx = 0
                 if data[0] and data[0][0].lower() == 'symbol':
                     start_idx = 1
@@ -280,7 +268,7 @@ def load_stock_files() -> List[Tuple[str, List[StockData]]]:
                     stock_files.append((date, stocks))
                     logger.info(f"Loaded {len(stocks)} stocks from {filename}")
 
-    return sorted(stock_files, key=lambda x: x[0])  # Sort by date
+    return sorted(stock_files, key=lambda x: x[0])
 
 
 # ==================== TRADE LOGIC ====================
@@ -372,7 +360,7 @@ def remove_from_rd(symbol: str):
     if not rd_data or len(rd_data) <= 1:
         return
 
-    new_data = [rd_data[0]]  # Keep header
+    new_data = [rd_data[0]]
     for row in rd_data[1:]:
         if row and row[0] != symbol:
             new_data.append(row)
@@ -388,14 +376,13 @@ def save_to_sl(stock: StockData, rd_row: List[str], rd_date: str, sl_date: str, 
     if not sl_data:
         sl_data = [SL_HEADERS]
 
-    # Get original data from rd_row (first 11 columns are stock data)
     original_data = rd_row[:11] if len(rd_row) >= 11 else stock.original_row
     
     new_row = original_data + [
-        rd_row[11] if len(rd_row) > 11 else '',  # ed_date
-        rd_date,  # rd_date
-        sl_date,  # sld_date
-        str(gap)   # gap
+        rd_row[11] if len(rd_row) > 11 else '',
+        rd_date,
+        sl_date,
+        str(gap)
     ]
     sl_data.append(new_row)
     write_csv_file(SL_FILE, sl_data)
@@ -412,7 +399,6 @@ def save_to_tp(stock: StockData, rd_row: List[str], rd_date: str, tp_date: str,
     original_data = rd_row[:11] if len(rd_row) >= 11 else stock.original_row
     ed_date = rd_row[11] if len(rd_row) > 11 else ''
     
-    # Check if symbol already exists
     found_index = -1
     for i, row in enumerate(tp_data[1:], 1):
         if row and row[0] == stock.symbol:
@@ -420,22 +406,20 @@ def save_to_tp(stock: StockData, rd_row: List[str], rd_date: str, tp_date: str,
             break
     
     if found_index > 0:
-        # Update existing row
         row = tp_data[found_index]
         while len(row) < 18:
             row.append('')
         
         if tp_level == 1:
-            row[12] = tp_date  # tpd1
-            row[13] = str(gap)  # gap1
+            row[12] = tp_date
+            row[13] = str(gap)
         elif tp_level == 2:
-            row[14] = tp_date  # tpd2
-            row[15] = str(gap)  # gap2
+            row[14] = tp_date
+            row[15] = str(gap)
         elif tp_level == 3:
-            row[16] = tp_date  # tpd3
-            row[17] = str(gap)  # gap3
+            row[16] = tp_date
+            row[17] = str(gap)
     else:
-        # Create new row
         new_row = original_data + [ed_date, rd_date, '', '', '', '', '', '']
         if tp_level == 1:
             new_row[12] = tp_date
@@ -461,7 +445,7 @@ def remove_old_records():
         if not data or len(data) <= 1:
             continue
 
-        new_data = [data[0]]  # Keep header
+        new_data = [data[0]]
         removed_count = 0
         
         for row in data[1:]:
@@ -478,21 +462,7 @@ def remove_old_records():
             logger.info(f"Removed {removed_count} old records from {filepath}")
 
 
-# ==================== NOTIFICATION ====================
-
-async def send_telegram_message(message: str):
-    """Send message via Telegram"""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        logger.warning("Telegram credentials not set")
-        return
-
-    try:
-        bot = Bot(token=TELEGRAM_BOT_TOKEN)
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message, parse_mode='HTML')
-        logger.info("Telegram message sent")
-    except TelegramError as e:
-        logger.error(f"Telegram error: {e}")
-
+# ==================== NOTIFICATION (Email Only for GitHub Actions) ====================
 
 def send_email(subject: str, body: str):
     """Send email notification"""
@@ -516,65 +486,57 @@ def send_email(subject: str, body: str):
 
 
 def generate_notification(stock: StockData, action: str, price: float, date: str, gap: int = None):
-    """Generate notification message"""
+    """Generate notification message (email only for GitHub Actions)"""
     emoji = stock.get_score_emoji()
     
     if action == "entry":
         message = f"""
-🔔 <b>ENTRY SIGNAL</b> 🔔
+🔔 ENTRY SIGNAL 🔔
 
-📊 <b>Symbol:</b> {stock.symbol} {emoji}
-💰 <b>Entry Zone:</b> {stock.entry_zone}
-🎯 <b>Current Price:</b> {price}
-📅 <b>Date:</b> {date}
-⭐ <b>Score:</b> {stock.score}/100
+📊 Symbol: {stock.symbol} {emoji}
+💰 Entry Zone: {stock.entry_zone}
+🎯 Current Price: {price}
+📅 Date: {date}
+⭐ Score: {stock.score}/100
 
-📈 <b>Wave:</b> {stock.wave} → {stock.subwave}
-🎯 <b>Targets:</b> {stock.tp1} → {stock.tp2} → {stock.tp3}
-🛑 <b>Stop Loss:</b> {stock.stop_loss}
-📊 <b>RRR:</b> {stock.rrr}
+📈 Wave: {stock.wave} → {stock.subwave}
+🎯 Targets: {stock.tp1} → {stock.tp2} → {stock.tp3}
+🛑 Stop Loss: {stock.stop_loss}
+📊 RRR: {stock.rrr}
 
-💡 <b>Insight:</b> {stock.insight[:100]}...
+💡 Insight: {stock.insight[:100]}...
 """
     elif action == "stop_loss":
         message = f"""
-⚠️ <b>STOP LOSS HIT</b> ⚠️
+⚠️ STOP LOSS HIT ⚠️
 
-📊 <b>Symbol:</b> {stock.symbol} {emoji}
-💰 <b>Stop Loss:</b> {stock.stop_loss}
-🎯 <b>Exit Price:</b> {price}
-📅 <b>Date:</b> {date}
-📈 <b>Holding Period:</b> {gap} days
+📊 Symbol: {stock.symbol} {emoji}
+💰 Stop Loss: {stock.stop_loss}
+🎯 Exit Price: {price}
+📅 Date: {date}
+📈 Holding Period: {gap} days
 
-📊 <b>Wave:</b> {stock.wave}
-⭐ <b>Score:</b> {stock.score}/100
+📊 Wave: {stock.wave}
+⭐ Score: {stock.score}/100
 """
     elif action.startswith("take_profit"):
         level = action.split('_')[-1] if '_' in action else '1'
         message = f"""
-✅ <b>TAKE PROFIT HIT - TP{level}</b> ✅
+✅ TAKE PROFIT HIT - TP{level} ✅
 
-📊 <b>Symbol:</b> {stock.symbol} {emoji}
-💰 <b>Target Price:</b> {price}
-🎯 <b>Exit Price:</b> {price}
-📅 <b>Date:</b> {date}
-📈 <b>Holding Period:</b> {gap} days
+📊 Symbol: {stock.symbol} {emoji}
+💰 Target Price: {price}
+🎯 Exit Price: {price}
+📅 Date: {date}
+📈 Holding Period: {gap} days
 
-📊 <b>Wave:</b> {stock.wave}
-⭐ <b>Score:</b> {stock.score}/100
+📊 Wave: {stock.wave}
+⭐ Score: {stock.score}/100
 """
     else:
         return
 
-    # Send both Telegram and Email
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(send_telegram_message(message))
-        loop.close()
-    except Exception as e:
-        logger.error(f"Async send error: {e}")
-    
+    # Send email only (Telegram optional)
     send_email(f"Trade Alert: {stock.symbol} - {action}", message)
     logger.info(f"Notification sent for {stock.symbol}: {action}")
 
@@ -596,7 +558,6 @@ def monitor_trades():
     logger.info("=" * 50)
     logger.info("Starting trade monitoring...")
 
-    # Load all data
     mongodb_data = load_mongodb_data()
     stock_files = load_stock_files()
     existing_rd = load_existing_rd()
@@ -609,10 +570,8 @@ def monitor_trades():
         logger.warning("No stock files found")
         return
 
-    # Track processed symbols for this run
     processed = set()
 
-    # Process each stock file
     for file_date, stocks in stock_files:
         logger.info(f"Processing {file_date} with {len(stocks)} stocks")
 
@@ -624,10 +583,8 @@ def monitor_trades():
             if not latest_data:
                 continue
 
-            # Check if already in RD
             in_rd = stock.symbol in existing_rd
 
-            # Check entry condition
             if not in_rd and check_entry_conditions(stock, latest_data):
                 logger.info(f"✅ Entry signal for {stock.symbol} at {latest_data.close}")
                 save_to_ed(stock, latest_data.date)
@@ -635,13 +592,11 @@ def monitor_trades():
                 generate_notification(stock, "entry", latest_data.close, latest_data.date)
                 processed.add(stock.symbol)
 
-            # Check existing trades in RD
             elif in_rd:
                 rd_info = existing_rd[stock.symbol]
                 rd_date = rd_info['rd_date']
                 gap = calculate_gap_days(rd_date, latest_data.date) if rd_date else 0
 
-                # Check take profits in order (highest first)
                 tp_hit = False
                 for level in [3, 2, 1]:
                     if check_take_profit(stock, latest_data, level):
@@ -653,7 +608,6 @@ def monitor_trades():
                         processed.add(stock.symbol)
                         break
 
-                # Check stop loss if no TP hit
                 if not tp_hit and check_stop_loss(stock, latest_data):
                     logger.info(f"⚠️ Stop loss hit for {stock.symbol} at {latest_data.close}")
                     save_to_sl(stock, rd_info['row'], rd_date, latest_data.date, gap)
@@ -661,13 +615,10 @@ def monitor_trades():
                     remove_from_rd(stock.symbol)
                     processed.add(stock.symbol)
 
-                # Update RD with latest running date
                 elif not tp_hit:
                     update_rd_with_running_date(stock.symbol, latest_data.date)
 
-    # Remove old records
     remove_old_records()
-
     logger.info("Trade monitoring completed")
     logger.info("=" * 50)
 
@@ -676,13 +627,11 @@ def generate_summary_report():
     """Generate and send summary report"""
     logger.info("Generating summary report...")
 
-    # Load all files
     ed_data = read_csv_file(ED_FILE)
     rd_data = read_csv_file(RD_FILE)
     sl_data = read_csv_file(SL_FILE)
     tp_data = read_csv_file(TP_FILE)
 
-    # Calculate stats
     stats = {
         'total_entries': len(ed_data) - 1 if ed_data and len(ed_data) > 1 else 0,
         'active_trades': len(rd_data) - 1 if rd_data and len(rd_data) > 1 else 0,
@@ -693,7 +642,6 @@ def generate_summary_report():
     total_closed = stats['stop_loss_hits'] + stats['take_profit_hits']
     win_rate = (stats['take_profit_hits'] / total_closed * 100) if total_closed > 0 else 0
 
-    # Get top performers from TP file
     top_performers = []
     if tp_data and len(tp_data) > 1:
         tp_counts = defaultdict(int)
@@ -702,14 +650,13 @@ def generate_summary_report():
                 tp_counts[row[0]] += 1
         top_performers = sorted(tp_counts.items(), key=lambda x: x[1], reverse=True)[:5]
 
-    # Generate message
     message = f"""
-📊 <b>TRADING SUMMARY REPORT</b>
-📅 <b>Date:</b> {datetime.now().strftime('%d-%m-%Y %H:%M')}
+📊 TRADING SUMMARY REPORT
+📅 Date: {datetime.now().strftime('%d-%m-%Y %H:%M')}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-📈 <b>PERFORMANCE METRICS</b>
+📈 PERFORMANCE METRICS
 
 • Total Entries: {stats['total_entries']}
 • Active Trades: {stats['active_trades']}
@@ -719,7 +666,7 @@ def generate_summary_report():
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-🎯 <b>TOP PERFORMERS</b>
+🎯 TOP PERFORMERS
 """
     if top_performers:
         for sym, count in top_performers:
@@ -730,23 +677,13 @@ def generate_summary_report():
     message += f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-⚠️ <b>RISK METRICS</b>
+⚠️ RISK METRICS
 • Loss Rate: {100 - win_rate:.1f}%
-• Risk-Reward Ratio: {'Calculating...'}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🤖 AI Trade Monitor Active
 """
 
-    # Send report
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(send_telegram_message(message))
-        loop.close()
-    except Exception as e:
-        logger.error(f"Telegram send error: {e}")
-    
     send_email("Trading Summary Report", message)
     logger.info("Summary report sent")
 
@@ -755,20 +692,15 @@ def generate_summary_report():
 
 def run_scheduler():
     """Run scheduled tasks"""
-    # Run every 5 minutes during market hours (9:30 AM - 4:00 PM)
     schedule.every(5).minutes.do(monitor_trades)
-
-    # Run summary report daily at 6 PM
     schedule.every().day.at("18:00").do(generate_summary_report)
-
-    # Clean old records daily at midnight
     schedule.every().day.at("00:00").do(remove_old_records)
 
     logger.info("Scheduler started - Monitoring every 5 minutes")
 
     while True:
         schedule.run_pending()
-        time.sleep(60)  # Check every minute
+        time.sleep(60)
 
 
 # ==================== MAIN ====================
@@ -780,21 +712,17 @@ def main():
     print("=" * 60)
     print(f"📁 Stock Directory: {CSV_STOCK_DIR}")
     print(f"📁 Data Directory: {CSV_DATA_DIR}")
-    print(f"📱 Telegram: {'✅' if TELEGRAM_BOT_TOKEN else '❌'}")
     print(f"📧 Email: {'✅' if EMAIL_USER else '❌'}")
     print("=" * 60)
 
-    # Ensure directories exist
     ensure_directories()
 
-    # Run initial scan
     try:
         logger.info("Running initial scan...")
         monitor_trades()
     except Exception as e:
         logger.error(f"Initial scan error: {e}")
 
-    # Start scheduler
     try:
         run_scheduler()
     except KeyboardInterrupt:
