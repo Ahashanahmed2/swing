@@ -2,7 +2,7 @@ import pandas as pd
 import os
 
 # Paths
-rsi_path = './csv/rsi_diver_retest.csv'
+rsi_path = './csv/rsi_diver.csv'
 mongo_path = './csv/mongodb.csv'
 output_path2 = './csv/short_buy.csv'
 
