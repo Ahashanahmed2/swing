@@ -27,7 +27,7 @@ scripts = [
     "scripts/orderblock.py",
     "scripts/short_buy.py",
     "scripts/rsi_diver.py",
-    "scripts/rsi_diver_retest.py",
+    #"scripts/rsi_diver_retest.py",
     "scripts/rsi_crose_above_30.py",
     "scripts/confirm_rsi_divergence.py",
     "scripts/gape.py",
