@@ -45,6 +45,7 @@ scripts = [
     "scripts/macd.py",
     "scripts/macd_daily.py",
     "scripts/down_macd.py",
+    "scripts/ai_trade.py",
     "scripts/generate_pdf.py",
     "scripts/dayliMassage.py",
     "scripts/email_reports.py",
