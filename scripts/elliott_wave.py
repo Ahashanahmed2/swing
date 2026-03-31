@@ -11,7 +11,7 @@ warnings.filterwarnings('ignore')
 # =========================
 # Configuration
 # =========================
-INPUT_FILE = "/csv/mongodb.csv"
+INPUT_FILE = "./csv/mongodb.csv"
 OUTPUT_DIR = "./output/ai_signal"
 OUTPUT_FILE = f"{OUTPUT_DIR}/Elliott_wave_complete.csv"
 
