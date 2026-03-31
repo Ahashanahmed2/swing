@@ -1,5 +1,5 @@
 # elliott-wave.py
-# Elliott Wave Detection System - English Output Only
+# Elliott Wave Detection - Group by Symbol
 
 import pandas as pd
 import numpy as np
@@ -9,54 +9,9 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # =========================
-# Configuration - Auto detect file path
+# Configuration
 # =========================
-
-# Try different possible file paths
-possible_paths = [
-    "/csv/mongodb.csv",
-    "./csv/mongodb.csv", 
-    "../csv/mongodb.csv",
-    "mongodb.csv",
-    "data/mongodb.csv",
-    "/home/runner/work/swing/swing/csv/mongodb.csv",
-    "./data/mongodb.csv"
-]
-
-INPUT_FILE = None
-for path in possible_paths:
-    if os.path.exists(path):
-        INPUT_FILE = path
-        break
-
-if INPUT_FILE is None:
-    print("⚠️ No MongoDB CSV file found. Creating sample data for testing...")
-    
-    dates = pd.date_range(start='2023-01-01', end='2024-01-15', freq='D')
-    np.random.seed(42)
-    
-    close = 100
-    closes = []
-    for i in range(len(dates)):
-        close = close + np.random.randn() * 2
-        closes.append(close)
-    
-    sample_df = pd.DataFrame({
-        'date': dates,
-        'open': [c - np.random.rand() * 2 for c in closes],
-        'high': [c + abs(np.random.randn()) * 2 for c in closes],
-        'low': [c - abs(np.random.randn()) * 2 for c in closes],
-        'close': closes,
-        'volume': np.random.randint(100000, 1000000, len(dates)),
-        'symbol': 'MONGODB'
-    })
-    
-    sample_df.to_csv("mongodb.csv", index=False)
-    INPUT_FILE = "mongodb.csv"
-    print(f"✅ Sample data created at: {INPUT_FILE}")
-
-print(f"📂 Using file: {INPUT_FILE}")
-
+INPUT_FILE = "/csv/mongodb.csv"
 OUTPUT_DIR = "./output/ai_signal"
 OUTPUT_FILE = f"{OUTPUT_DIR}/Elliott_wave.csv"
 
@@ -161,181 +116,226 @@ def detect_zigzag(df, pct=3, min_bars=3):
     return swings
 
 # =========================
-# Wave Detection - English Only
+# Wave Detection for a Symbol
 # =========================
-def detect_current_wave(swings):
-    """Simple wave detection based on swing pattern - English output only"""
+def detect_wave_for_symbol(df, symbol_name):
+    """Detect Elliott Wave for a single symbol"""
+    
+    if len(df) < 30:
+        return {
+            'symbol': symbol_name,
+            'current_wave': 'Insufficient Data',
+            'current_subwave': 'Need more data',
+            'wave_type': 'N/A',
+            'direction': 'N/A',
+            'next_wave': 'N/A',
+            'next_subwave': 'N/A',
+            'entry_zone': 'N/A',
+            'entry_time': 'N/A',
+            'stop_loss': 'N/A',
+            'take_profit': 'N/A',
+            'confidence': 0,
+            'rsi': 50,
+            'price': df['close'].iloc[-1] if len(df) > 0 else 0,
+            'date': df['date'].iloc[-1].strftime('%Y-%m-%d') if len(df) > 0 else datetime.now().strftime('%Y-%m-%d')
+        }
+    
+    # Calculate indicators
+    df = calculate_indicators(df)
+    
+    # Detect swings
+    swings = detect_zigzag(df, pct=3, min_bars=3)
+    
     if len(swings) < 3:
-        return "Consolidation", "No Clear Sub-wave", "Neutral", "Sideways", 30
+        return {
+            'symbol': symbol_name,
+            'current_wave': 'Consolidation',
+            'current_subwave': 'No clear structure',
+            'wave_type': 'Neutral',
+            'direction': 'Sideways',
+            'next_wave': 'Breakout',
+            'next_subwave': 'Wait for confirmation',
+            'entry_zone': 'Monitor only',
+            'entry_time': 'N/A',
+            'stop_loss': 'N/A',
+            'take_profit': 'N/A',
+            'confidence': 30,
+            'rsi': round(df['rsi'].iloc[-1], 1),
+            'price': round(df['close'].iloc[-1], 2),
+            'date': df['date'].iloc[-1].strftime('%Y-%m-%d')
+        }
     
+    # Detect wave pattern
     types = [s['type'] for s in swings]
+    current_price = df['close'].iloc[-1]
     
-    # ========== Bullish Impulse ==========
+    # ========== Bullish Impulse (up-down-up-down-up) ==========
     if len(types) >= 5 and types[-5:] == ['up', 'down', 'up', 'down', 'up']:
+        # Check wave positions
         if len(swings) >= 6 and swings[-1]['date'] > swings[-2]['date']:
-            return "Wave 5", "Wave 5 - Sub-wave v", "Impulse Wave", "Bullish", 85
+            current_wave = "Wave 5"
+            sub_wave = "Wave 5 - Sub-wave v"
+            wave_type = "Impulse Wave"
+            direction = "Bullish"
+            next_wave = "ABC Correction"
+            next_subwave = "Wave A - Start"
+            entry_zone = "SELL ZONE - Take profits"
+            entry_time = "Now"
+            stop_loss = f"${current_price * 1.02:.2f}"
+            take_profit = f"${current_price * 0.92:.2f}"
+            confidence = 85
         elif len(swings) >= 4:
-            return "Wave 3", "Wave 3 - Sub-wave iii", "Impulse Wave", "Bullish", 90
+            current_wave = "Wave 3"
+            sub_wave = "Wave 3 - Sub-wave iii (Strongest)"
+            wave_type = "Impulse Wave"
+            direction = "Bullish"
+            next_wave = "Wave 4"
+            next_subwave = "Wave 4 - Correction"
+            entry_zone = "HOLD - Wave 3 in progress"
+            entry_time = "N/A"
+            stop_loss = f"${current_price * 0.92:.2f}"
+            take_profit = f"${current_price * 1.15:.2f}"
+            confidence = 90
         else:
-            return "Wave 2", "Wave 2 - Sub-wave c", "Impulse Wave", "Bullish", 75
+            current_wave = "Wave 2"
+            sub_wave = "Wave 2 - Sub-wave c (Entry Zone)"
+            wave_type = "Impulse Wave"
+            direction = "Bullish"
+            next_wave = "Wave 3"
+            next_subwave = "Wave 3 - Sub-wave i"
+            entry_zone = f"BUY ZONE - ${current_price * 0.96:.2f} to ${current_price:.2f}"
+            entry_time = "Now - 3 days"
+            stop_loss = f"${current_price * 0.94:.2f}"
+            take_profit = f"${current_price * 1.12:.2f}"
+            confidence = 75
     
-    # ========== Bearish Impulse ==========
-    if len(types) >= 5 and types[-5:] == ['down', 'up', 'down', 'up', 'down']:
+    # ========== Bearish Impulse (down-up-down-up-down) ==========
+    elif len(types) >= 5 and types[-5:] == ['down', 'up', 'down', 'up', 'down']:
         if len(swings) >= 6:
-            return "Wave 5", "Wave 5 - Sub-wave v", "Impulse Wave", "Bearish", 85
+            current_wave = "Wave 5"
+            sub_wave = "Wave 5 - Sub-wave v"
+            wave_type = "Impulse Wave"
+            direction = "Bearish"
+            next_wave = "ABC Correction"
+            next_subwave = "Wave A - Start"
+            entry_zone = "BUY ZONE - Cover shorts"
+            entry_time = "Now"
+            stop_loss = f"${current_price * 0.98:.2f}"
+            take_profit = f"${current_price * 0.92:.2f}"
+            confidence = 85
         else:
-            return "Wave 3", "Wave 3 - Sub-wave iii", "Impulse Wave", "Bearish", 90
+            current_wave = "Wave 3"
+            sub_wave = "Wave 3 - Sub-wave iii (Strongest)"
+            wave_type = "Impulse Wave"
+            direction = "Bearish"
+            next_wave = "Wave 4"
+            next_subwave = "Wave 4 - Correction"
+            entry_zone = "SELL ZONE - Short entry"
+            entry_time = "Now"
+            stop_loss = f"${current_price * 1.02:.2f}"
+            take_profit = f"${current_price * 0.88:.2f}"
+            confidence = 90
     
-    # ========== Zigzag Correction ==========
-    if len(types) >= 3 and types[-3:] == ['down', 'up', 'down']:
-        return "Wave C", "Wave C - Sub-wave v", "Zigzag Correction", "Bullish Ending", 70
+    # ========== Zigzag Correction (down-up-down) ==========
+    elif len(types) >= 3 and types[-3:] == ['down', 'up', 'down']:
+        current_wave = "Wave C"
+        sub_wave = "Wave C - Sub-wave v"
+        wave_type = "Zigzag Correction"
+        direction = "Bullish Ending"
+        next_wave = "New Impulse Wave 1"
+        next_subwave = "Wave 1 - Sub-wave i"
+        entry_zone = f"BUY ZONE - ${current_price * 0.95:.2f}"
+        entry_time = "5-10 days"
+        stop_loss = f"${current_price * 0.92:.2f}"
+        take_profit = f"${current_price * 1.10:.2f}"
+        confidence = 70
     
-    if len(types) >= 3 and types[-3:] == ['up', 'down', 'up']:
-        return "Wave C", "Wave C - Sub-wave v", "Zigzag Correction", "Bearish Ending", 70
+    elif len(types) >= 3 and types[-3:] == ['up', 'down', 'up']:
+        current_wave = "Wave C"
+        sub_wave = "Wave C - Sub-wave v"
+        wave_type = "Zigzag Correction"
+        direction = "Bearish Ending"
+        next_wave = "New Impulse Wave 1"
+        next_subwave = "Wave 1 - Sub-wave i"
+        entry_zone = f"SELL ZONE - ${current_price * 1.05:.2f}"
+        entry_time = "5-10 days"
+        stop_loss = f"${current_price * 1.08:.2f}"
+        take_profit = f"${current_price * 0.92:.2f}"
+        confidence = 70
     
     # ========== Flat Correction ==========
-    if len(types) >= 3 and types[-3:] == ['down', 'up', 'down']:
+    elif len(types) >= 3 and types[-3:] == ['down', 'up', 'down']:
         prices = [s['price'] for s in swings[-3:]]
         a_move = abs(prices[1] - prices[0])
         b_move = abs(prices[2] - prices[1])
         ratio = b_move / a_move if a_move > 0 else 0
         
         if 0.9 <= ratio <= 1.1:
-            return "Wave C", "Wave C - Flat", "Flat Correction", "Sideways", 75
+            current_wave = "Wave C"
+            sub_wave = "Wave C - Flat Correction"
+            wave_type = "Regular Flat Correction"
+            direction = "Sideways"
+            next_wave = "Trend Resumption"
+            next_subwave = "Wave 1 - Sub-wave i"
+            entry_zone = f"BUY ZONE - ${current_price * 0.97:.2f}"
+            entry_time = "5-12 days"
+            stop_loss = f"${current_price * 0.95:.2f}"
+            take_profit = f"${current_price * 1.08:.2f}"
+            confidence = 75
     
-    # ========== Triangle ==========
-    if len(types) >= 5:
-        if all(types[i] != types[i+1] for i in range(len(types)-1)):
-            return "Wave E", "Wave E - Breakout Soon", "Contracting Triangle", "Neutral", 80
+    # ========== Triangle Pattern ==========
+    elif len(types) >= 5:
+        # Check for alternating pattern (characteristic of triangles)
+        alternating = all(types[i] != types[i+1] for i in range(len(types)-1))
+        if alternating:
+            current_wave = "Wave E"
+            sub_wave = "Wave E - Breakout Soon"
+            wave_type = "Contracting Triangle"
+            direction = "Neutral"
+            next_wave = "Breakout"
+            next_subwave = "Wave 3 - Sub-wave iii"
+            entry_zone = "WAIT - Breakout entry"
+            entry_time = "3-10 days"
+            stop_loss = f"${current_price * 0.97:.2f}"
+            take_profit = f"${current_price * 1.12:.2f}"
+            confidence = 80
     
-    # ========== Default ==========
-    return "Consolidation", "No Clear Structure", "Neutral", "Sideways", 30
-
-# =========================
-# Get Next Wave
-# =========================
-def get_next_wave(current_wave, direction):
-    """Determine next expected wave"""
-    wave_map = {
-        "Wave 1": ("Wave 2", "Wave 2 - Correction"),
-        "Wave 2": ("Wave 3", "Wave 3 - Strongest"),
-        "Wave 3": ("Wave 4", "Wave 4 - Correction"),
-        "Wave 4": ("Wave 5", "Wave 5 - Final"),
-        "Wave 5": ("ABC Correction", "Wave A - Start"),
-        "Wave A": ("Wave B", "Wave B - Counter"),
-        "Wave B": ("Wave C", "Wave C - Final"),
-        "Wave C": ("New Impulse Wave 1", "Wave 1 - Start"),
-        "Consolidation": ("Breakout", "Wave 1 or 3"),
-    }
-    
-    return wave_map.get(current_wave, ("Uncertain", "Wait for confirmation"))
-
-# =========================
-# Get Entry Strategy
-# =========================
-def get_entry_strategy(current_wave, current_price, direction):
-    """Generate entry strategy"""
-    strategies = {
-        "Wave 2": {
-            "entry": f"BUY ZONE - ${current_price * 0.96:.2f} to ${current_price:.2f}",
-            "time": "Now - 3 days",
-            "sl": f"${current_price * 0.94:.2f}",
-            "tp": f"${current_price * 1.12:.2f}"
-        },
-        "Wave 3": {
-            "entry": "HOLD - Wave 3 in progress",
-            "time": "N/A",
-            "sl": f"${current_price * 0.92:.2f}",
-            "tp": f"${current_price * 1.15:.2f}"
-        },
-        "Wave 4": {
-            "entry": f"BUY ZONE - ${current_price * 0.97:.2f} to ${current_price:.2f}",
-            "time": "3-7 days",
-            "sl": f"${current_price * 0.95:.2f}",
-            "tp": f"${current_price * 1.08:.2f}"
-        },
-        "Wave 5": {
-            "entry": "SELL ZONE - Take profits",
-            "time": "Now",
-            "sl": f"${current_price * 1.02:.2f}",
-            "tp": f"${current_price * 0.92:.2f}"
-        },
-        "Wave C": {
-            "entry": f"BUY ZONE - ${current_price * 0.95:.2f}",
-            "time": "5-10 days",
-            "sl": f"${current_price * 0.92:.2f}",
-            "tp": f"${current_price * 1.10:.2f}"
-        },
-        "Consolidation": {
-            "entry": "NO ENTRY - Wait for breakout",
-            "time": "Monitor only",
-            "sl": "N/A",
-            "tp": "N/A"
-        }
-    }
-    
-    return strategies.get(current_wave, {
-        "entry": "Monitor - No clear signal",
-        "time": "Wait for confirmation",
-        "sl": "N/A",
-        "tp": "N/A"
-    })
-
-# =========================
-# Get Higher Timeframe Analysis
-# =========================
-def get_higher_timeframe(swings):
-    """Simple higher timeframe analysis"""
-    if len(swings) < 10:
-        return "Insufficient Data", "N/A"
-    
-    types = [s['type'] for s in swings[-20:]]
-    ups = types.count('up')
-    downs = types.count('down')
-    
-    if ups > downs + 3:
-        return "Larger Bullish Impulse", "Wave 3 of Larger Cycle"
-    elif downs > ups + 3:
-        return "Larger Bearish Impulse", "Wave C of Larger Cycle"
+    # ========== Default - Consolidation ==========
     else:
-        return "Sideways Consolidation", "Wave B or 4"
-
-# =========================
-# Create Future Projection Table
-# =========================
-def create_projection_table(current_wave, direction, current_price):
-    """Create future projection table"""
-    projections = []
+        current_wave = "Consolidation"
+        sub_wave = "No clear structure"
+        wave_type = "Neutral"
+        direction = "Sideways"
+        next_wave = "Breakout"
+        next_subwave = "Wait for confirmation"
+        entry_zone = "Monitor only - No entry"
+        entry_time = "N/A"
+        stop_loss = "N/A"
+        take_profit = "N/A"
+        confidence = 30
     
-    if "Wave 2" in current_wave:
-        projections.append(["Wave 3", "Wave 3-i to 3-v", "2-4 months", "Up" if "Bull" in direction else "Down"])
-        projections.append(["Wave 4", "Correction", "1-2 months", "Opposite"])
-        projections.append(["Wave 5", "Final Push", "3-6 months", "Same as Wave 1"])
+    # Get RSI and other indicators
+    rsi_val = round(df['rsi'].iloc[-1], 1)
     
-    elif "Wave 3" in current_wave:
-        projections.append(["Wave 4", "Flat/Triangle", "1-2 months", "Opposite"])
-        projections.append(["Wave 5", "Ending Diagonal", "2-3 months", "Same as Wave 3"])
-    
-    elif "Wave 4" in current_wave:
-        projections.append(["Wave 5", "Final Wave", "1-3 months", "Same as Wave 3"])
-        projections.append(["ABC Correction", "A-B-C", "2-4 months", "Opposite"])
-    
-    elif "Wave C" in current_wave or "Wave 5" in current_wave:
-        projections.append(["New Impulse", "Wave 1", "1-2 months", "Opposite to current"])
-        projections.append(["Wave 3", "Strongest", "3-5 months", "Same as Wave 1"])
-    
-    if projections:
-        table = "\n" + "=" * 70 + "\n"
-        table += "FUTURE WAVE PROJECTIONS\n"
-        table += "=" * 70 + "\n"
-        table += f"{'Wave':<15} {'Sub-wave':<20} {'Timeline':<20} {'Direction':<15}\n"
-        table += "-" * 70 + "\n"
-        for proj in projections:
-            table += f"{proj[0]:<15} {proj[1]:<20} {proj[2]:<20} {proj[3]:<15}\n"
-        table += "=" * 70
-        return table
-    
-    return "No clear projections available"
+    return {
+        'symbol': symbol_name,
+        'date': df['date'].iloc[-1].strftime('%Y-%m-%d'),
+        'current_price': round(current_price, 2),
+        'current_wave': current_wave,
+        'current_subwave': sub_wave,
+        'wave_type': wave_type,
+        'direction': direction,
+        'next_wave': next_wave,
+        'next_subwave': next_subwave,
+        'entry_zone': entry_zone,
+        'entry_time': entry_time,
+        'stop_loss': stop_loss,
+        'take_profit': take_profit,
+        'confidence_score': confidence,
+        'rsi': rsi_val,
+        'swing_points': len(swings),
+        'analysis_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
 
 # =========================
 # Main Execution
@@ -343,121 +343,129 @@ def create_projection_table(current_wave, direction, current_price):
 
 def main():
     print("=" * 80)
-    print("ELLIOTT WAVE ANALYSIS SYSTEM")
+    print("ELLIOTT WAVE ANALYSIS - GROUP BY SYMBOL")
     print("=" * 80)
     
     try:
-        print(f"\nLoading: {INPUT_FILE}")
+        # Check if input file exists
+        if not os.path.exists(INPUT_FILE):
+            print(f"\n⚠️ File not found: {INPUT_FILE}")
+            print("Creating sample data for testing...")
+            
+            # Create sample data with multiple symbols
+            dates = pd.date_range(start='2023-01-01', end='2024-01-15', freq='D')
+            np.random.seed(42)
+            
+            symbols = ['MONGODB', 'BTC-USD', 'ETH-USD', 'SOL-USD', 'ADA-USD']
+            all_data = []
+            
+            for sym in symbols:
+                close = 100 + np.random.randn() * 50
+                closes = []
+                for i in range(len(dates)):
+                    close = close + np.random.randn() * 2
+                    closes.append(close)
+                
+                df_sym = pd.DataFrame({
+                    'date': dates,
+                    'open': [c - np.random.rand() * 2 for c in closes],
+                    'high': [c + abs(np.random.randn()) * 2 for c in closes],
+                    'low': [c - abs(np.random.randn()) * 2 for c in closes],
+                    'close': closes,
+                    'volume': np.random.randint(100000, 1000000, len(dates)),
+                    'symbol': sym
+                })
+                all_data.append(df_sym)
+            
+            df = pd.concat(all_data, ignore_index=True)
+            df.to_csv(INPUT_FILE, index=False)
+            print(f"✅ Sample data created with {len(symbols)} symbols")
+        
+        # Load data
+        print(f"\n📂 Loading: {INPUT_FILE}")
         df = pd.read_csv(INPUT_FILE)
-        
-        # Check required columns
-        if 'date' not in df.columns:
-            df['date'] = pd.date_range(end=datetime.now(), periods=len(df))
-        
-        if 'close' not in df.columns:
-            if 'open' in df.columns:
-                df['close'] = df['open']
-            else:
-                df['close'] = 100
-        
         df['date'] = pd.to_datetime(df['date'])
-        df = df.sort_values('date').reset_index(drop=True)
         
-        symbol = df['symbol'].iloc[-1] if 'symbol' in df.columns else "MONGODB"
+        # Get unique symbols
+        symbols = df['symbol'].unique()
+        print(f"📊 Found {len(symbols)} symbols: {', '.join(symbols)}")
         
-        df = calculate_indicators(df)
+        # Analyze each symbol
+        results = []
+        for i, symbol in enumerate(symbols, 1):
+            print(f"\n🔍 Analyzing [{i}/{len(symbols)}]: {symbol}")
+            
+            # Filter data for this symbol
+            symbol_df = df[df['symbol'] == symbol].sort_values('date').reset_index(drop=True)
+            
+            # Skip if not enough data
+            if len(symbol_df) < 30:
+                print(f"   ⚠️ Insufficient data ({len(symbol_df)} rows). Minimum 30 rows required.")
+                results.append({
+                    'symbol': symbol,
+                    'date': datetime.now().strftime('%Y-%m-%d'),
+                    'current_price': 0,
+                    'current_wave': 'Insufficient Data',
+                    'current_subwave': 'Need 30+ days data',
+                    'wave_type': 'N/A',
+                    'direction': 'N/A',
+                    'next_wave': 'N/A',
+                    'next_subwave': 'N/A',
+                    
+                    'confidence_score': 0,
+                   
+                })
+                continue
+            
+            # Detect wave for this symbol
+            result = detect_wave_for_symbol(symbol_df, symbol)
+            results.append(result)
+            
+            # Print brief result
+            print(f"   ✅ Wave: {result['current_wave']} | Sub-wave: {result['current_subwave']} | Conf: {result['confidence_score']}%")
         
-        swings = detect_zigzag(df, pct=3, min_bars=3)
-        print(f"   Found {len(swings)} swing points")
+        # Create output dataframe (one row per symbol)
+        output_df = pd.DataFrame(results)
         
-        current_wave, sub_wave, wave_type, direction, confidence = detect_current_wave(swings)
-        next_wave, next_subwave = get_next_wave(current_wave, direction)
+        # Reorder columns
+        column_order = [
+            'symbol', 'date', 'current_price', 'current_wave', 'current_subwave',
+            'wave_type', 'direction', 'next_wave', 'next_subwave',
+            'entry_zone', 'entry_time', 'stop_loss', 'take_profit',
+            'confidence_score', 'rsi', 'swing_points', 'analysis_time'
+        ]
         
-        current_price = df['close'].iloc[-1]
-        strategy = get_entry_strategy(current_wave, current_price, direction)
-        higher_wave, higher_subwave = get_higher_timeframe(swings)
-        projection_table = create_projection_table(current_wave, direction, current_price)
+        # Keep only columns that exist
+        existing_cols = [col for col in column_order if col in output_df.columns]
+        output_df = output_df[existing_cols]
         
-        validation = []
-        if len(swings) >= 3:
-            validation.append("Wave count: Valid")
-        if confidence >= 70:
-            validation.append("Pattern confidence: High")
-        else:
-            validation.append("Pattern confidence: Moderate")
-        
-        # Create output - ALL ENGLISH COLUMNS
-        output_data = {
-            'symbol': symbol,
-            'date': df['date'].iloc[-1].strftime('%Y-%m-%d'),
-            'current_price': round(current_price, 2),
-            'current_wave': current_wave,
-            'current_subwave': sub_wave,
-            'wave_type': wave_type,
-            'direction': direction,
-            'next_wave': next_wave,
-            'next_subwave': next_subwave,
-            'entry_zone': strategy['entry'],
-            'entry_time': strategy['time'],
-            'stop_loss': strategy['sl'],
-            'take_profit': strategy['tp'],
-            'confidence_score': confidence,
-            'validation_status': " | ".join(validation),
-            'higher_timeframe_wave': higher_wave,
-            'higher_timeframe_subwave': higher_subwave,
-            'future_projections': projection_table,
-            'rsi': round(df['rsi'].iloc[-1], 1),
-            'volume_ratio': round(df['volume'].iloc[-1] / df['volume_ma'].iloc[-1], 2),
-            'atr': round(df['atr'].iloc[-1], 2),
-            'analysis_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
-        
-        output_df = pd.DataFrame([output_data])
+        # Save to CSV
         output_df.to_csv(OUTPUT_FILE, index=False, encoding='utf-8')
         
+        # Print summary
         print("\n" + "=" * 80)
-        print("ANALYSIS RESULTS")
+        print("ANALYSIS COMPLETE - SUMMARY")
         print("=" * 80)
-        print(f"\nSymbol: {symbol}")
-        print(f"Date: {output_data['date']}")
-        print(f"Current Price: ${output_data['current_price']}")
+        print(f"\nTotal Symbols Analyzed: {len(results)}")
+        print(f"Output File: {OUTPUT_FILE}")
         
-        print("\n" + "-" * 50)
-        print("CURRENT WAVE POSITION")
-        print("-" * 50)
-        print(f"Main Wave: {output_data['current_wave']}")
-        print(f"Sub-wave: {output_data['current_subwave']}")
-        print(f"Wave Type: {output_data['wave_type']}")
-        print(f"Direction: {output_data['direction']}")
+        print("\n" + "-" * 80)
+        print("SYMBOL WAVE SUMMARY")
+        print("-" * 80)
+        print(f"{'Symbol':<12} {'Current Wave':<20} {'Direction':<12} {'Confidence':<10}")
+        print("-" * 80)
         
-        print("\n" + "-" * 50)
-        print("NEXT WAVE PROJECTION")
-        print("-" * 50)
-        print(f"Next Wave: {output_data['next_wave']}")
-        print(f"Next Sub-wave: {output_data['next_subwave']}")
-        
-        print("\n" + "-" * 50)
-        print("ENTRY STRATEGY")
-        print("-" * 50)
-        print(f"Entry Zone: {output_data['entry_zone']}")
-        print(f"Entry Time: {output_data['entry_time']}")
-        print(f"Stop Loss: {output_data['stop_loss']}")
-        print(f"Take Profit: {output_data['take_profit']}")
-        
-        print("\n" + "-" * 50)
-        print("CONFIDENCE & VALIDATION")
-        print("-" * 50)
-        print(f"Confidence Score: {output_data['confidence_score']}%")
-        print(f"Validation: {output_data['validation_status']}")
+        for r in results:
+            print(f"{r['symbol']:<12} {r['current_wave']:<20} {r['direction']:<12} {r['confidence_score']:<10}%")
         
         print("\n" + "=" * 80)
-        print(f"Complete! Saved to: {OUTPUT_FILE}")
+        print(f"✅ Complete! Saved to: {OUTPUT_FILE}")
         print("=" * 80)
         
         return output_df
         
     except Exception as e:
-        print(f"\nError: {e}")
+        print(f"\n❌ Error: {e}")
         import traceback
         traceback.print_exc()
         return None
