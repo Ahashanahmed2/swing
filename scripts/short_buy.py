@@ -21,7 +21,7 @@ rsi_df.columns = rsi_df.columns.str.replace(" ", "_")
 
 # Ensure dates are datetime
 mongo_df['date'] = pd.to_datetime(mongo_df['date'], errors='coerce')
-rsi_df['date'] = pd.to_datetime(rsi_df['date'], errors='coerce')
+rsi_df['date'] = pd.to_datetime(rsi_df['last_row_date'], errors='coerce')
 
 mongo_df = mongo_df.dropna(subset=['date'])
 rsi_df = rsi_df.dropna(subset=['date'])
