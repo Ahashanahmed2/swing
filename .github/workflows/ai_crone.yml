@@ -28,7 +28,7 @@ jobs:
         echo "Current directory: $(pwd)"
     - name: Install dependencies
       run: |
-        # Repository torch==2.3.0+cpu -f https://download.pytorch.org/whl/torch_stable.html
+        pip install torch==2.3.0 --index-url https://download.pytorch.org/whl/cpu
         pip install -r requirements.txt
 
 
