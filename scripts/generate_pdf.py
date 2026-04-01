@@ -1,11 +1,10 @@
-# generate_pdf.py - Fixed Version (line 262 error resolved)
+# generate_pdf.py - PDF Generator Only (No HF Upload)
 
 import os
 import pandas as pd
 from fpdf.enums import XPos, YPos
 from fpdf import FPDF
 from datetime import datetime, timedelta
-from hf_uploader import SmartDatasetUploader, REPO_ID, HF_TOKEN
 import requests
 import smtplib
 from email.message import EmailMessage
@@ -22,7 +21,7 @@ EMAIL_TO   = os.getenv("EMAIL_TO")
 # =========================
 # CONFIG
 # =========================
-CSV_FOLDER = "./csv"                    # মূল CSV ফোল্ডার (HF আপলোডের জন্য)
+CSV_FOLDER = "./csv"                    # মূল CSV ফোল্ডার
 OUTPUT_FOLDER = "./output/ai_signal"    # আউটপুট ফোল্ডার (PDF-এর জন্য)
 PDF_FOLDER = os.path.join(OUTPUT_FOLDER, "pdfs")
 
@@ -164,62 +163,22 @@ def send_email_alert(subject, body):
         print(f"❌ Email error: {e}")
 
 # =========================
-# HF UPLOAD FUNCTION
-# =========================
-def upload_to_huggingface():
-    """Upload CSV and model files to Hugging Face"""
-    print("\n" + "="*60)
-    print("📤 UPLOADING TO HUGGING FACE")
-    print("="*60)
-
-    if not os.path.exists(CSV_FOLDER):
-        print(f"❌ মাস্টার ফোল্ডার নেই: {CSV_FOLDER}")
-        return False
-
-    # Check what's in the folder
-    csv_files = [f for f in os.listdir(CSV_FOLDER) if f.endswith('.csv')]
-    print(f"📁 মাস্টার ফোল্ডারে CSV ফাইল: {csv_files}")
-
-    # Check xgboost folder
-    xgboost_folder = os.path.join(CSV_FOLDER, 'xgboost')
-    if os.path.exists(xgboost_folder):
-        model_files = [f for f in os.listdir(xgboost_folder) if f.endswith('.joblib')]
-        print(f"🤖 মডেল ফোল্ডারে {len(model_files)} টি মডেল ফাইল পাওয়া গেছে")
-        if model_files:
-            print(f"   উদাহরণ: {model_files[:3]}")
-    else:
-        print(f"⚠️ xgboost ফোল্ডার নেই: {xgboost_folder}")
-
-    # Upload everything
-    try:
-        uploader = SmartDatasetUploader(REPO_ID, HF_TOKEN)
-        uploader.smart_upload(
-            local_folder=CSV_FOLDER,
-            unique_columns=['symbol', 'date']
-        )
-        print("✅ Master CSV and models uploaded to Hugging Face!")
-        return True
-    except Exception as e:
-        print(f"❌ Hugging Face upload failed: {e}")
-        return False
-
-# =========================
 # MAIN
 # =========================
 if __name__ == "__main__":
     print("="*60)
-    print("📄 PDF GENERATOR & HF UPLOADER")
+    print("📄 PDF GENERATOR")
     print("="*60)
     print(f"📁 PDF Source: {OUTPUT_FOLDER}")
-    print(f"📁 HF Upload Source: {CSV_FOLDER}")
     print("="*60)
 
     # =========================================================
     # 1. PDF তৈরি (./output/ai_signal থেকে)
     # =========================================================
     print("\n📄 STEP 1: Generating PDF reports from ./output/ai_signal...")
-    
+
     pdf_generated = False
+    generated_files = []
 
     if not os.path.exists(OUTPUT_FOLDER):
         print(f"❌ ডিরেক্টরি পাওয়া যায়নি: {OUTPUT_FOLDER}")
@@ -237,18 +196,12 @@ if __name__ == "__main__":
                 print(f"\n📄 রিপোর্ট তৈরি হচ্ছে: {csv_file}")
                 if generate_pdf_report(csv_path, pdf_path):
                     pdf_generated = True
+                    generated_files.append(pdf_path)
 
     # =========================================================
-    # 2. Hugging Face আপলোড (./csv ফোল্ডার থেকে)
-    # =========================================================
-    print("\n📤 STEP 2: Uploading to Hugging Face from ./csv...")
-    upload_success = upload_to_huggingface()
-
-    # =========================================================
-    # 3. Verification
+    # 2. Verification
     # =========================================================
     confidence_file = os.path.join(CSV_FOLDER, 'xgb_confidence.csv')
-    df_conf = None
     if os.path.exists(confidence_file):
         try:
             df_conf = pd.read_csv(confidence_file)
@@ -260,31 +213,20 @@ if __name__ == "__main__":
             print(f"⚠️ Could not read xgb_confidence.csv: {e}")
 
     # =========================================================
-    # 4. Notifications
+    # 3. Notifications
     # =========================================================
-    print("\n📢 STEP 3: Sending notifications...")
-    
-    # ✅ FIXED: Safe success message
-    total_predictions = "N/A"
-    if df_conf is not None:
-        total_predictions = f"{len(df_conf):,}"
-    
-    # Count models
-    xgboost_path = os.path.join(CSV_FOLDER, 'xgboost')
-    model_count = "0"
-    if os.path.exists(xgboost_path):
-        model_files = [f for f in os.listdir(xgboost_path) if f.endswith('.joblib')]
-        model_count = f"{len(model_files)}"
-    
+    print("\n📢 STEP 2: Sending notifications...")
+
     if not pdf_generated:
         alert = "⚠️ কোনো PDF তৈরি হয়নি। ./output/ai_signal ফোল্ডারে CSV ফাইল নেই।"
         send_telegram_alert(alert)
         send_email_alert("PDF Generation Failed", alert)
     else:
-        print(f"\n✅ সমস্ত PDF তৈরি সম্পন্ন হয়েছে! লোকেশন: {PDF_FOLDER}")
-
-    if upload_success:
-        success_msg = f"✅ XGBoost Models & Predictions uploaded to HF!\n📊 Total predictions: {total_predictions}\n📁 Models: {model_count} symbols"
+        print(f"\n✅ সমস্ত PDF তৈরি সম্পন্ন হয়েছে!")
+        print(f"   লোকেশন: {PDF_FOLDER}")
+        print(f"   ফাইল: {len(generated_files)} টি PDF তৈরি হয়েছে")
+        
+        success_msg = f"✅ PDF Generation Complete!\n📊 PDF Files: {len(generated_files)}\n📁 Location: {PDF_FOLDER}"
         send_telegram_alert(success_msg)
 
     # Final summary
@@ -292,6 +234,5 @@ if __name__ == "__main__":
     print("✅ GENERATE_PDF COMPLETE!")
     print("="*60)
     print(f"📄 PDF Generated: {'✅' if pdf_generated else '❌'}")
-    print(f"📤 HF Upload: {'✅' if upload_success else '❌'}")
-    print(f"🤖 Models: {model_count}")
+    print(f"📁 PDF Folder: {PDF_FOLDER}")
     print("="*60)
