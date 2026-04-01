@@ -1,4 +1,3 @@
-#xgboost_ppo.py
 # xgboost_ppo_env.py - XGBoost + PPO Trading Environment
 
 import gymnasium as gym
@@ -262,4 +261,4 @@ class XGBoostPPOTradingEnv(gym.Env):
             'symbol': self.current_symbol,
             'step': self.current_step,
             'xgb_conf': xgb_conf
-        }
+        
