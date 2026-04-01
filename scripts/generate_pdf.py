@@ -1,4 +1,5 @@
-# generate_pdf.py - Complete Updated Version
+# generate_pdf.py - Fixed Version (line 262 error resolved)
+
 import os
 import pandas as pd
 from fpdf.enums import XPos, YPos
@@ -18,7 +19,20 @@ EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
 EMAIL_TO   = os.getenv("EMAIL_TO")
 
-# ✅ PDF ক্লাস
+# =========================
+# CONFIG
+# =========================
+CSV_FOLDER = "./csv"                    # মূল CSV ফোল্ডার (HF আপলোডের জন্য)
+OUTPUT_FOLDER = "./output/ai_signal"    # আউটপুট ফোল্ডার (PDF-এর জন্য)
+PDF_FOLDER = os.path.join(OUTPUT_FOLDER, "pdfs")
+
+os.makedirs(CSV_FOLDER, exist_ok=True)
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+os.makedirs(PDF_FOLDER, exist_ok=True)
+
+# =========================
+# PDF CLASS
+# =========================
 class PDF(FPDF):
     def __init__(self, csv_headers, title=""):
         super().__init__(orientation="L", unit="mm", format="A4")
@@ -87,7 +101,9 @@ class PDF(FPDF):
             if (idx + 1) % 50 == 0 and idx < len(data) - 1:
                 self.ln(2)
 
-# ✅ PDF জেনারেটর
+# =========================
+# PDF GENERATOR
+# =========================
 def generate_pdf_report(csv_path, output_path):
     if not os.path.exists(csv_path):
         print(f"❌ CSV ফাইল পাওয়া যায়নি: {csv_path}")
@@ -106,7 +122,6 @@ def generate_pdf_report(csv_path, output_path):
         print(f"❌ CSV ফাইল পড়তে সমস্যা: {e}")
         return False
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     title = os.path.splitext(os.path.basename(csv_path))[0]
 
     pdf = PDF(csv_headers=df.columns.tolist(), title=title)
@@ -117,7 +132,9 @@ def generate_pdf_report(csv_path, output_path):
     print(f"✅ PDF তৈরি হয়েছে: {output_path}")
     return True
 
-# ✅ Telegram নোটিফিকেশন
+# =========================
+# NOTIFICATION FUNCTIONS
+# =========================
 def send_telegram_alert(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("⚠️ Telegram credentials missing.")
@@ -129,7 +146,6 @@ def send_telegram_alert(message):
     except Exception as e:
         print(f"❌ Telegram error: {e}")
 
-# ✅ Email নোটিফিকেশন
 def send_email_alert(subject, body):
     if not all([EMAIL_USER, EMAIL_PASS, EMAIL_TO]):
         print("⚠️ Email credentials missing.")
@@ -147,42 +163,39 @@ def send_email_alert(subject, body):
     except Exception as e:
         print(f"❌ Email error: {e}")
 
-# ✅ Hugging Face আপলোড ফাংশন
+# =========================
+# HF UPLOAD FUNCTION
+# =========================
 def upload_to_huggingface():
     """Upload CSV and model files to Hugging Face"""
     print("\n" + "="*60)
     print("📤 UPLOADING TO HUGGING FACE")
     print("="*60)
-    
-    # ✅ সঠিক ফোল্ডার: ./csv (এতে mongodb.csv, xgboost/, xgb_confidence.csv সব আছে)
-    master_folder = "./csv"
-    
-    if not os.path.exists(master_folder):
-        print(f"❌ মাস্টার ফোল্ডার নেই: {master_folder}")
+
+    if not os.path.exists(CSV_FOLDER):
+        print(f"❌ মাস্টার ফোল্ডার নেই: {CSV_FOLDER}")
         return False
-    
+
     # Check what's in the folder
-    csv_files = [f for f in os.listdir(master_folder) if f.endswith('.csv')]
+    csv_files = [f for f in os.listdir(CSV_FOLDER) if f.endswith('.csv')]
     print(f"📁 মাস্টার ফোল্ডারে CSV ফাইল: {csv_files}")
-    
+
     # Check xgboost folder
-    xgboost_folder = os.path.join(master_folder, 'xgboost')
+    xgboost_folder = os.path.join(CSV_FOLDER, 'xgboost')
     if os.path.exists(xgboost_folder):
         model_files = [f for f in os.listdir(xgboost_folder) if f.endswith('.joblib')]
         print(f"🤖 মডেল ফোল্ডারে {len(model_files)} টি মডেল ফাইল পাওয়া গেছে")
-        
-        # Show some model names
         if model_files:
             print(f"   উদাহরণ: {model_files[:3]}")
     else:
         print(f"⚠️ xgboost ফোল্ডার নেই: {xgboost_folder}")
-    
+
     # Upload everything
     try:
         uploader = SmartDatasetUploader(REPO_ID, HF_TOKEN)
         uploader.smart_upload(
-            local_folder=master_folder,  # ✅ সঠিক ফোল্ডার
-            unique_columns=['symbol', 'date']  # CSV merge এর জন্য
+            local_folder=CSV_FOLDER,
+            unique_columns=['symbol', 'date']
         )
         print("✅ Master CSV and models uploaded to Hugging Face!")
         return True
@@ -190,82 +203,95 @@ def upload_to_huggingface():
         print(f"❌ Hugging Face upload failed: {e}")
         return False
 
-# ✅ মেইন ফাংশন
+# =========================
+# MAIN
+# =========================
 if __name__ == "__main__":
     print("="*60)
     print("📄 PDF GENERATOR & HF UPLOADER")
     print("="*60)
-    
+    print(f"📁 PDF Source: {OUTPUT_FOLDER}")
+    print(f"📁 HF Upload Source: {CSV_FOLDER}")
+    print("="*60)
+
     # =========================================================
     # 1. PDF তৈরি (./output/ai_signal থেকে)
     # =========================================================
-    print("\n📄 STEP 1: Generating PDF reports...")
-    folder_path = "./output/ai_signal"
-    output_pdf_dir = os.path.join(folder_path, "pdfs")
-    os.makedirs(output_pdf_dir, exist_ok=True)
-
+    print("\n📄 STEP 1: Generating PDF reports from ./output/ai_signal...")
+    
     pdf_generated = False
 
-    if not os.path.exists(folder_path):
-        print(f"❌ ডিরেক্টরি পাওয়া যায়নি: {folder_path}")
+    if not os.path.exists(OUTPUT_FOLDER):
+        print(f"❌ ডিরেক্টরি পাওয়া যায়নি: {OUTPUT_FOLDER}")
     else:
-        csv_files = [f for f in os.listdir(folder_path) if f.endswith(".csv")]
+        csv_files = [f for f in os.listdir(OUTPUT_FOLDER) if f.endswith(".csv")]
         if not csv_files:
             print("⚠️ কোনো CSV ফাইল পাওয়া যায়নি।")
+            print("💡 নোট: xgb_confidence.csv ফাইল ./csv ফোল্ডারে আছে।")
+            print("   চাইলে কপি করতে পারেন: cp ./csv/xgb_confidence.csv ./output/ai_signal/")
         else:
             print(f"\n📁 মোট {len(csv_files)} টি CSV ফাইল পাওয়া গেছে")
             for csv_file in csv_files:
-                csv_path = os.path.join(folder_path, csv_file)
-                pdf_path = os.path.join(output_pdf_dir, os.path.splitext(csv_file)[0] + ".pdf")
+                csv_path = os.path.join(OUTPUT_FOLDER, csv_file)
+                pdf_path = os.path.join(PDF_FOLDER, os.path.splitext(csv_file)[0] + ".pdf")
                 print(f"\n📄 রিপোর্ট তৈরি হচ্ছে: {csv_file}")
                 if generate_pdf_report(csv_path, pdf_path):
                     pdf_generated = True
 
     # =========================================================
-    # 2. Hugging Face আপলোড - মাস্টার CSV ফোল্ডার
+    # 2. Hugging Face আপলোড (./csv ফোল্ডার থেকে)
     # =========================================================
-    print("\n" + "="*60)
-    print("📤 STEP 2: Uploading to Hugging Face...")
-    print("="*60)
-    
+    print("\n📤 STEP 2: Uploading to Hugging Face from ./csv...")
     upload_success = upload_to_huggingface()
-    
+
     # =========================================================
-    # 3. Check if xgb_confidence.csv exists in ./csv
+    # 3. Verification
     # =========================================================
-    confidence_file = "./csv/xgb_confidence.csv"
+    confidence_file = os.path.join(CSV_FOLDER, 'xgb_confidence.csv')
+    df_conf = None
     if os.path.exists(confidence_file):
-        df_conf = pd.read_csv(confidence_file)
-        print(f"\n📊 xgb_confidence.csv তথ্য:")
-        print(f"   মোট রো: {len(df_conf):,}")
-        print(f"   কলাম: {list(df_conf.columns)}")
-        print(f"   সর্বশেষ তারিখ: {df_conf['date'].max() if 'date' in df_conf.columns else 'N/A'}")
-    else:
-        print(f"\n⚠️ xgb_confidence.csv ফাইল পাওয়া যায়নি: {confidence_file}")
+        try:
+            df_conf = pd.read_csv(confidence_file)
+            print(f"\n📊 xgb_confidence.csv তথ্য:")
+            print(f"   মোট রো: {len(df_conf):,}")
+            print(f"   কলাম: {list(df_conf.columns)}")
+            print(f"   সর্বশেষ তারিখ: {df_conf['date'].max() if 'date' in df_conf.columns else 'N/A'}")
+        except Exception as e:
+            print(f"⚠️ Could not read xgb_confidence.csv: {e}")
+
+    # =========================================================
+    # 4. Notifications
+    # =========================================================
+    print("\n📢 STEP 3: Sending notifications...")
     
-    # =========================================================
-    # 4. নোটিফিকেশন
-    # =========================================================
-    print("\n" + "="*60)
-    print("📢 STEP 3: Sending notifications...")
-    print("="*60)
+    # ✅ FIXED: Safe success message
+    total_predictions = "N/A"
+    if df_conf is not None:
+        total_predictions = f"{len(df_conf):,}"
+    
+    # Count models
+    xgboost_path = os.path.join(CSV_FOLDER, 'xgboost')
+    model_count = "0"
+    if os.path.exists(xgboost_path):
+        model_files = [f for f in os.listdir(xgboost_path) if f.endswith('.joblib')]
+        model_count = f"{len(model_files)}"
     
     if not pdf_generated:
-        alert = "⚠️ কোনো PDF তৈরি হয়নি। CSV ফাইল খালি বা ত্রুটিপূর্ণ হতে পারে।"
+        alert = "⚠️ কোনো PDF তৈরি হয়নি। ./output/ai_signal ফোল্ডারে CSV ফাইল নেই।"
         send_telegram_alert(alert)
         send_email_alert("PDF Generation Failed", alert)
     else:
-        print(f"\n✅ সমস্ত PDF তৈরি সম্পন্ন হয়েছে! লোকেশন: {output_pdf_dir}")
-        
-        # Send success notification
-        if upload_success:
-            success_msg = f"✅ PDF Generation & HF Upload Complete!\n📊 Total predictions: {len(df_conf):, if 'df_conf' in dir() else 'N/A'}\n📁 Models: 387 symbols"
-            send_telegram_alert(success_msg)
-    
+        print(f"\n✅ সমস্ত PDF তৈরি সম্পন্ন হয়েছে! লোকেশন: {PDF_FOLDER}")
+
+    if upload_success:
+        success_msg = f"✅ XGBoost Models & Predictions uploaded to HF!\n📊 Total predictions: {total_predictions}\n📁 Models: {model_count} symbols"
+        send_telegram_alert(success_msg)
+
     # Final summary
     print("\n" + "="*60)
     print("✅ GENERATE_PDF COMPLETE!")
     print("="*60)
     print(f"📄 PDF Generated: {'✅' if pdf_generated else '❌'}")
     print(f"📤 HF Upload: {'✅' if upload_success else '❌'}")
+    print(f"🤖 Models: {model_count}")
     print("="*60)
