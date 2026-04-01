@@ -48,6 +48,7 @@ scripts = [
     #"scripts/hf_data.py",
     "scripts/xgboost_retrain.py",
     "scripts/generate_pdf.py",
+    "scripts/upload_csv.py",
     "scripts/dayliMassage.py",
     "scripts/email_reports.py",
     
