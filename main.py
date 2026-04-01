@@ -48,6 +48,7 @@ scripts = [
     "scripts/ai_trade.py",
     "scripts/xgboost_retrain.py",
     #"scripts/hf_data.py",
+    "scripts/xgboost _Elliott_support.py",
     "scripts/generate_pdf.py",
     "scripts/upload_csv.py",
     "scripts/dayliMassage.py",
