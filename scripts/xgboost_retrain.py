@@ -5,6 +5,7 @@
 # 3. Already trained good models retrain with new data
 # 4. Single commit upload to Hugging Face
 # 5. Monthly retry for permanently failed models
+# 6. Advanced features: Support/Resistance, RSI Divergence, EMA 200
 
 import os
 import pandas as pd
@@ -23,7 +24,12 @@ DATA_PATH = './csv/mongodb.csv'
 MODEL_DIR = './csv/xgboost/'
 PREDICTION_LOG = './csv/prediction_log.csv'
 XGB_CONFIDENCE = './csv/xgb_confidence.csv'
-MODEL_METADATA = './csv/model_metadata.csv'  # ট্র্যাক করতে কোন মডেল ভালো/খারাপ
+MODEL_METADATA = './csv/model_metadata.csv'
+
+# Advanced features files
+SUPPORT_RESISTANCE_PATH = './csv/support_resistance.csv'
+RSI_DIVERGENCE_PATH = './csv/rsi_diver.csv'
+EMA_200_PATH = './csv/ema_200.csv'
 
 os.makedirs(MODEL_DIR, exist_ok=True)
 
@@ -40,7 +46,7 @@ MONTHLY_INTERVAL = 30
 FEEDBACK_DAYS = 5
 MIN_SAMPLES_PER_SYMBOL = 50
 
-# 🆕 Model quality threshold
+# Model quality threshold
 AUC_THRESHOLD = 0.55  # AUC 0.55-এর নিচে হলে মডেল সেভ হবে না
 RETRAIN_ATTEMPTS = 3  # কতবার চেষ্টা করবে খারাপ মডেল রিট্রেন করতে
 MONTHLY_RETRY_AFTER = 30  # ব্যর্থ হওয়ার পর কত দিন পরে আবার চেষ্টা করবে
@@ -138,7 +144,6 @@ def load_model_metadata():
         df['last_attempt'] = pd.to_datetime(df['last_attempt']) if 'last_attempt' in df.columns else pd.to_datetime(df['last_trained'])
         return df
     else:
-        # Create empty metadata
         return pd.DataFrame(columns=['symbol', 'last_trained', 'last_attempt', 'auc', 'acc', 
                                       'failed_attempts', 'status', 'class_ratio'])
 
@@ -147,35 +152,24 @@ def save_model_metadata(df):
     df.to_csv(MODEL_METADATA, index=False)
 
 def should_retrain(symbol, metadata, current_date=None):
-    """
-    Check if a symbol should be retrained
-    Rules:
-    1. New symbol -> retrain
-    2. GOOD model -> retrain (update with new data)
-    3. BAD model with attempts < RETRAIN_ATTEMPTS -> retrain
-    4. BAD model with attempts >= RETRAIN_ATTEMPTS -> retry monthly
-    """
+    """Check if a symbol should be retrained"""
     if current_date is None:
         current_date = datetime.now()
     
     if metadata.empty or symbol not in metadata['symbol'].values:
-        return True, "new_symbol"  # নতুন স্টক, ট্রেন করবে
+        return True, "new_symbol"
     
     symbol_data = metadata[metadata['symbol'] == symbol].iloc[0]
     
-    # Status GOOD হলে রিট্রেন করবে (নতুন ডাটা দিয়ে আপডেট)
     if symbol_data['status'] == 'GOOD':
         return True, "good_model_update"
     
-    # Status BAD হলে
     if symbol_data['status'] == 'BAD':
         failed_attempts = symbol_data['failed_attempts']
         
-        # যদি ৩ বারের কম চেষ্টা করে থাকে
         if failed_attempts < RETRAIN_ATTEMPTS:
             return True, f"bad_retry_{failed_attempts+1}"
         
-        # ৩ বার ব্যর্থ হয়েছে, মাসিক রিট্রাই চেক করুন
         last_attempt = symbol_data.get('last_attempt', symbol_data['last_trained'])
         if isinstance(last_attempt, str):
             last_attempt = pd.to_datetime(last_attempt)
@@ -191,7 +185,7 @@ def should_retrain(symbol, metadata, current_date=None):
     return True, "default"
 
 # =========================
-# DATA FUNCTIONS
+# DATA FUNCTIONS WITH ADVANCED FEATURES
 # =========================
 
 def load_data():
@@ -206,10 +200,14 @@ def load_data():
     return df
 
 def engineer_features(df):
-    """Add engineered features"""
+    """Add engineered features including support/resistance, RSI divergence, and EMA 200"""
     if df.empty:
         return df
 
+    # =========================
+    # BASE FEATURES (Price, Volume, Volatility)
+    # =========================
+    
     # Price changes
     df['return_5d'] = df.groupby('symbol')['close'].pct_change(5)
     df['return_10d'] = df.groupby('symbol')['close'].pct_change(10)
@@ -222,24 +220,183 @@ def engineer_features(df):
     df['volume_ma'] = df.groupby('symbol')['volume'].transform(lambda x: x.rolling(20).mean())
     df['volume_ratio'] = df['volume'] / df['volume_ma']
 
-    # RSI signals
+    # RSI signals (if RSI exists in data)
     if 'rsi' in df.columns:
         df['rsi_oversold'] = (df['rsi'] < 30).astype(int)
         df['rsi_overbought'] = (df['rsi'] > 70).astype(int)
 
-    # Target
+    # =========================
+    # 1. SUPPORT & RESISTANCE FEATURES
+    # =========================
+    try:
+        if os.path.exists(SUPPORT_RESISTANCE_PATH):
+            sr_df = pd.read_csv(SUPPORT_RESISTANCE_PATH, encoding='utf-8-sig')
+            sr_df['current_date'] = pd.to_datetime(sr_df['current_date'])
+            
+            # Strength mapping: Weak=1, Moderate=2, Strong=3
+            strength_map = {'Weak': 1, 'Moderate': 2, 'Strong': 3}
+            sr_df['strength_score'] = sr_df['strength'].map(strength_map).fillna(1)
+            
+            # Merge on symbol and date
+            df = df.merge(sr_df, left_on=['symbol', 'date'], 
+                          right_on=['symbol', 'current_date'], how='left')
+            
+            # Distance from level (%)
+            df['dist_from_sr'] = (df['close'] - df['level_price']) / df['level_price'] * 100
+            df['dist_from_sr'] = df['dist_from_sr'].clip(-20, 20)
+            
+            # Type: support or resistance
+            df['is_support'] = (df['type'] == 'support').astype(int)
+            df['is_resistance'] = (df['type'] == 'resistance').astype(int)
+            
+            # Strength of the level
+            df['sr_strength'] = df['strength_score']
+            
+            # Gap days feature (how recent the level is)
+            df['sr_gap_days'] = df['gap_days'].fillna(999).clip(0, 100)
+            
+            # Drop unnecessary columns
+            drop_cols = ['type', 'current_low', 'current_high', 'current_close', 
+                         'level_date', 'strength', 'strength_score', 'current_date', 'gap_days']
+            df.drop(drop_cols, axis=1, errors='ignore', inplace=True)
+            
+            # Fill NaN with 0 (no support/resistance near)
+            for col in ['dist_from_sr', 'is_support', 'is_resistance', 'sr_strength', 'sr_gap_days']:
+                if col in df.columns:
+                    df[col] = df[col].fillna(0)
+            
+            print(f"   ✅ Added support/resistance features")
+        else:
+            print(f"   ⚠️ Support/Resistance file not found: {SUPPORT_RESISTANCE_PATH}")
+            df['dist_from_sr'] = 0
+            df['is_support'] = 0
+            df['is_resistance'] = 0
+            df['sr_strength'] = 0
+            df['sr_gap_days'] = 0
+            
+    except Exception as e:
+        print(f"   ⚠️ Support/Resistance features failed: {e}")
+        df['dist_from_sr'] = 0
+        df['is_support'] = 0
+        df['is_resistance'] = 0
+        df['sr_strength'] = 0
+        df['sr_gap_days'] = 0
+
+    # =========================
+    # 2. RSI DIVERGENCE FEATURES
+    # =========================
+    try:
+        if os.path.exists(RSI_DIVERGENCE_PATH):
+            div_df = pd.read_csv(RSI_DIVERGENCE_PATH, encoding='utf-8-sig')
+            div_df['last_date'] = pd.to_datetime(div_df['last_date'])
+            
+            # One-hot encode divergence type and strength
+            div_df['is_bullish_div'] = (div_df['divergence_type'] == 'Bullish').astype(int)
+            div_df['is_bearish_div'] = (div_df['divergence_type'] == 'Bearish').astype(int)
+            div_df['div_strength'] = div_df['strength'].map({'Strong': 2, 'Moderate': 1, 'Weak': 0}).fillna(0)
+            
+            # Merge on symbol and date
+            df = df.merge(div_df[['symbol', 'last_date', 'is_bullish_div', 'is_bearish_div', 'div_strength']], 
+                          left_on=['symbol', 'date'], right_on=['symbol', 'last_date'], how='left')
+            
+            # Fill NaN
+            df['is_bullish_div'] = df['is_bullish_div'].fillna(0)
+            df['is_bearish_div'] = df['is_bearish_div'].fillna(0)
+            df['div_strength'] = df['div_strength'].fillna(0)
+            
+            df.drop(['last_date'], axis=1, errors='ignore', inplace=True)
+            
+            print(f"   ✅ Added RSI divergence features")
+        else:
+            print(f"   ⚠️ RSI Divergence file not found: {RSI_DIVERGENCE_PATH}")
+            df['is_bullish_div'] = 0
+            df['is_bearish_div'] = 0
+            df['div_strength'] = 0
+            
+    except Exception as e:
+        print(f"   ⚠️ RSI Divergence features failed: {e}")
+        df['is_bullish_div'] = 0
+        df['is_bearish_div'] = 0
+        df['div_strength'] = 0
+
+    # =========================
+    # 3. EMA 200 FEATURES
+    # =========================
+    try:
+        if os.path.exists(EMA_200_PATH):
+            ema_df = pd.read_csv(EMA_200_PATH, encoding='utf-8-sig')
+            # Clean column names
+            ema_df.columns = ema_df.columns.str.strip()
+            
+            # Find the column with EMA value (usually last column or 'close')
+            if 'close' in ema_df.columns:
+                ema_df = ema_df.rename(columns={'close': 'ema_200'})
+            else:
+                # Take the last numeric column as EMA value
+                numeric_cols = ema_df.select_dtypes(include=[np.number]).columns
+                if len(numeric_cols) > 0:
+                    ema_df = ema_df.rename(columns={numeric_cols[-1]: 'ema_200'})
+            
+            ema_df['date'] = pd.to_datetime(ema_df['date'])
+            
+            # Merge on symbol and date
+            df = df.merge(ema_df[['symbol', 'date', 'ema_200']], on=['symbol', 'date'], how='left')
+            
+            # Calculate distance from EMA
+            df['dist_from_ema'] = (df['close'] - df['ema_200']) / df['ema_200'] * 100
+            df['dist_from_ema'] = df['dist_from_ema'].clip(-30, 30)
+            
+            # Above/below EMA
+            df['above_ema'] = (df['close'] > df['ema_200']).astype(int)
+            
+            # Fill NaN with rolling EMA or close
+            df['ema_200'] = df.groupby('symbol')['close'].transform(lambda x: x.rolling(200).mean())
+            df['dist_from_ema'] = df['dist_from_ema'].fillna(0)
+            df['above_ema'] = df['above_ema'].fillna(0)
+            df['ema_200'] = df['ema_200'].fillna(df['close'])
+            
+            print(f"   ✅ Added EMA200 features")
+        else:
+            print(f"   ⚠️ EMA200 file not found: {EMA_200_PATH}")
+            df['dist_from_ema'] = 0
+            df['above_ema'] = 0
+            
+    except Exception as e:
+        print(f"   ⚠️ EMA200 features failed: {e}")
+        df['dist_from_ema'] = 0
+        df['above_ema'] = 0
+
+    # =========================
+    # TARGET
+    # =========================
     df['future_return'] = df.groupby('symbol')['close'].transform(lambda x: x.shift(-5) / x - 1)
     df['target'] = (df['future_return'] > 0.02).astype(int)
 
     return df.dropna(subset=['target'])
 
 def get_features(df):
-    """Get list of available features"""
-    features = ['close', 'volume', 'return_5d', 'return_10d', 'volatility', 'volatility_5d', 'volume_ratio']
-
+    """Get list of all available features"""
+    features = [
+        'close', 'volume', 'return_5d', 'return_10d', 
+        'volatility', 'volatility_5d', 'volume_ratio'
+    ]
+    
+    # Add RSI signals if available
     if 'rsi_oversold' in df.columns:
         features.extend(['rsi_oversold', 'rsi_overbought'])
-
+    
+    # Add support/resistance features
+    sr_features = ['dist_from_sr', 'is_support', 'is_resistance', 'sr_strength', 'sr_gap_days']
+    features.extend([f for f in sr_features if f in df.columns])
+    
+    # Add RSI divergence features
+    div_features = ['is_bullish_div', 'is_bearish_div', 'div_strength']
+    features.extend([f for f in div_features if f in df.columns])
+    
+    # Add EMA features
+    ema_features = ['dist_from_ema', 'above_ema']
+    features.extend([f for f in ema_features if f in df.columns])
+    
     return features
 
 # =========================
@@ -330,7 +487,7 @@ def save_prediction_log(df):
     print(f"📝 Log saved: {len(df_log)} rows")
 
 # =========================
-# TRAINING FUNCTION (IMPROVED)
+# TRAINING FUNCTION
 # =========================
 
 def train_symbol(symbol, group, features, params, feedback_log, metadata):
@@ -383,15 +540,19 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata):
         auc = roc_auc_score(y_test, prob) if len(np.unique(y_test)) > 1 else 0.5
 
         print(f"   ✅ Acc: {acc:.2%}, AUC: {auc:.2%}")
+        
+        # Feature importance (optional, for debugging)
+        if auc >= AUC_THRESHOLD:
+            importance = model.feature_importances_
+            top_features = sorted(zip(features, importance), key=lambda x: x[1], reverse=True)[:5]
+            print(f"   📊 Top features: {', '.join([f'{f}:{imp:.3f}' for f, imp in top_features])}")
 
         # Check if model is good enough
         if auc >= AUC_THRESHOLD:
-            # GOOD MODEL - Save it
             model_path = os.path.join(MODEL_DIR, f'{symbol}.joblib')
             joblib.dump(model, model_path)
             print(f"   💾 GOOD MODEL saved: {model_path}")
             
-            # Generate predictions
             group['confidence_score'] = model.predict_proba(X)[:, 1] * 100
             group['prediction'] = (group['confidence_score'] > 50).astype(int)
             
@@ -400,17 +561,14 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata):
             failed_attempts = 0
             
         else:
-            # BAD MODEL - Don't save
             print(f"   ⚠️ BAD MODEL (AUC {auc:.2%} < {AUC_THRESHOLD}) - Not saving")
             
-            # Check previous attempts
             if not metadata.empty and symbol in metadata['symbol'].values:
                 prev_data = metadata[metadata['symbol'] == symbol].iloc[0]
                 failed_attempts = prev_data.get('failed_attempts', 0) + 1
             else:
                 failed_attempts = 1
             
-            # Use default predictions (always 0 - conservative)
             group['confidence_score'] = 50
             group['prediction'] = 0
             result = group[['symbol', 'date', 'close', 'confidence_score', 'prediction']]
@@ -443,7 +601,6 @@ def upload_to_huggingface():
     try:
         from huggingface_hub import HfApi
         from dotenv import load_dotenv
-        import os
         
         load_dotenv()
         hf_token = os.getenv("hf_token")
@@ -459,7 +616,6 @@ def upload_to_huggingface():
         print("📤 UPLOADING TO HUGGING FACE (SINGLE COMMIT)")
         print("="*70)
         
-        # Upload entire folder in one commit
         api.upload_folder(
             folder_path="./csv",
             repo_id=repo_id,
@@ -483,7 +639,6 @@ def download_from_huggingface():
     """Download latest data from Hugging Face"""
     try:
         from huggingface_hub import snapshot_download
-        import os
         
         print("\n📥 Checking for existing data...")
         
@@ -511,7 +666,7 @@ def download_from_huggingface():
 
 def main():
     print("="*70)
-    print("🚀 XGBOOST SCHEDULER (Good Models Only + Monthly Retry)")
+    print("🚀 XGBOOST SCHEDULER (Advanced Features + Monthly Retry)")
     print("="*70)
     
     # Step 0: Download latest data from HF
@@ -541,16 +696,16 @@ def main():
         print(f"   Next Weekly: {(datetime.today() + timedelta(days=WEEKLY_INTERVAL - weekly_days)).date()}")
         print(f"   Next Monthly: {(datetime.today() + timedelta(days=MONTHLY_INTERVAL - monthly_days)).date()}")
         
-        # Still upload existing files
         upload_to_huggingface()
         return
 
     print(f"\n{'='*70}")
     print(f"🎯 RUNNING {mode} MODE")
     print(f"⏱️ Expected time: {expected_time}")
-    print(f"📊 Parameters: n_estimators={params['n_estimators']}, depth={params['max_depth']}, lr={params['learning_rate']}, gamma={params['gamma']}")
+    print(f"📊 Parameters: n_estimators={params['n_estimators']}, depth={params['max_depth']}, lr={params['learning_rate']}")
     print(f"📈 Model threshold: AUC >= {AUC_THRESHOLD} to save")
     print(f"🔄 Bad models: {RETRAIN_ATTEMPTS} attempts, then monthly retry")
+    print(f"📁 Advanced features: Support/Resistance, RSI Divergence, EMA200")
     print(f"{'='*70}\n")
 
     # Feedback update
@@ -572,7 +727,7 @@ def main():
     print(f"   Loaded {len(df):,} rows, {df['symbol'].nunique()} symbols")
 
     # Feature engineering
-    print("\n🔧 Step 3: Feature engineering...")
+    print("\n🔧 Step 3: Feature engineering (with advanced features)...")
     df = engineer_features(df)
     features = get_features(df)
     print(f"   Using {len(features)} features: {features}")
@@ -581,7 +736,6 @@ def main():
     print("\n🏆 Step 4: Training models...")
     print("="*70)
     print(f"🎯 Target: Save only models with AUC >= {AUC_THRESHOLD}")
-    print(f"🔄 Bad models: {RETRAIN_ATTEMPTS} immediate attempts, then monthly retry")
     print("="*70)
 
     results = []
@@ -604,7 +758,6 @@ def main():
             skipped_count += 1
             continue
         
-        # Check if we should retrain this symbol
         should_train, reason = should_retrain(symbol, metadata)
         
         if not should_train:
@@ -612,7 +765,6 @@ def main():
             skipped_count += 1
             continue
         
-        # Track retry reason
         if 'retry' in reason:
             if 'monthly' in reason:
                 monthly_retry_count += 1
@@ -655,9 +807,7 @@ def main():
     if updated_metadata:
         new_metadata = pd.DataFrame(updated_metadata)
         
-        # Merge with existing metadata
         if not metadata.empty:
-            # Remove old entries for symbols we just updated
             symbols_updated = new_metadata['symbol'].unique()
             metadata = metadata[~metadata['symbol'].isin(symbols_updated)]
         
@@ -694,9 +844,10 @@ def main():
         print(f"🔴 Bad models retrying: {len(retry_reasons['bad_retry'])}")
     if retry_reasons['monthly_retry']:
         print(f"📅 Monthly retry (failed models): {len(retry_reasons['monthly_retry'])}")
-        print(f"   Symbols: {', '.join(retry_reasons['monthly_retry'][:10])}")
-        if len(retry_reasons['monthly_retry']) > 10:
-            print(f"   ... and {len(retry_reasons['monthly_retry'])-10} more")
+        if retry_reasons['monthly_retry']:
+            print(f"   Symbols: {', '.join(retry_reasons['monthly_retry'][:10])}")
+            if len(retry_reasons['monthly_retry']) > 10:
+                print(f"   ... and {len(retry_reasons['monthly_retry'])-10} more")
 
     # Show good models
     if good_count > 0 and 'final_metadata' in locals():
