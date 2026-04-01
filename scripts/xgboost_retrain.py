@@ -1,22 +1,22 @@
-# xgboost_scheduler.py - Complete 3-in-1 System with Confirmed Parameters
+# xgboost_scheduler.py - COMPLETE VERSION (3 Modes + Feedback Learning)
 
 import os
-import sys
 import pandas as pd
 import numpy as np
 import xgboost as xgb
-from sklearn.model_selection import train_test_split, StratifiedShuffleSplit, RandomizedSearchCV
-from sklearn.metrics import accuracy_score, roc_auc_score, precision_score, recall_score, f1_score
+from sklearn.metrics import accuracy_score, roc_auc_score
 import joblib
 from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
 
 # =========================
-# CONFIGURATION
+# CONFIG
 # =========================
 DATA_PATH = './csv/mongodb.csv'
 MODEL_DIR = './csv/xgboost/'
+PREDICTION_LOG = './csv/prediction_log.csv'
+
 os.makedirs(MODEL_DIR, exist_ok=True)
 
 # Schedule tracking files
@@ -29,13 +29,11 @@ DAILY_INTERVAL = 1
 WEEKLY_INTERVAL = 7
 MONTHLY_INTERVAL = 30
 
-# Minimum samples per symbol
+FEEDBACK_DAYS = 5
 MIN_SAMPLES_PER_SYMBOL = 50
-MIN_TARGET_RATIO = 0.15
-MAX_TARGET_RATIO = 0.85
 
 # =========================
-# OPTIMIZED MODEL PARAMETERS BY MODE
+# MODEL PARAMETERS BY MODE
 # =========================
 
 # Daily Mode (15 minutes) - Best parameters from tuning
@@ -45,88 +43,52 @@ DAILY_PARAMS = {
     'learning_rate': 0.01,
     'subsample': 0.7,
     'colsample_bytree': 0.7,
-    'colsample_bylevel': 0.7,
-    'colsample_bynode': 0.7,
     'min_child_weight': 5,
     'gamma': 0.2,
     'reg_alpha': 0.5,
     'reg_lambda': 1.5,
-    'max_leaves': 31,
     'random_state': 42,
     'eval_metric': 'logloss',
     'use_label_encoder': False,
-    'tree_method': 'hist',
-    'max_bin': 256,
     'verbosity': 0
 }
 
-# Weekly Mode - Balanced (30-40 minutes)
+# Weekly Mode (30-40 minutes)
 WEEKLY_PARAMS = {
     'n_estimators': 1500,
     'max_depth': 9,
     'learning_rate': 0.007,
     'subsample': 0.7,
     'colsample_bytree': 0.7,
-    'colsample_bylevel': 0.7,
-    'colsample_bynode': 0.7,
     'min_child_weight': 6,
-    'gamma': 0.25,              # ✅ Confirmed
+    'gamma': 0.25,
     'reg_alpha': 0.6,
-    'reg_lambda': 2,
-    'max_leaves': 63,
+    'reg_lambda': 2.0,
     'random_state': 42,
     'eval_metric': 'logloss',
     'use_label_encoder': False,
-    'tree_method': 'hist',
-    'max_bin': 256,
     'verbosity': 0
 }
 
-# Monthly Mode - Ultimate Quality (2-4 hours)
+# Monthly Mode (2-4 hours)
 MONTHLY_PARAMS = {
     'n_estimators': 2000,
     'max_depth': 10,
     'learning_rate': 0.005,
     'subsample': 0.6,
     'colsample_bytree': 0.6,
-    'colsample_bylevel': 0.6,
-    'colsample_bynode': 0.6,
     'min_child_weight': 8,
     'gamma': 0.3,
     'reg_alpha': 0.8,
     'reg_lambda': 2.5,
-    'max_leaves': 127,
     'random_state': 42,
     'eval_metric': 'logloss',
     'use_label_encoder': False,
-    'tree_method': 'hist',
-    'max_bin': 512,
     'verbosity': 0
 }
 
-# Monthly tuning grid for hyperparameter optimization
-MONTHLY_TUNING_GRID = {
-    'max_depth': [8, 9, 10, 11, 12],
-    'min_child_weight': [5, 6, 7, 8, 10],
-    'gamma': [0.2, 0.25, 0.3, 0.35, 0.4],
-    'learning_rate': [0.01, 0.007, 0.005, 0.003],
-    'n_estimators': [1000, 1500, 2000, 2500],
-    'reg_alpha': [0.5, 0.6, 0.7, 0.8, 1.0],
-    'reg_lambda': [1.5, 2.0, 2.5, 3.0],
-    'subsample': [0.6, 0.65, 0.7, 0.75],
-    'colsample_bytree': [0.6, 0.65, 0.7, 0.75]
-}
-
-print("="*85)
-print("🤖 XGBOOST AUTOMATED SCHEDULER - 3 in 1 SYSTEM")
-print("="*85)
-print("📅 DAILY   : 15 minutes | 1000 trees, depth 8, lr=0.01, gamma=0.2")
-print("📆 WEEKLY  : 30-40 minutes | 1500 trees, depth 9, lr=0.007, gamma=0.25 ✅")
-print("📅 MONTHLY : 2-4 hours | 2000 trees, depth 10, lr=0.005, gamma=0.3")
-print("="*85)
-
 # =========================
-# HELPER FUNCTIONS
+# SCHEDULE CHECK FUNCTIONS
 # =========================
 
 def check_last_run(file_path, interval):
@@ -144,39 +106,36 @@ def check_last_run(file_path, interval):
     days_since = (today - last_date).days
     needed = days_since >= interval
     
-    return last_date, today, days_since, needed
+    return needed, days_since
 
 def update_last_run(file_path, date):
     """Update last run date"""
     with open(file_path, 'w') as f:
         f.write(date.strftime('%Y-%m-%d'))
 
-def fix_bom_columns(df):
-    """Remove BOM characters from column names"""
-    df.columns = df.columns.str.replace('ï»¿', '').str.replace('\ufeff', '').str.strip()
-    return df
+# =========================
+# DATA FUNCTIONS
+# =========================
 
 def load_data():
-    """Load and prepare data"""
+    """Load data with proper encoding"""
+    if not os.path.exists(DATA_PATH):
+        print(f"❌ Data file not found: {DATA_PATH}")
+        return pd.DataFrame()
+    
     df = pd.read_csv(DATA_PATH, encoding='utf-8-sig')
-    df = fix_bom_columns(df)
+    df.columns = df.columns.str.replace('ï»¿', '').str.replace('\ufeff', '').str.strip()
     df['date'] = pd.to_datetime(df['date'])
-    
-    if 'symbol' not in df.columns:
-        for col in df.columns:
-            if 'sym' in col.lower() or 'ticker' in col.lower():
-                df.rename(columns={col: 'symbol'}, inplace=True)
-                break
-    
     return df
 
 def engineer_features(df):
     """Add engineered features"""
-    print("   🔧 Adding engineered features...")
+    if df.empty:
+        return df
     
     # Price changes
-    for period in [1, 3, 5, 10]:
-        df[f'return_{period}d'] = df.groupby('symbol')['close'].pct_change(period)
+    df['return_5d'] = df.groupby('symbol')['close'].pct_change(5)
+    df['return_10d'] = df.groupby('symbol')['close'].pct_change(10)
     
     # Volatility
     df['volatility'] = (df['high'] - df['low']) / df['close']
@@ -186,302 +145,273 @@ def engineer_features(df):
     df['volume_ma'] = df.groupby('symbol')['volume'].transform(lambda x: x.rolling(20).mean())
     df['volume_ratio'] = df['volume'] / df['volume_ma']
     
-    # Support/Resistance
-    df['resistance_20d'] = df.groupby('symbol')['high'].transform(lambda x: x.rolling(20).max())
-    df['support_20d'] = df.groupby('symbol')['low'].transform(lambda x: x.rolling(20).min())
-    df['dist_to_resistance'] = (df['resistance_20d'] - df['close']) / df['close'] * 100
-    df['dist_to_support'] = (df['close'] - df['support_20d']) / df['close'] * 100
-    
-    # MACD signals
-    if 'macd' in df.columns and 'macd_signal' in df.columns:
-        df['macd_cross_up'] = ((df['macd'] > df['macd_signal']) & 
-                               (df['macd'].shift(1) <= df['macd_signal'].shift(1))).astype(int)
-        df['macd_cross_down'] = ((df['macd'] < df['macd_signal']) & 
-                                 (df['macd'].shift(1) >= df['macd_signal'].shift(1))).astype(int)
-    
     # RSI signals
     if 'rsi' in df.columns:
         df['rsi_oversold'] = (df['rsi'] < 30).astype(int)
         df['rsi_overbought'] = (df['rsi'] > 70).astype(int)
-        df['rsi_cross_above_30'] = ((df['rsi'] >= 30) & (df['rsi'].shift(1) < 30)).astype(int)
-        df['rsi_cross_below_70'] = ((df['rsi'] <= 70) & (df['rsi'].shift(1) > 70)).astype(int)
     
     # Target
     df['future_return'] = df.groupby('symbol')['close'].transform(lambda x: x.shift(-5) / x - 1)
     df['target'] = (df['future_return'] > 0.02).astype(int)
     
-    # Drop NaN target only
-    df = df.dropna(subset=['target'])
-    
-    return df
+    return df.dropna(subset=['target'])
 
 def get_features(df):
     """Get list of available features"""
-    feature_cols = [
-        'open', 'high', 'low', 'volume', 'value', 'trades', 'change', 'marketCap',
-        'bb_upper', 'bb_middle', 'bb_lower', 'macd', 'macd_signal', 'macd_hist',
-        'rsi', 'atr', 'zigzag', 'ema_200',
-        'return_1d', 'return_3d', 'return_5d', 'return_10d',
-        'volatility', 'volatility_5d',
-        'volume_ratio',
-        'dist_to_resistance', 'dist_to_support',
-        'macd_cross_up', 'macd_cross_down',
-        'rsi_oversold', 'rsi_overbought', 'rsi_cross_above_30', 'rsi_cross_below_70'
-    ]
+    features = ['close', 'volume', 'return_5d', 'return_10d', 'volatility', 'volatility_5d', 'volume_ratio']
     
-    return [f for f in feature_cols if f in df.columns]
+    if 'rsi_oversold' in df.columns:
+        features.extend(['rsi_oversold', 'rsi_overbought'])
+    
+    return features
 
-def hyperparameter_tuning(X_train, y_train):
-    """Comprehensive hyperparameter tuning for monthly mode"""
-    print("   🔧 Running hyperparameter tuning (30-60 minutes)...")
+# =========================
+# FEEDBACK SYSTEM
+# =========================
+
+def update_actual_results():
+    """Update actual results after FEEDBACK_DAYS"""
+    if not os.path.exists(PREDICTION_LOG):
+        return None
     
-    from sklearn.model_selection import RandomizedSearchCV
+    log = pd.read_csv(PREDICTION_LOG)
+    log['date'] = pd.to_datetime(log['date'])
     
-    if len(X_train) > 10000:
-        X_sample = X_train.sample(n=10000, random_state=42)
-        y_sample = y_train.loc[X_sample.index]
-    else:
-        X_sample = X_train
-        y_sample = y_train
+    df = load_data()
+    if df.empty:
+        return log
     
-    random_search = RandomizedSearchCV(
-        xgb.XGBClassifier(random_state=42, eval_metric='logloss', use_label_encoder=False),
-        MONTHLY_TUNING_GRID,
-        n_iter=50,
-        cv=5,
-        scoring='roc_auc',
-        n_jobs=-1,
-        verbose=0,
-        random_state=42
+    updated = 0
+    
+    for i, row in log.iterrows():
+        if row.get('checked', 0) == 1:
+            continue
+        
+        future_date = row['date'] + timedelta(days=FEEDBACK_DAYS)
+        
+        future = df[
+            (df['symbol'] == row['symbol']) &
+            (df['date'] >= future_date)
+        ]
+        
+        if len(future) > 0:
+            future_price = future.iloc[0]['close']
+            ret = (future_price - row['close']) / row['close']
+            actual = 1 if ret > 0.02 else 0
+            
+            log.at[i, 'actual'] = actual
+            log.at[i, 'checked'] = 1
+            updated += 1
+    
+    if updated > 0:
+        log.to_csv(PREDICTION_LOG, index=False)
+        print(f"🔄 Feedback updated: {updated} rows")
+    
+    return log
+
+def get_sample_weights(df, log):
+    """Get sample weights based on past mistakes"""
+    weights = np.ones(len(df))
+    
+    if log is None or log.empty:
+        return weights
+    
+    checked_log = log[log['checked'] == 1].copy()
+    
+    if checked_log.empty:
+        return weights
+    
+    merged = df.merge(
+        checked_log[['symbol', 'date', 'prediction', 'actual']],
+        on=['symbol', 'date'],
+        how='left'
     )
     
-    random_search.fit(X_sample, y_sample)
+    wrong = (merged['prediction'] != merged['actual']) & (~merged['actual'].isna())
     
-    print(f"   ✅ Best params: {random_search.best_params_}")
-    print(f"   📊 Best CV score: {random_search.best_score_:.4f}")
+    if wrong.sum() > 0:
+        weights[wrong.values] = 2.0
+        print(f"⚖️ Wrong samples boosted: {wrong.sum()}")
     
-    return random_search.best_params_
+    return weights
+
+def save_prediction_log(df):
+    """Save prediction log"""
+    if df.empty:
+        return
+    
+    df_log = df[['symbol', 'date', 'close', 'confidence_score', 'prediction']].copy()
+    df_log['actual'] = np.nan
+    df_log['checked'] = 0
+    
+    if os.path.exists(PREDICTION_LOG):
+        old = pd.read_csv(PREDICTION_LOG)
+        df_log = pd.concat([old, df_log], ignore_index=True)
+        df_log = df_log.drop_duplicates(subset=['symbol', 'date'], keep='last')
+    
+    df_log.to_csv(PREDICTION_LOG, index=False)
+    print(f"📝 Log saved: {len(df_log)} rows")
 
 # =========================
-# TRAINER CLASS
+# TRAINING FUNCTION
 # =========================
 
-class XGBoostTrainer:
-    def __init__(self, symbol, params):
-        self.symbol = symbol
-        self.params = params
-        self.model = None
-        self.model_path = os.path.join(MODEL_DIR, f'xgb_model_{symbol}.joblib')
+def train_symbol(symbol, group, features, params, feedback_log):
+    """Train model for a single symbol"""
+    try:
+        group = group.sort_values('date')
+        X = group[features]
+        y = group['target']
         
-    def load_model(self):
-        if os.path.exists(self.model_path):
-            self.model = joblib.load(self.model_path)
-            return True
-        return False
-    
-    def save_model(self):
-        joblib.dump(self.model, self.model_path)
-    
-    def train(self, X_train, y_train, X_val=None, y_val=None):
-        """Train model with given parameters"""
-        self.model = xgb.XGBClassifier(**self.params)
+        if len(X) < MIN_SAMPLES_PER_SYMBOL:
+            return None
         
-        if X_val is not None:
-            eval_set = [(X_val, y_val)]
-            self.model.fit(X_train, y_train, eval_set=eval_set, verbose=False)
-        else:
-            self.model.fit(X_train, y_train)
+        split = int(len(X) * 0.8)
         
-        self.save_model()
+        if split < 10 or len(X) - split < 5:
+            return None
         
-        if X_val is not None:
-            y_pred = self.model.predict(X_val)
-            y_proba = self.model.predict_proba(X_val)[:, 1]
-            acc = accuracy_score(y_val, y_pred)
-            auc = roc_auc_score(y_val, y_proba)
-            return acc, auc
+        X_train = X.iloc[:split]
+        y_train = y.iloc[:split]
+        X_test = X.iloc[split:]
+        y_test = y.iloc[split:]
         
-        return 0, 0
+        weights = get_sample_weights(group.iloc[:split], feedback_log)
+        
+        model = xgb.XGBClassifier(**params)
+        
+        try:
+            model.fit(X_train, y_train, sample_weight=weights, eval_set=[(X_test, y_test)], verbose=False)
+        except:
+            model.fit(X_train, y_train, sample_weight=weights, verbose=False)
+        
+        model_path = os.path.join(MODEL_DIR, f'{symbol}.joblib')
+        joblib.dump(model, model_path)
+        
+        preds = model.predict(X_test)
+        prob = model.predict_proba(X_test)[:, 1]
+        
+        acc = accuracy_score(y_test, preds)
+        auc = roc_auc_score(y_test, prob) if len(np.unique(y_test)) > 1 else 0.5
+        
+        group['confidence_score'] = model.predict_proba(X)[:, 1] * 100
+        group['prediction'] = (group['confidence_score'] > 50).astype(int)
+        
+        print(f"   ✅ Acc: {acc:.2%}, AUC: {auc:.2%}")
+        
+        return group[['symbol', 'date', 'close', 'confidence_score', 'prediction']]
+        
+    except Exception as e:
+        print(f"   ❌ Error: {e}")
+        return None
 
 # =========================
-# MAIN EXECUTION
+# MAIN
 # =========================
-
 def main():
-    # Check schedules
-    _, today, _, daily_needed = check_last_run(LAST_DAILY_FILE, DAILY_INTERVAL)
-    _, _, _, weekly_needed = check_last_run(LAST_WEEKLY_FILE, WEEKLY_INTERVAL)
-    _, _, _, monthly_needed = check_last_run(LAST_MONTHLY_FILE, MONTHLY_INTERVAL)
+    print("="*70)
+    print("🚀 XGBOOST SCHEDULER (Daily/Weekly/Monthly + Feedback Learning)")
+    print("="*70)
+    
+    # Check schedule
+    daily_needed, daily_days = check_last_run(LAST_DAILY_FILE, DAILY_INTERVAL)
+    weekly_needed, weekly_days = check_last_run(LAST_WEEKLY_FILE, WEEKLY_INTERVAL)
+    monthly_needed, monthly_days = check_last_run(LAST_MONTHLY_FILE, MONTHLY_INTERVAL)
     
     # Determine mode
     if monthly_needed:
         mode = "MONTHLY"
         params = MONTHLY_PARAMS
-        tuning_needed = True
         expected_time = "2-4 hours"
     elif weekly_needed:
         mode = "WEEKLY"
         params = WEEKLY_PARAMS
-        tuning_needed = False
         expected_time = "30-40 minutes"
     elif daily_needed:
         mode = "DAILY"
         params = DAILY_PARAMS
-        tuning_needed = False
         expected_time = "15 minutes"
     else:
         print("\n✅ No training needed today!")
-        print(f"   Next Daily: {(datetime.today() + timedelta(days=DAILY_INTERVAL)).date()}")
-        if os.path.exists(LAST_WEEKLY_FILE):
-            _, _, days_since, _ = check_last_run(LAST_WEEKLY_FILE, WEEKLY_INTERVAL)
-            days_left = WEEKLY_INTERVAL - days_since
-            print(f"   Next Weekly: {(datetime.today() + timedelta(days=days_left)).date()}")
-        if os.path.exists(LAST_MONTHLY_FILE):
-            _, _, days_since, _ = check_last_run(LAST_MONTHLY_FILE, MONTHLY_INTERVAL)
-            days_left = MONTHLY_INTERVAL - days_since
-            print(f"   Next Monthly: {(datetime.today() + timedelta(days=days_left)).date()}")
+        print(f"   Next Daily: {(datetime.today() + timedelta(days=DAILY_INTERVAL - daily_days)).date()}")
+        print(f"   Next Weekly: {(datetime.today() + timedelta(days=WEEKLY_INTERVAL - weekly_days)).date()}")
+        print(f"   Next Monthly: {(datetime.today() + timedelta(days=MONTHLY_INTERVAL - monthly_days)).date()}")
         return
     
-    print(f"\n{'='*85}")
+    print(f"\n{'='*70}")
     print(f"🎯 RUNNING {mode} MODE")
     print(f"⏱️ Expected time: {expected_time}")
-    print(f"📊 Parameters: n_estimators={params.get('n_estimators', 'N/A')}, max_depth={params.get('max_depth', 'N/A')}, lr={params.get('learning_rate', 'N/A')}, gamma={params.get('gamma', 'N/A')}")
-    print(f"{'='*85}\n")
+    print(f"📊 Parameters: n_estimators={params['n_estimators']}, depth={params['max_depth']}, lr={params['learning_rate']}, gamma={params['gamma']}")
+    print(f"{'='*70}\n")
+    
+    # Feedback update
+    print("📊 Step 1: Updating feedback...")
+    feedback_log = update_actual_results()
     
     # Load data
-    print("📂 Loading data...")
+    print("\n📂 Step 2: Loading data...")
     df = load_data()
+    
+    if df.empty:
+        print("❌ No data loaded. Exiting.")
+        return
+    
     print(f"   Loaded {len(df):,} rows, {df['symbol'].nunique()} symbols")
     
-    # Engineer features
-    print("\n🔧 Engineering features...")
+    # Feature engineering
+    print("\n🔧 Step 3: Feature engineering...")
     df = engineer_features(df)
     features = get_features(df)
-    print(f"   Using {len(features)} features")
-    
-    # Global tuning for monthly mode
-    global_best_params = None
-    if tuning_needed:
-        print("\n" + "="*85)
-        print("🎯 HYPERPARAMETER TUNING (Monthly Mode)")
-        print("="*85)
-        
-        all_data = df[features].copy()
-        all_target = df['target'].copy()
-        
-        for col in all_data.columns:
-            if all_data[col].isnull().any():
-                all_data[col] = all_data[col].fillna(all_data[col].median())
-        
-        if len(all_data) > 1000:
-            X_tune, _, y_tune, _ = train_test_split(all_data, all_target, test_size=0.2, random_state=42)
-            global_best_params = hyperparameter_tuning(X_tune, y_tune)
-            
-            for key, value in global_best_params.items():
-                params[key] = value
-                print(f"   ✅ Updated {key}: {value}")
+    print(f"   Using {len(features)} features: {features}")
     
     # Train models
-    print("\n" + "="*85)
-    print(f"🏆 TRAINING MODELS ({mode} MODE)")
-    print("="*85)
+    print("\n🏆 Step 4: Training models...")
+    print("="*70)
     
     results = []
-    training_stats = []
-    total_trained = 0
-    total_skipped = 0
+    trained_count = 0
+    skipped_count = 0
     
     for symbol, group in df.groupby('symbol'):
         if len(group) < MIN_SAMPLES_PER_SYMBOL:
-            total_skipped += 1
+            skipped_count += 1
             continue
         
-        print(f"\n{'─'*60}")
-        print(f"🔹 {symbol} ({len(group)} rows)")
+        print(f"\n🔹 {symbol} ({len(group)} rows)")
         
-        # Prepare data
-        group = group.sort_values('date')
-        X = group[features].copy()
-        y = group['target'].copy()
+        result = train_symbol(symbol, group, features, params, feedback_log)
         
-        for col in X.columns:
-            if X[col].isnull().any():
-                X[col] = X[col].fillna(X[col].median())
-        
-        target_ratio = y.mean()
-        if target_ratio < MIN_TARGET_RATIO or target_ratio > MAX_TARGET_RATIO:
-            print(f"   ⚠️ Skipped (target ratio: {target_ratio:.2%})")
-            total_skipped += 1
-            continue
-        
-        # Split data
-        train_size = int(len(X) * 0.8)
-        X_train, X_test = X.iloc[:train_size], X.iloc[train_size:]
-        y_train, y_test = y.iloc[:train_size], y.iloc[train_size:]
-        
-        print(f"   Training: {len(X_train)} rows, Test: {len(X_test)} rows")
-        print(f"   Target ratio: {target_ratio:.2%}")
-        
-        # Train
-        trainer = XGBoostTrainer(symbol, params)
-        acc, auc = trainer.train(X_train, y_train, X_test, y_test)
-        
-        print(f"   ✅ Acc: {acc:.2%}, AUC: {auc:.2%}")
-        total_trained += 1
-        
-        # Predict
-        X_full = X.copy()
-        for col in X_full.columns:
-            if X_full[col].isnull().any():
-                X_full[col] = X_full[col].fillna(X_full[col].median())
-        
-        group['confidence_score'] = trainer.model.predict_proba(X_full)[:, 1] * 100
-        group['prediction'] = (group['confidence_score'] > 50).astype(int)
-        
-        results.append(group[['symbol', 'date', 'close', 'confidence_score', 'prediction']])
-        
-        training_stats.append({
-            'symbol': symbol,
-            'samples': len(group),
-            'accuracy': acc,
-            'auc': auc,
-            'mode': mode
-        })
+        if result is not None:
+            results.append(result)
+            trained_count += 1
+        else:
+            skipped_count += 1
     
     # Save results
+    print("\n💾 Step 5: Saving results...")
+    print("="*70)
+    
     if results:
-        final_df = pd.concat(results, ignore_index=True)
-        final_df.to_csv('./csv/xgb_confidence.csv', index=False)
-        print(f"\n✅ Predictions saved: {len(final_df):,} rows")
+        final = pd.concat(results, ignore_index=True)
+        final.to_csv('./csv/xgb_confidence.csv', index=False)
+        print(f"✅ Predictions saved: {len(final):,} rows")
+        save_prediction_log(final)
     
-    if training_stats:
-        stats_df = pd.DataFrame(training_stats)
-        stats_path = os.path.join(MODEL_DIR, f'training_summary_{mode.lower()}.csv')
-        stats_df.to_csv(stats_path, index=False)
-        
-        print(f"\n📊 {mode} MODE SUMMARY:")
-        print(f"   Average Accuracy: {stats_df['accuracy'].mean():.2%}")
-        print(f"   Average AUC: {stats_df['auc'].mean():.2%}")
-        print(f"   Models trained: {total_trained}")
-        print(f"   Symbols skipped: {total_skipped}")
-    
-    # Update last run dates
+    # Update schedule dates
     if daily_needed:
         update_last_run(LAST_DAILY_FILE, datetime.today())
-        print(f"✅ Daily run date updated: {datetime.today().date()}")
-    
     if weekly_needed:
         update_last_run(LAST_WEEKLY_FILE, datetime.today())
-        print(f"✅ Weekly run date updated: {datetime.today().date()}")
-    
     if monthly_needed:
         update_last_run(LAST_MONTHLY_FILE, datetime.today())
-        print(f"✅ Monthly run date updated: {datetime.today().date()}")
     
-    print("\n" + "="*85)
+    # Summary
+    print("\n" + "="*70)
     print(f"✅ {mode} MODE TRAINING COMPLETE!")
+    print(f"📊 Models trained: {trained_count}")
+    print(f"⚠️ Symbols skipped: {skipped_count}")
     print(f"📁 Models saved: {MODEL_DIR}")
-    print("="*85)
+    print("="*70)
 
 if __name__ == "__main__":
     main()
