@@ -1,4 +1,5 @@
-# xgboost_scheduler.py - Complete 3-in-1 System
+# xgboost_scheduler.py - Complete 3-in-1 System with Confirmed Parameters
+
 import os
 import sys
 import pandas as pd
@@ -34,43 +35,11 @@ MIN_TARGET_RATIO = 0.15
 MAX_TARGET_RATIO = 0.85
 
 # =========================
-# MODEL PARAMETERS BY MODE
+# OPTIMIZED MODEL PARAMETERS BY MODE
 # =========================
 
-# Fast Mode (Daily) - 1-2 minutes
-FAST_PARAMS = {
-    'n_estimators': 100,
-    'max_depth': 4,
-    'learning_rate': 0.1,
-    'subsample': 0.8,
-    'colsample_bytree': 0.8,
-    'min_child_weight': 3,
-    'gamma': 0.1,
-    'reg_alpha': 0.1,
-    'reg_lambda': 1,
-    'random_state': 42,
-    'eval_metric': 'logloss',
-    'use_label_encoder': False
-}
-
-# Balanced Mode (Weekly) - 10-15 minutes
-BALANCED_PARAMS = {
-    'n_estimators': 300,
-    'max_depth': 6,
-    'learning_rate': 0.05,
-    'subsample': 0.8,
-    'colsample_bytree': 0.8,
-    'min_child_weight': 3,
-    'gamma': 0.1,
-    'reg_alpha': 0.1,
-    'reg_lambda': 1,
-    'random_state': 42,
-    'eval_metric': 'logloss',
-    'use_label_encoder': False
-}
-
-# Ultimate Mode (Monthly) - 2-4 hours
-ULTIMATE_PARAMS = {
+# Daily Mode (15 minutes) - Best parameters from tuning
+DAILY_PARAMS = {
     'n_estimators': 1000,
     'max_depth': 8,
     'learning_rate': 0.01,
@@ -81,35 +50,80 @@ ULTIMATE_PARAMS = {
     'min_child_weight': 5,
     'gamma': 0.2,
     'reg_alpha': 0.5,
-    'reg_lambda': 2,
+    'reg_lambda': 1.5,
     'max_leaves': 31,
     'random_state': 42,
     'eval_metric': 'logloss',
     'use_label_encoder': False,
     'tree_method': 'hist',
-    'grow_policy': 'lossguide'
+    'max_bin': 256,
+    'verbosity': 0
 }
 
-# Ultimate tuning grid
-ULTIMATE_TUNING_GRID = {
-    'max_depth': [6, 7, 8, 9, 10],
-    'min_child_weight': [3, 5, 7, 10],
-    'gamma': [0, 0.1, 0.2, 0.3, 0.5],
-    'learning_rate': [0.1, 0.05, 0.03, 0.01, 0.005],
-    'n_estimators': [500, 750, 1000, 1500],
-    'reg_alpha': [0, 0.1, 0.5, 1, 2],
-    'reg_lambda': [0.5, 1, 1.5, 2, 3],
-    'subsample': [0.6, 0.7, 0.8, 0.9],
-    'colsample_bytree': [0.6, 0.7, 0.8, 0.9]
+# Weekly Mode - Balanced (30-40 minutes)
+WEEKLY_PARAMS = {
+    'n_estimators': 1500,
+    'max_depth': 9,
+    'learning_rate': 0.007,
+    'subsample': 0.7,
+    'colsample_bytree': 0.7,
+    'colsample_bylevel': 0.7,
+    'colsample_bynode': 0.7,
+    'min_child_weight': 6,
+    'gamma': 0.25,              # ✅ Confirmed
+    'reg_alpha': 0.6,
+    'reg_lambda': 2,
+    'max_leaves': 63,
+    'random_state': 42,
+    'eval_metric': 'logloss',
+    'use_label_encoder': False,
+    'tree_method': 'hist',
+    'max_bin': 256,
+    'verbosity': 0
 }
 
-print("="*80)
+# Monthly Mode - Ultimate Quality (2-4 hours)
+MONTHLY_PARAMS = {
+    'n_estimators': 2000,
+    'max_depth': 10,
+    'learning_rate': 0.005,
+    'subsample': 0.6,
+    'colsample_bytree': 0.6,
+    'colsample_bylevel': 0.6,
+    'colsample_bynode': 0.6,
+    'min_child_weight': 8,
+    'gamma': 0.3,
+    'reg_alpha': 0.8,
+    'reg_lambda': 2.5,
+    'max_leaves': 127,
+    'random_state': 42,
+    'eval_metric': 'logloss',
+    'use_label_encoder': False,
+    'tree_method': 'hist',
+    'max_bin': 512,
+    'verbosity': 0
+}
+
+# Monthly tuning grid for hyperparameter optimization
+MONTHLY_TUNING_GRID = {
+    'max_depth': [8, 9, 10, 11, 12],
+    'min_child_weight': [5, 6, 7, 8, 10],
+    'gamma': [0.2, 0.25, 0.3, 0.35, 0.4],
+    'learning_rate': [0.01, 0.007, 0.005, 0.003],
+    'n_estimators': [1000, 1500, 2000, 2500],
+    'reg_alpha': [0.5, 0.6, 0.7, 0.8, 1.0],
+    'reg_lambda': [1.5, 2.0, 2.5, 3.0],
+    'subsample': [0.6, 0.65, 0.7, 0.75],
+    'colsample_bytree': [0.6, 0.65, 0.7, 0.75]
+}
+
+print("="*85)
 print("🤖 XGBOOST AUTOMATED SCHEDULER - 3 in 1 SYSTEM")
-print("="*80)
-print("📅 Daily   : Fast training (1-2 min)  - Keep models updated")
-print("📆 Weekly  : Balanced training (10-15 min) - Improve accuracy")
-print("📅 Monthly : Ultimate training (2-4 hours) - Best quality")
-print("="*80)
+print("="*85)
+print("📅 DAILY   : 15 minutes | 1000 trees, depth 8, lr=0.01, gamma=0.2")
+print("📆 WEEKLY  : 30-40 minutes | 1500 trees, depth 9, lr=0.007, gamma=0.25 ✅")
+print("📅 MONTHLY : 2-4 hours | 2000 trees, depth 10, lr=0.005, gamma=0.3")
+print("="*85)
 
 # =========================
 # HELPER FUNCTIONS
@@ -219,7 +233,7 @@ def get_features(df):
 
 def hyperparameter_tuning(X_train, y_train):
     """Comprehensive hyperparameter tuning for monthly mode"""
-    print("   🔧 Running hyperparameter tuning...")
+    print("   🔧 Running hyperparameter tuning (30-60 minutes)...")
     
     from sklearn.model_selection import RandomizedSearchCV
     
@@ -232,7 +246,7 @@ def hyperparameter_tuning(X_train, y_train):
     
     random_search = RandomizedSearchCV(
         xgb.XGBClassifier(random_state=42, eval_metric='logloss', use_label_encoder=False),
-        ULTIMATE_TUNING_GRID,
+        MONTHLY_TUNING_GRID,
         n_iter=50,
         cv=5,
         scoring='roc_auc',
@@ -302,30 +316,37 @@ def main():
     # Determine mode
     if monthly_needed:
         mode = "MONTHLY"
-        params = ULTIMATE_PARAMS
+        params = MONTHLY_PARAMS
         tuning_needed = True
         expected_time = "2-4 hours"
     elif weekly_needed:
         mode = "WEEKLY"
-        params = BALANCED_PARAMS
+        params = WEEKLY_PARAMS
         tuning_needed = False
-        expected_time = "10-15 minutes"
+        expected_time = "30-40 minutes"
     elif daily_needed:
         mode = "DAILY"
-        params = FAST_PARAMS
+        params = DAILY_PARAMS
         tuning_needed = False
-        expected_time = "1-2 minutes"
+        expected_time = "15 minutes"
     else:
         print("\n✅ No training needed today!")
         print(f"   Next Daily: {(datetime.today() + timedelta(days=DAILY_INTERVAL)).date()}")
-        print(f"   Next Weekly: {(datetime.today() + timedelta(days=WEEKLY_INTERVAL - (datetime.today() - check_last_run(LAST_WEEKLY_FILE, WEEKLY_INTERVAL)[0]).days)).date() if os.path.exists(LAST_WEEKLY_FILE) else 'First run needed'}")
-        print(f"   Next Monthly: {(datetime.today() + timedelta(days=MONTHLY_INTERVAL - (datetime.today() - check_last_run(LAST_MONTHLY_FILE, MONTHLY_INTERVAL)[0]).days)).date() if os.path.exists(LAST_MONTHLY_FILE) else 'First run needed'}")
+        if os.path.exists(LAST_WEEKLY_FILE):
+            _, _, days_since, _ = check_last_run(LAST_WEEKLY_FILE, WEEKLY_INTERVAL)
+            days_left = WEEKLY_INTERVAL - days_since
+            print(f"   Next Weekly: {(datetime.today() + timedelta(days=days_left)).date()}")
+        if os.path.exists(LAST_MONTHLY_FILE):
+            _, _, days_since, _ = check_last_run(LAST_MONTHLY_FILE, MONTHLY_INTERVAL)
+            days_left = MONTHLY_INTERVAL - days_since
+            print(f"   Next Monthly: {(datetime.today() + timedelta(days=days_left)).date()}")
         return
     
-    print(f"\n{'='*80}")
+    print(f"\n{'='*85}")
     print(f"🎯 RUNNING {mode} MODE")
     print(f"⏱️ Expected time: {expected_time}")
-    print(f"{'='*80}\n")
+    print(f"📊 Parameters: n_estimators={params.get('n_estimators', 'N/A')}, max_depth={params.get('max_depth', 'N/A')}, lr={params.get('learning_rate', 'N/A')}, gamma={params.get('gamma', 'N/A')}")
+    print(f"{'='*85}\n")
     
     # Load data
     print("📂 Loading data...")
@@ -341,9 +362,9 @@ def main():
     # Global tuning for monthly mode
     global_best_params = None
     if tuning_needed:
-        print("\n" + "="*80)
+        print("\n" + "="*85)
         print("🎯 HYPERPARAMETER TUNING (Monthly Mode)")
-        print("="*80)
+        print("="*85)
         
         all_data = df[features].copy()
         all_target = df['target'].copy()
@@ -361,19 +382,21 @@ def main():
                 print(f"   ✅ Updated {key}: {value}")
     
     # Train models
-    print("\n" + "="*80)
+    print("\n" + "="*85)
     print(f"🏆 TRAINING MODELS ({mode} MODE)")
-    print("="*80)
+    print("="*85)
     
     results = []
     training_stats = []
     total_trained = 0
+    total_skipped = 0
     
     for symbol, group in df.groupby('symbol'):
         if len(group) < MIN_SAMPLES_PER_SYMBOL:
+            total_skipped += 1
             continue
         
-        print(f"\n{'─'*50}")
+        print(f"\n{'─'*60}")
         print(f"🔹 {symbol} ({len(group)} rows)")
         
         # Prepare data
@@ -388,6 +411,7 @@ def main():
         target_ratio = y.mean()
         if target_ratio < MIN_TARGET_RATIO or target_ratio > MAX_TARGET_RATIO:
             print(f"   ⚠️ Skipped (target ratio: {target_ratio:.2%})")
+            total_skipped += 1
             continue
         
         # Split data
@@ -439,6 +463,7 @@ def main():
         print(f"   Average Accuracy: {stats_df['accuracy'].mean():.2%}")
         print(f"   Average AUC: {stats_df['auc'].mean():.2%}")
         print(f"   Models trained: {total_trained}")
+        print(f"   Symbols skipped: {total_skipped}")
     
     # Update last run dates
     if daily_needed:
@@ -453,10 +478,10 @@ def main():
         update_last_run(LAST_MONTHLY_FILE, datetime.today())
         print(f"✅ Monthly run date updated: {datetime.today().date()}")
     
-    print("\n" + "="*80)
+    print("\n" + "="*85)
     print(f"✅ {mode} MODE TRAINING COMPLETE!")
     print(f"📁 Models saved: {MODEL_DIR}")
-    print("="*80)
+    print("="*85)
 
 if __name__ == "__main__":
     main()
