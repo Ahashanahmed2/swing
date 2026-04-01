@@ -1,12 +1,11 @@
-# xgboost_retrain.py - ULTIMATE QUALITY VERSION
-# Time: 2-4 hours | Quality: Maximum possible
+# xgboost_retrain.py - Fixed Version
 
 import os
 import sys
 import pandas as pd
 import numpy as np
 import xgboost as xgb
-from sklearn.model_selection import train_test_split, StratifiedShuffleSplit, TimeSeriesSplit
+from sklearn.model_selection import train_test_split, StratifiedShuffleSplit
 from sklearn.metrics import accuracy_score, roc_auc_score, precision_score, recall_score, f1_score
 import joblib
 from datetime import datetime, timedelta
@@ -30,68 +29,61 @@ DAILY_FINETUNE = 1
 WEEKLY_RETRAIN = 7
 MONTHLY_TUNING = 30
 
-# Minimum samples per symbol (increased for better quality)
-MIN_SAMPLES_PER_SYMBOL = 50  # Increased from 30
+# Minimum samples per symbol
+MIN_SAMPLES_PER_SYMBOL = 50
 MIN_TARGET_RATIO = 0.15
 MAX_TARGET_RATIO = 0.85
 
 # =========================
-# ULTIMATE QUALITY MODEL PARAMETERS
+# ULTIMATE QUALITY MODEL PARAMETERS (FIXED)
 # =========================
 ULTIMATE_PARAMS = {
     # Ensemble size
-    'n_estimators': 1000,           # More trees = better learning
-    'max_depth': 8,                  # Deeper trees for complex patterns
-    'learning_rate': 0.01,           # Very slow learning (better convergence)
+    'n_estimators': 1000,
+    'max_depth': 8,
+    'learning_rate': 0.01,
     
-    # Regularization (prevents overfitting)
-    'subsample': 0.7,                # 70% data per tree
-    'colsample_bytree': 0.7,         # 70% features per tree
-    'colsample_bylevel': 0.7,        # 70% features per level
-    'colsample_bynode': 0.7,         # 70% features per node
-    'min_child_weight': 5,           # Minimum child weight (higher = more conservative)
-    'gamma': 0.2,                    # Minimum loss reduction
-    'reg_alpha': 0.5,                # L1 regularization (feature selection)
-    'reg_lambda': 2,                 # L2 regularization (weight decay)
+    # Regularization
+    'subsample': 0.7,
+    'colsample_bytree': 0.7,
+    'colsample_bylevel': 0.7,
+    'colsample_bynode': 0.7,
+    'min_child_weight': 5,
+    'gamma': 0.2,
+    'reg_alpha': 0.5,
+    'reg_lambda': 2,
     
     # Tree constraints
-    'max_leaves': 31,                # Maximum leaves per tree
-    'max_bin': 256,                  # Maximum bins for feature binning
+    'max_leaves': 31,
+    'max_bin': 256,
     
-    # Training control
+    # Training control - FIX: eval_metric goes here, not in fit()
     'random_state': 42,
     'eval_metric': 'logloss',
     'use_label_encoder': False,
     'verbosity': 0,
     
     # Advanced
-    'booster': 'gbtree',             # Tree booster (best for tabular data)
-    'tree_method': 'hist',           # Histogram-based (faster for large data)
-    'grow_policy': 'lossguide',      # Loss-guided growth
-    'max_delta_step': 1,             # Maximum delta step (helps with imbalanced data)
+    'booster': 'gbtree',
+    'tree_method': 'hist',
+    'grow_policy': 'lossguide',
+    'max_delta_step': 1,
 }
 
 # =========================
-# COMPREHENSIVE HYPERPARAMETER TUNING GRID
+# HYPERPARAMETER TUNING GRID
 # =========================
 ULTIMATE_TUNING_GRID = {
-    # Tree structure
     'max_depth': [6, 7, 8, 9, 10],
     'min_child_weight': [3, 5, 7, 10],
     'gamma': [0, 0.1, 0.2, 0.3, 0.5],
-    
-    # Learning parameters
     'learning_rate': [0.1, 0.05, 0.03, 0.01, 0.005],
     'n_estimators': [500, 750, 1000, 1500],
-    
-    # Regularization
     'reg_alpha': [0, 0.1, 0.5, 1, 2],
     'reg_lambda': [0.5, 1, 1.5, 2, 3],
     'subsample': [0.6, 0.7, 0.8, 0.9],
     'colsample_bytree': [0.6, 0.7, 0.8, 0.9],
-    
-    # Advanced
-    'max_leaves': [0, 31, 63, 127],  # 0 = unlimited
+    'max_leaves': [0, 31, 63, 127],
     'max_delta_step': [0, 1, 2, 5],
 }
 
@@ -104,7 +96,7 @@ print(f"🎯 Models: {MIN_SAMPLES_PER_SYMBOL}+ samples per symbol")
 print("="*90)
 
 # =========================
-# ADVANCED HELPER FUNCTIONS
+# HELPER FUNCTIONS
 # =========================
 
 def fix_bom_columns(df):
@@ -152,7 +144,7 @@ def engineer_features(df):
     """Add comprehensive engineered features"""
     print("   🔧 Adding comprehensive engineered features...")
     
-    # Price changes (multiple timeframes)
+    # Price changes
     for period in [1, 3, 5, 10, 20]:
         df[f'return_{period}d'] = df.groupby('symbol')['close'].pct_change(period)
     
@@ -162,7 +154,7 @@ def engineer_features(df):
         df[f'std_{period}'] = df.groupby('symbol')['close'].transform(lambda x: x.rolling(period).std())
         df[f'close_sma_ratio_{period}'] = df['close'] / df[f'sma_{period}']
     
-    # Volatility (multiple windows)
+    # Volatility
     df['volatility'] = (df['high'] - df['low']) / df['close']
     for period in [5, 10, 20]:
         df[f'volatility_{period}d'] = df.groupby('symbol')['volatility'].transform(lambda x: x.rolling(period).mean())
@@ -172,9 +164,8 @@ def engineer_features(df):
     df['volume_ma_50'] = df.groupby('symbol')['volume'].transform(lambda x: x.rolling(50).mean())
     df['volume_ratio'] = df['volume'] / df['volume_ma_20']
     df['volume_ratio_ma'] = df.groupby('symbol')['volume_ratio'].transform(lambda x: x.rolling(10).mean())
-    df['volume_trend'] = df.groupby('symbol')['volume_ratio'].transform(lambda x: x.rolling(5).apply(lambda y: 1 if y.iloc[-1] > y.iloc[0] else 0))
     
-    # Support/Resistance (multiple windows)
+    # Support/Resistance
     for period in [20, 50, 100]:
         df[f'resistance_{period}d'] = df.groupby('symbol')['high'].transform(lambda x: x.rolling(period).max())
         df[f'support_{period}d'] = df.groupby('symbol')['low'].transform(lambda x: x.rolling(period).min())
@@ -196,9 +187,6 @@ def engineer_features(df):
         df['rsi_overbought'] = (df['rsi'] > 70).astype(int)
         df['rsi_cross_above_30'] = ((df['rsi'] >= 30) & (df['rsi'].shift(1) < 30)).astype(int)
         df['rsi_cross_below_70'] = ((df['rsi'] <= 70) & (df['rsi'].shift(1) > 70)).astype(int)
-        df['rsi_mid'] = ((df['rsi'] > 40) & (df['rsi'] < 60)).astype(int)
-        
-        # RSI Divergence
         df['rsi_bullish_divergence'] = ((df['low'] <= df['low'].shift(1)) & 
                                          (df['rsi'] > df['rsi'].shift(1))).astype(int)
         df['rsi_bearish_divergence'] = ((df['high'] >= df['high'].shift(1)) & 
@@ -207,9 +195,8 @@ def engineer_features(df):
     # ATR features
     if 'atr' in df.columns:
         df['atr_ratio'] = df['atr'] / df['close'] * 100
-        df['atr_percentile'] = df.groupby('symbol')['atr_ratio'].transform(lambda x: x.rolling(50).rank(pct=True))
     
-    # Target (next 5 days return)
+    # Target
     df['future_return'] = df.groupby('symbol')['close'].transform(lambda x: x.shift(-5) / x - 1)
     df['target'] = (df['future_return'] > 0.02).astype(int)
     
@@ -223,55 +210,34 @@ def engineer_features(df):
 def get_features(df):
     """Get comprehensive list of features"""
     feature_cols = [
-        # Price features
-        'open', 'high', 'low', 'close',
-        'volume', 'value', 'trades', 'change', 'marketCap',
-        
-        # Technical indicators
-        'bb_upper', 'bb_middle', 'bb_lower',
-        'macd', 'macd_signal', 'macd_hist',
+        'open', 'high', 'low', 'volume', 'value', 'trades', 'change', 'marketCap',
+        'bb_upper', 'bb_middle', 'bb_lower', 'macd', 'macd_signal', 'macd_hist',
         'rsi', 'atr', 'zigzag', 'ema_200',
-        
-        # Returns (multiple timeframes)
         'return_1d', 'return_3d', 'return_5d', 'return_10d', 'return_20d',
-        
-        # Moving averages
         'sma_5', 'sma_10', 'sma_20', 'sma_50',
         'close_sma_ratio_5', 'close_sma_ratio_10', 'close_sma_ratio_20', 'close_sma_ratio_50',
         'std_5', 'std_10', 'std_20', 'std_50',
-        
-        # Volatility
         'volatility', 'volatility_5d', 'volatility_10d', 'volatility_20d',
-        
-        # Volume
-        'volume_ratio', 'volume_ratio_ma', 'volume_trend',
-        
-        # Support/Resistance
+        'volume_ratio', 'volume_ratio_ma',
         'dist_to_resistance_20', 'dist_to_support_20',
         'dist_to_resistance_50', 'dist_to_support_50',
         'dist_to_resistance_100', 'dist_to_support_100',
-        
-        # MACD signals
         'macd_cross_up', 'macd_cross_down', 'macd_histogram_trend',
-        
-        # RSI signals
         'rsi_oversold', 'rsi_overbought', 'rsi_cross_above_30', 'rsi_cross_below_70',
-        'rsi_mid', 'rsi_bullish_divergence', 'rsi_bearish_divergence',
-        
-        # ATR
-        'atr_ratio', 'atr_percentile'
+        'rsi_bullish_divergence', 'rsi_bearish_divergence',
+        'atr_ratio'
     ]
     
     return [f for f in feature_cols if f in df.columns]
 
 def comprehensive_hyperparameter_tuning(X_train, y_train):
-    """Comprehensive hyperparameter tuning with cross-validation"""
+    """Comprehensive hyperparameter tuning"""
     print("   🔧 Running comprehensive hyperparameter tuning...")
     print("   📊 Testing 100+ parameter combinations...")
     
     from sklearn.model_selection import RandomizedSearchCV
     
-    # Use larger sample for better tuning
+    # Use 10000 samples
     if len(X_train) > 10000:
         X_sample = X_train.sample(n=10000, random_state=42)
         y_sample = y_train.loc[X_sample.index]
@@ -280,12 +246,12 @@ def comprehensive_hyperparameter_tuning(X_train, y_train):
         X_sample = X_train
         y_sample = y_train
     
-    # Randomized search for faster exploration
+    # Randomized search
     random_search = RandomizedSearchCV(
         xgb.XGBClassifier(random_state=42, eval_metric='logloss', use_label_encoder=False),
         ULTIMATE_TUNING_GRID,
-        n_iter=50,  # Test 50 combinations
-        cv=5,       # 5-fold cross-validation
+        n_iter=50,
+        cv=5,
         scoring='roc_auc',
         n_jobs=-1,
         verbose=0,
@@ -297,40 +263,6 @@ def comprehensive_hyperparameter_tuning(X_train, y_train):
     print(f"   ✅ Best params: {random_search.best_params_}")
     print(f"   📊 Best CV score: {random_search.best_score_:.4f}")
     
-    # Optional: Grid search on best parameters for fine-tuning
-    if random_search.best_score_ > 0.85:
-        print("   🔧 Fine-tuning with grid search on best parameters...")
-        
-        # Refine grid around best parameters
-        best = random_search.best_params_
-        refine_grid = {}
-        
-        for key, value in best.items():
-            if key == 'max_depth':
-                refine_grid[key] = [max(3, value-1), value, min(10, value+1)]
-            elif key == 'learning_rate':
-                refine_grid[key] = [value * 0.5, value, value * 1.5]
-            elif key == 'n_estimators':
-                refine_grid[key] = [int(value * 0.7), value, int(value * 1.3)]
-            elif key in ['reg_alpha', 'reg_lambda', 'gamma', 'min_child_weight']:
-                refine_grid[key] = [value * 0.5, value, value * 1.5]
-        
-        grid_search = GridSearchCV(
-            xgb.XGBClassifier(random_state=42, eval_metric='logloss', use_label_encoder=False),
-            refine_grid,
-            cv=3,
-            scoring='roc_auc',
-            n_jobs=-1,
-            verbose=0
-        )
-        
-        grid_search.fit(X_sample, y_sample)
-        
-        if grid_search.best_score_ > random_search.best_score_:
-            print(f"   ✅ Improved! New best: {grid_search.best_params_}")
-            print(f"   📊 New best score: {grid_search.best_score_:.4f}")
-            return grid_search.best_params_
-    
     return random_search.best_params_
 
 # =========================
@@ -338,7 +270,7 @@ def comprehensive_hyperparameter_tuning(X_train, y_train):
 # =========================
 
 class UltimateXGBoost:
-    """Ultimate quality XGBoost with comprehensive training"""
+    """Ultimate quality XGBoost"""
     
     def __init__(self, symbol, base_params):
         self.symbol = symbol
@@ -349,57 +281,31 @@ class UltimateXGBoost:
         self.cv_scores = []
         
     def load_model(self):
-        """Load existing model if exists"""
         if os.path.exists(self.model_path):
             self.model = joblib.load(self.model_path)
             return True
         return False
     
     def save_model(self):
-        """Save model to disk"""
         joblib.dump(self.model, self.model_path)
         
-    def train_with_cv(self, X_train, y_train, X_val=None, y_val=None):
-        """Train with cross-validation for ultimate quality"""
-        print(f"   🏆 Training with 5-fold cross-validation...")
-        
-        from sklearn.model_selection import cross_val_score
-        
-        # Train main model
-        self.model = xgb.XGBClassifier(**self.base_params)
-        
-        # Cross-validation scores
-        cv_scores = cross_val_score(self.model, X_train, y_train, cv=5, scoring='roc_auc')
-        self.cv_scores = cv_scores
-        print(f"   📊 CV Scores: {cv_scores}")
-        print(f"   📊 Mean CV: {cv_scores.mean():.4f} (+/- {cv_scores.std():.4f})")
-        
-        # Train on full data
-        self.model.fit(X_train, y_train)
-        
-        if X_val is not None:
-            self._evaluate(X_val, y_val)
-        
-        self.save_model()
-        
     def train_ultimate(self, X_train, y_train, X_val=None, y_val=None):
-        """Ultimate training with early stopping and evaluation"""
+        """Ultimate quality training"""
         print(f"   🏆 Ultimate quality training...")
         
-        # Prepare evaluation set
-        eval_set = [(X_train, y_train)]
-        if X_val is not None:
-            eval_set.append((X_val, y_val))
-        
-        # Train with early stopping
+        # Create model with parameters (eval_metric already in constructor)
         self.model = xgb.XGBClassifier(**self.base_params)
-        self.model.fit(
-            X_train, y_train,
-            eval_set=eval_set,
-            eval_metric='logloss',
-            early_stopping_rounds=50,
-            verbose=False
-        )
+        
+        # Train (no eval_metric in fit)
+        if X_val is not None:
+            eval_set = [(X_val, y_val)]
+            self.model.fit(
+                X_train, y_train,
+                eval_set=eval_set,
+                verbose=False
+            )
+        else:
+            self.model.fit(X_train, y_train)
         
         if X_val is not None:
             self._evaluate(X_val, y_val)
@@ -427,7 +333,6 @@ class UltimateXGBoost:
         })
         
         print(f"   ✅ Acc: {acc:.2%}, AUC: {auc:.2%}, F1: {f1:.2%}")
-        print(f"   📊 Precision: {precision:.2%}, Recall: {recall:.2%}")
         
         return acc, auc, f1
 
@@ -490,10 +395,6 @@ def main():
     print("\n" + "="*90)
     print("🏆 TRAINING ULTIMATE QUALITY MODELS")
     print("="*90)
-    print(f"⏱️ Training {len([s for s in df.groupby('symbol') if len(s[1]) >= MIN_SAMPLES_PER_SYMBOL])} symbols")
-    print("   Each symbol: 2-5 minutes")
-    print("   Total time: 2-4 hours")
-    print("="*90)
     
     results = []
     training_stats = []
@@ -520,7 +421,7 @@ def main():
             print(f"   ⚠️ Skipped (target ratio: {target_ratio:.2%})")
             continue
         
-        # Time-series split (no future leakage)
+        # Time-series split
         train_size = int(len(X) * 0.8)
         X_train, X_test = X.iloc[:train_size], X.iloc[train_size:]
         y_train, y_test = y.iloc[:train_size], y.iloc[train_size:]
@@ -532,11 +433,7 @@ def main():
         ultimate_model = UltimateXGBoost(symbol, ULTIMATE_PARAMS)
         
         # Train
-        if tuning_needed and global_best_params:
-            ultimate_model.train_ultimate(X_train, y_train, X_test, y_test)
-        else:
-            ultimate_model.train_with_cv(X_train, y_train, X_test, y_test)
-        
+        ultimate_model.train_ultimate(X_train, y_train, X_test, y_test)
         total_trained += 1
         
         # Predict
@@ -562,8 +459,7 @@ def main():
             'samples': len(group),
             'accuracy': last_metrics.get('accuracy', 0),
             'auc': last_metrics.get('auc', 0),
-            'f1': last_metrics.get('f1', 0),
-            'cv_mean': ultimate_model.cv_scores.mean() if ultimate_model.cv_scores else 0
+            'f1': last_metrics.get('f1', 0)
         })
     
     # Save results
@@ -579,8 +475,7 @@ def main():
         print(f"\n📊 ULTIMATE QUALITY SUMMARY:")
         print(f"   Average Accuracy: {stats_df['accuracy'].mean():.2%}")
         print(f"   Average AUC: {stats_df['auc'].mean():.2%}")
-        print(f"   Average F1 Score: {stats_df['f1'].mean():.2%}")
-        print(f"   Best Symbol: {stats_df.loc[stats_df['accuracy'].idxmax(), 'symbol']} ({stats_df['accuracy'].max():.2%})")
+        print(f"   Average F1: {stats_df['f1'].mean():.2%}")
     
     # Update dates
     if finetune_needed:
