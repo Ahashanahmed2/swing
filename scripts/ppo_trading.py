@@ -1,10 +1,10 @@
-# ppo_train.py - Complete PPO Training with Retrain, Fine-tune & Self-Learning
+# ppo_train.py - Complete Hybrid PPO Training System
 # Features:
-# 1. First-time training
-# 2. Monthly retrain/fine-tune
+# 1. Per-symbol PPO for top GOOD XGBoost models (AUC >= 0.70)
+# 2. Shared PPO for all other symbols (fallback)
 # 3. Self-learning from past mistakes
-# 4. Curriculum learning (start with 1 symbol, expand gradually)
-# 5. Performance tracking and improvement
+# 4. Monthly fine-tuning with curriculum learning
+# 5. XGBoost signal integration
 
 import os
 import sys
@@ -12,10 +12,11 @@ import pandas as pd
 import numpy as np
 import joblib
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
 
+# Stable-Baselines3 imports
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.callbacks import BaseCallback, EvalCallback
@@ -27,13 +28,16 @@ from stable_baselines3.common.callbacks import BaseCallback, EvalCallback
 BASE_DIR = Path(__file__).resolve().parent.parent
 CSV_MARKET = BASE_DIR / "csv" / "mongodb.csv"
 CSV_SIGNAL = BASE_DIR / "csv" / "trade_stock.csv"
-MODEL_DIR = BASE_DIR / "csv" / "model"
-PPO_MODEL_PATH = MODEL_DIR / "sb3_ppo_trading"
-PPO_METADATA_PATH = BASE_DIR / "csv" / "ppo_metadata.csv"
+XGB_MODEL_DIR = BASE_DIR / "csv" / "xgboost"
+PPO_MODEL_DIR = BASE_DIR / "csv" / "ppo_models"
+PPO_SHARED_PATH = PPO_MODEL_DIR / "ppo_shared"
+PPO_SYMBOL_DIR = PPO_MODEL_DIR / "per_symbol"
+MODEL_METADATA = BASE_DIR / "csv" / "model_metadata.csv"
 PREDICTION_LOG = BASE_DIR / "csv" / "prediction_log.csv"
 LAST_PPO_TRAIN = BASE_DIR / "csv" / "last_ppo_train.txt"
 
-os.makedirs(MODEL_DIR, exist_ok=True)
+os.makedirs(PPO_MODEL_DIR, exist_ok=True)
+os.makedirs(PPO_SYMBOL_DIR, exist_ok=True)
 
 # =========================================================
 # CONFIGURATION
@@ -43,6 +47,10 @@ WINDOW = 10
 TOTAL_CAPITAL = 500_000
 RISK_PERCENT = 0.01
 PPO_RETRAIN_INTERVAL = 30  # Days between retrains
+
+# PPO thresholds
+XGB_AUC_THRESHOLD_FOR_PPO = 0.70  # Only symbols with AUC >= 70% get per-symbol PPO
+MAX_PER_SYMBOL_MODELS = 30  # Limit to top 30 symbols (to save storage/time)
 
 # Market columns for features
 MARKET_COLS = [
@@ -57,7 +65,7 @@ MARKET_COLS = [
 
 STATE_DIM = len(MARKET_COLS) * WINDOW + 4
 
-# PPO Parameters
+# Base PPO Configuration
 PPO_CONFIG = {
     'n_steps': 1024,
     'batch_size': 256,
@@ -69,12 +77,27 @@ PPO_CONFIG = {
     'max_grad_norm': 0.5,
 }
 
-# Training stages
-STAGES = [
-    {'symbols': 1, 'timesteps': 50000, 'name': 'Stage 1: Single Symbol'},
-    {'symbols': 5, 'timesteps': 100000, 'name': 'Stage 2: Multiple Symbols'},
-    {'symbols': 10, 'timesteps': 150000, 'name': 'Stage 3: All Symbols'},
-]
+# Per-symbol PPO config (customized by XGBoost quality)
+PPO_PER_SYMBOL_CONFIG = {
+    'high_quality': {  # AUC >= 0.85
+        'n_steps': 2048,
+        'batch_size': 512,
+        'learning_rate': 2e-4,
+        'timesteps': 50000,
+    },
+    'good_quality': {  # AUC 0.70 - 0.85
+        'n_steps': 1024,
+        'batch_size': 256,
+        'learning_rate': 1e-4,
+        'timesteps': 30000,
+    },
+    'fallback': {  # AUC < 0.70 or shared
+        'n_steps': 1024,
+        'batch_size': 256,
+        'learning_rate': 1e-4,
+        'timesteps': 20000,
+    }
+}
 
 # =========================================================
 # SELF-LEARNING CALLBACK
@@ -85,13 +108,15 @@ class SelfLearningCallback(BaseCallback):
     Callback that learns from past mistakes during training
     """
     
-    def __init__(self, symbol_dfs, signals, build_observation, window, state_dim, verbose=0):
+    def __init__(self, symbol_dfs, signals, build_observation, window, state_dim, 
+                 symbol_name="shared", verbose=0):
         super().__init__(verbose)
         self.symbol_dfs = symbol_dfs
         self.signals = signals
         self.build_observation = build_observation
         self.window = window
         self.state_dim = state_dim
+        self.symbol_name = symbol_name
         self.mistakes = []
         self.successful_trades = []
         self.episode_rewards = []
@@ -112,26 +137,25 @@ class SelfLearningCallback(BaseCallback):
                     self.successful_trades.append(trade)
                 else:
                     self.mistakes.append(trade)
-                    print(f"   📝 Mistake recorded: {trade['symbol']} - PnL: {trade['pnl']:.2%}")
+                    if self.verbose > 0:
+                        print(f"   📝 [{self.symbol_name}] Mistake: {trade['symbol']} - PnL: {trade['pnl']:.2%}")
         
         return True
     
     def _on_episode_end(self):
-        # Store episode reward
         self.episode_rewards.append(self.current_episode_reward)
         self.current_episode_reward = 0
         
-        # Update logger
         if len(self.episode_rewards) > 0:
             avg_reward = np.mean(self.episode_rewards[-100:])
-            self.logger.record('custom/avg_reward', avg_reward)
+            self.logger.record(f'custom/{self.symbol_name}_avg_reward', avg_reward)
         
     def get_learning_stats(self):
-        """Get learning statistics"""
         total_trades = len(self.mistakes) + len(self.successful_trades)
         success_rate = len(self.successful_trades) / total_trades if total_trades > 0 else 0
         
         return {
+            'symbol': self.symbol_name,
             'mistakes': len(self.mistakes),
             'successful_trades': len(self.successful_trades),
             'total_trades': total_trades,
@@ -140,16 +164,17 @@ class SelfLearningCallback(BaseCallback):
         }
 
 # =========================================================
-# ENVIRONMENT (from your existing env_trading.py)
+# TRADING ENVIRONMENT
 # =========================================================
 
 class MultiSymbolTradingEnv:
     """
     Multi-Symbol Trading Environment for PPO
+    Supports both shared and per-symbol training
     """
     
     def __init__(self, symbol_dfs, signals, build_observation, window, state_dim,
-                 total_capital=500_000, risk_percent=0.01):
+                 total_capital=500_000, risk_percent=0.01, symbol_name="shared"):
         
         self.symbol_dfs = symbol_dfs
         self.signals = signals
@@ -158,6 +183,7 @@ class MultiSymbolTradingEnv:
         self.state_dim = state_dim
         self.total_capital = total_capital
         self.risk_percent = risk_percent
+        self.symbol_name = symbol_name
         
         self.symbols = list(symbol_dfs.keys())
         self.current_symbol_idx = 0
@@ -166,8 +192,7 @@ class MultiSymbolTradingEnv:
     def reset(self):
         """Reset environment"""
         self.current_symbol_idx = 0
-        self.current_symbol = self.symbols[self.current_symbol_idx]
-        self.current_df = self.symbol_dfs[self.current_symbol]
+        self._load_current_symbol()
         
         self.current_step = self.window
         self.capital = self.total_capital
@@ -178,9 +203,18 @@ class MultiSymbolTradingEnv:
         
         return self._get_obs()
     
+    def _load_current_symbol(self):
+        """Load current symbol data"""
+        if self.current_symbol_idx < len(self.symbols):
+            self.current_symbol = self.symbols[self.current_symbol_idx]
+            self.current_df = self.symbol_dfs[self.current_symbol]
+        else:
+            self.current_symbol = None
+            self.current_df = None
+    
     def _get_obs(self):
         """Get current observation"""
-        if self.current_step >= len(self.current_df):
+        if self.current_symbol is None or self.current_step >= len(self.current_df):
             return np.zeros(self.state_dim, dtype=np.float32)
         
         obs = self.build_observation(
@@ -192,8 +226,11 @@ class MultiSymbolTradingEnv:
     
     def step(self, action):
         """Execute action"""
-        if self.current_step >= len(self.current_df) - 1:
+        if self.current_symbol is None:
             return self._get_obs(), 0, True, False, {}
+        
+        if self.current_step >= len(self.current_df) - 1:
+            return self._move_to_next_symbol()
         
         row = self.current_df.iloc[self.current_step]
         next_row = self.current_df.iloc[self.current_step + 1]
@@ -213,21 +250,21 @@ class MultiSymbolTradingEnv:
         if action == 1:  # BUY
             if self.position == 0 and buy_price:
                 risk_amount = self.capital * self.risk_percent
-                shares = risk_amount / (price * 0.03)  # 3% stop loss assumption
+                shares = risk_amount / (price * 0.03)
                 shares = min(shares, self.capital / price)
                 
                 self.position = shares
                 self.entry_price = price
                 self.capital -= shares * price
-                reward -= 0.001  # Trading fee
+                reward -= 0.001
                 
-                # Bonus for buying at good price
+                # Bonus for good entry
                 if price <= buy_price * 1.02:
                     reward += 0.02
         
         elif action == 2:  # SELL
             if self.position > 0:
-                sell_amount = self.position * price * 0.999  # with fee
+                sell_amount = self.position * price * 0.999
                 pnl = (price - self.entry_price) / self.entry_price
                 reward = pnl * 10
                 
@@ -254,23 +291,40 @@ class MultiSymbolTradingEnv:
         self.current_step += 1
         self.total_reward += reward
         
-        # Check if we need to switch symbol
+        # Check if we need to move to next symbol
         if self.current_step >= len(self.current_df) - 1:
-            self.current_symbol_idx += 1
-            
-            if self.current_symbol_idx >= len(self.symbols):
-                terminated = True
-            else:
-                self.current_symbol = self.symbols[self.current_symbol_idx]
-                self.current_df = self.symbol_dfs[self.current_symbol]
-                self.current_step = self.window
+            return self._move_to_next_symbol()
         
-        return self._get_obs(), reward, terminated, False, {
+        return self._get_obs(), reward, False, False, {
             'balance': self.capital,
             'symbol': self.current_symbol,
             'trade_result': trade_result,
             'total_return': (self.capital / self.total_capital - 1) * 100
         }
+    
+    def _move_to_next_symbol(self):
+        """Move to next symbol in the list"""
+        self.current_symbol_idx += 1
+        
+        if self.current_symbol_idx >= len(self.symbols):
+            # End of episode
+            return self._get_obs(), 0, True, False, {
+                'balance': self.capital,
+                'symbol': 'END',
+                'total_return': (self.capital / self.total_capital - 1) * 100
+            }
+        else:
+            # Load next symbol
+            self._load_current_symbol()
+            self.current_step = self.window
+            self.position = 0
+            self.entry_price = 0
+            
+            return self._get_obs(), 0, False, False, {
+                'balance': self.capital,
+                'symbol': self.current_symbol,
+                'total_return': (self.capital / self.total_capital - 1) * 100
+            }
 
 # =========================================================
 # UTILITY FUNCTIONS
@@ -296,18 +350,19 @@ def update_last_ppo_train():
     with open(LAST_PPO_TRAIN, 'w') as f:
         f.write(datetime.now().strftime('%Y-%m-%d'))
 
-def load_ppo_metadata():
-    """Load PPO training metadata"""
-    if os.path.exists(PPO_METADATA_PATH):
-        df = pd.read_csv(PPO_METADATA_PATH)
-        df['last_trained'] = pd.to_datetime(df['last_trained'])
-        return df
-    return pd.DataFrame(columns=['train_date', 'symbols_count', 'success_rate', 
-                                  'total_trades', 'profitable_trades', 'total_return'])
-
-def save_ppo_metadata(df):
-    """Save PPO training metadata"""
-    df.to_csv(PPO_METADATA_PATH, index=False)
+def load_xgb_metadata():
+    """Load XGBoost model metadata and get top GOOD symbols"""
+    if not os.path.exists(MODEL_METADATA):
+        print("   ⚠️ No XGBoost metadata found")
+        return pd.DataFrame()
+    
+    df = pd.read_csv(MODEL_METADATA)
+    
+    # Filter GOOD models and sort by AUC
+    good_models = df[df['status'] == 'GOOD'].copy()
+    good_models = good_models.sort_values('auc', ascending=False)
+    
+    return good_models
 
 def load_past_mistakes():
     """Load past mistakes from prediction log for self-learning"""
@@ -332,6 +387,10 @@ def load_past_mistakes():
 
 def load_signals(path):
     """Load trading signals from CSV"""
+    if not os.path.exists(path):
+        print(f"   ⚠️ Signal file not found: {path}")
+        return {}
+    
     df = pd.read_csv(path, parse_dates=["date"])
     df["date"] = df["date"].dt.strftime("%Y-%m-%d")
     
@@ -346,7 +405,7 @@ def load_signals(path):
     return signals
 
 def build_observation(df, idx, signals):
-    """Build observation vector"""
+    """Build observation vector with market data and signal info"""
     pad = max(0, WINDOW - (idx + 1))
     start = max(0, idx - WINDOW + 1)
     
@@ -372,121 +431,34 @@ def build_observation(df, idx, signals):
     return np.nan_to_num(obs)
 
 # =========================================================
-# PPO TRAINING (First-time)
+# PER-SYMBOL PPO TRAINING
 # =========================================================
 
-def train_ppo_first_time():
-    """First-time PPO training with curriculum learning"""
-    print("\n" + "="*70)
-    print("🎯 PPO FIRST-TIME TRAINING")
-    print("="*70)
+def train_per_symbol_ppo(symbol, symbol_data, signals, xgb_auc, is_retrain=False):
+    """Train PPO for a single symbol"""
     
-    # Load data
-    df = pd.read_csv(CSV_MARKET, parse_dates=["date"])
-    df["date"] = df["date"].dt.strftime("%Y-%m-%d")
-    signals = load_signals(CSV_SIGNAL)
+    print(f"\n{'─'*50}")
+    print(f"🎯 Training Per-Symbol PPO: {symbol} (XGBoost AUC: {xgb_auc:.2%})")
+    print(f"{'─'*50}")
     
-    # Create symbol dataframes
-    symbol_dfs = {
-        s: sdf.reset_index(drop=True)
-        for s, sdf in df.groupby("symbol")
-        if len(sdf) >= WINDOW
-    }
+    # Select config based on XGBoost quality
+    if xgb_auc >= 0.85:
+        config = PPO_PER_SYMBOL_CONFIG['high_quality']
+        quality = "HIGH"
+    elif xgb_auc >= 0.70:
+        config = PPO_PER_SYMBOL_CONFIG['good_quality']
+        quality = "GOOD"
+    else:
+        config = PPO_PER_SYMBOL_CONFIG['fallback']
+        quality = "FALLBACK"
     
-    print(f"📊 Total symbols available: {len(symbol_dfs)}")
+    print(f"   Quality: {quality}")
+    print(f"   Timesteps: {config['timesteps']:,}")
+    print(f"   Learning Rate: {config['learning_rate']}")
     
-    trained_model = None
-    total_timesteps = 0
+    # Create single-symbol environment
+    symbol_dfs = {symbol: symbol_data}
     
-    for stage in STAGES:
-        print(f"\n📈 {stage['name']}")
-        print(f"   Symbols: {stage['symbols']}")
-        print(f"   Timesteps: {stage['timesteps']:,}")
-        
-        # Select symbols for this stage
-        stage_symbols = list(symbol_dfs.keys())[:stage['symbols']]
-        stage_dfs = {s: symbol_dfs[s] for s in stage_symbols}
-        
-        # Create environment
-        env = MultiSymbolTradingEnv(
-            stage_dfs,
-            signals,
-            build_observation,
-            WINDOW,
-            STATE_DIM,
-            total_capital=TOTAL_CAPITAL,
-            risk_percent=RISK_PERCENT,
-        )
-        env = DummyVecEnv([lambda: env])
-        
-        # Create callback
-        callback = SelfLearningCallback(
-            stage_dfs, signals, build_observation, WINDOW, STATE_DIM
-        )
-        
-        # Create or load model
-        if trained_model is None:
-            model = PPO("MlpPolicy", env, **PPO_CONFIG, verbose=1)
-        else:
-            model = trained_model
-            model.set_env(env)
-        
-        # Train
-        model.learn(total_timesteps=stage['timesteps'], callback=callback)
-        trained_model = model
-        total_timesteps += stage['timesteps']
-        
-        # Show stage stats
-        stats = callback.get_learning_stats()
-        print(f"\n   📊 Stage {stage['name']} Complete:")
-        print(f"      Success Rate: {stats['success_rate']:.2%}")
-        print(f"      Total Trades: {stats['total_trades']}")
-        print(f"      Avg Reward: {stats['avg_reward']:.2f}")
-    
-    # Save final model
-    trained_model.save(PPO_MODEL_PATH)
-    print(f"\n✅ Model saved: {PPO_MODEL_PATH}")
-    print(f"   Total timesteps: {total_timesteps:,}")
-    
-    return trained_model
-
-# =========================================================
-# PPO RETRAIN (Monthly Fine-tuning)
-# =========================================================
-
-def retrain_ppo_with_self_learning():
-    """Monthly retrain/fine-tune with self-learning from mistakes"""
-    print("\n" + "="*70)
-    print("🔄 PPO MONTHLY RETRAIN - Self-Learning")
-    print("="*70)
-    
-    # Load data
-    df = pd.read_csv(CSV_MARKET, parse_dates=["date"])
-    df["date"] = df["date"].dt.strftime("%Y-%m-%d")
-    signals = load_signals(CSV_SIGNAL)
-    
-    # Load past mistakes
-    past_mistakes = load_past_mistakes()
-    print(f"📚 Loaded {len(past_mistakes)} past mistakes for self-learning")
-    
-    # Create symbol dataframes (all symbols)
-    symbol_dfs = {
-        s: sdf.reset_index(drop=True)
-        for s, sdf in df.groupby("symbol")
-        if len(sdf) >= WINDOW
-    }
-    
-    print(f"📊 Total symbols: {len(symbol_dfs)}")
-    
-    # Load existing model
-    if not os.path.exists(f"{PPO_MODEL_PATH}.zip"):
-        print("⚠️ No existing model found. Running first-time training...")
-        return train_ppo_first_time()
-    
-    model = PPO.load(PPO_MODEL_PATH, device="cpu")
-    print(f"✅ Loaded existing model")
-    
-    # Create environment with all symbols
     env = MultiSymbolTradingEnv(
         symbol_dfs,
         signals,
@@ -495,178 +467,366 @@ def retrain_ppo_with_self_learning():
         STATE_DIM,
         total_capital=TOTAL_CAPITAL,
         risk_percent=RISK_PERCENT,
+        symbol_name=symbol
     )
     env = DummyVecEnv([lambda: env])
-    model.set_env(env)
+    
+    # Check if model exists (for retrain)
+    model_path = PPO_SYMBOL_DIR / f"ppo_{symbol}"
+    
+    if is_retrain and os.path.exists(f"{model_path}.zip"):
+        print(f"   🔄 Loading existing model for fine-tuning...")
+        model = PPO.load(model_path, env=env, device="cpu")
+        
+        # Update learning rate for fine-tuning
+        model.learning_rate = config['learning_rate'] * 0.5
+    else:
+        print(f"   🆕 Creating new model...")
+        ppo_config = PPO_CONFIG.copy()
+        ppo_config.update({
+            'n_steps': config['n_steps'],
+            'batch_size': config['batch_size'],
+            'learning_rate': config['learning_rate'],
+        })
+        model = PPO("MlpPolicy", env, **ppo_config, verbose=0)
     
     # Self-learning callback
     callback = SelfLearningCallback(
-        symbol_dfs, signals, build_observation, WINDOW, STATE_DIM
+        symbol_dfs, signals, build_observation, WINDOW, STATE_DIM,
+        symbol_name=symbol, verbose=1
     )
     
-    # Fine-tune with lower learning rate
-    fine_tune_timesteps = 50000
-    print(f"🔄 Fine-tuning for {fine_tune_timesteps:,} timesteps...")
-    
+    # Train
+    print(f"   🚀 Training...")
     model.learn(
-        total_timesteps=fine_tune_timesteps,
-        callback=callback,
-        reset_num_timesteps=False
+        total_timesteps=config['timesteps'],
+        callback=callback
     )
     
-    # Get learning stats
+    # Save model
+    model.save(model_path)
+    print(f"   ✅ Model saved: {model_path}")
+    
+    # Get stats
     stats = callback.get_learning_stats()
+    print(f"   📊 Success Rate: {stats['success_rate']:.2%} ({stats['successful_trades']}/{stats['total_trades']})")
     
-    print(f"\n📊 RETRAIN SUMMARY:")
-    print(f"   Success Rate: {stats['success_rate']:.2%}")
-    print(f"   Mistakes Learned: {stats['mistakes']}")
-    print(f"   Successful Trades: {stats['successful_trades']}")
-    print(f"   Avg Reward: {stats['avg_reward']:.2f}")
+    return model, stats
+
+# =========================================================
+# SHARED PPO TRAINING
+# =========================================================
+
+def train_shared_ppo(all_symbols_data, signals, exclude_symbols=None, is_retrain=False):
+    """Train shared PPO for all symbols (fallback)"""
     
-    # Save updated model
-    model.save(PPO_MODEL_PATH)
-    print(f"✅ Model saved: {PPO_MODEL_PATH}")
+    print(f"\n{'='*60}")
+    print(f"🎯 Training Shared PPO (Fallback Model)")
+    print(f"{'='*60}")
     
-    # Save metadata
-    metadata = load_ppo_metadata()
-    new_record = pd.DataFrame([{
+    # Filter out symbols that have per-symbol models (if needed)
+    if exclude_symbols:
+        filtered_data = {k: v for k, v in all_symbols_data.items() if k not in exclude_symbols}
+        print(f"   Excluding {len(exclude_symbols)} symbols (have per-symbol models)")
+    else:
+        filtered_data = all_symbols_data
+    
+    print(f"   Total symbols in shared model: {len(filtered_data)}")
+    
+    env = MultiSymbolTradingEnv(
+        filtered_data,
+        signals,
+        build_observation,
+        WINDOW,
+        STATE_DIM,
+        total_capital=TOTAL_CAPITAL,
+        risk_percent=RISK_PERCENT,
+        symbol_name="shared"
+    )
+    env = DummyVecEnv([lambda: env])
+    
+    # Load existing model if retraining
+    if is_retrain and os.path.exists(f"{PPO_SHARED_PATH}.zip"):
+        print(f"   🔄 Loading existing shared model for fine-tuning...")
+        model = PPO.load(PPO_SHARED_PATH, env=env, device="cpu")
+        model.learning_rate = PPO_CONFIG['learning_rate'] * 0.5
+        timesteps = 30000  # Less timesteps for fine-tuning
+    else:
+        print(f"   🆕 Creating new shared model...")
+        model = PPO("MlpPolicy", env, **PPO_CONFIG, verbose=0)
+        timesteps = 100000  # Full training for first time
+    
+    # Self-learning callback
+    callback = SelfLearningCallback(
+        filtered_data, signals, build_observation, WINDOW, STATE_DIM,
+        symbol_name="shared", verbose=1
+    )
+    
+    # Train
+    print(f"   🚀 Training for {timesteps:,} timesteps...")
+    model.learn(total_timesteps=timesteps, callback=callback)
+    
+    # Save model
+    model.save(PPO_SHARED_PATH)
+    print(f"   ✅ Shared model saved: {PPO_SHARED_PATH}")
+    
+    # Get stats
+    stats = callback.get_learning_stats()
+    print(f"   📊 Success Rate: {stats['success_rate']:.2%} ({stats['successful_trades']}/{stats['total_trades']})")
+    
+    return model, stats
+
+# =========================================================
+# PREDICTION FUNCTION (Uses appropriate model)
+# =========================================================
+
+class HybridPPOPredictor:
+    """Predictor that uses per-symbol model if available, else shared model"""
+    
+    def __init__(self):
+        self.per_symbol_models = {}
+        self.shared_model = None
+        self.load_models()
+    
+    def load_models(self):
+        """Load all trained PPO models"""
+        # Load per-symbol models
+        for model_file in PPO_SYMBOL_DIR.glob("ppo_*.zip"):
+            symbol = model_file.stem.replace("ppo_", "")
+            try:
+                self.per_symbol_models[symbol] = PPO.load(model_file, device="cpu")
+                print(f"   ✅ Loaded per-symbol model: {symbol}")
+            except Exception as e:
+                print(f"   ⚠️ Failed to load {symbol}: {e}")
+        
+        # Load shared model
+        if os.path.exists(f"{PPO_SHARED_PATH}.zip"):
+            try:
+                self.shared_model = PPO.load(PPO_SHARED_PATH, device="cpu")
+                print(f"   ✅ Loaded shared model")
+            except Exception as e:
+                print(f"   ⚠️ Failed to load shared model: {e}")
+    
+    def predict(self, symbol, observation):
+        """Predict action using appropriate model"""
+        if symbol in self.per_symbol_models:
+            action, _ = self.per_symbol_models[symbol].predict(observation, deterministic=True)
+            return action[0] if isinstance(action, np.ndarray) else action
+        elif self.shared_model:
+            action, _ = self.shared_model.predict(observation, deterministic=True)
+            return action[0] if isinstance(action, np.ndarray) else action
+        else:
+            return 0  # Hold if no model
+    
+    def get_model_info(self, symbol):
+        """Get model info for a symbol"""
+        if symbol in self.per_symbol_models:
+            return f"Per-symbol model (customized)"
+        else:
+            return f"Shared model (fallback)"
+
+# =========================================================
+# MAIN TRAINING FUNCTION
+# =========================================================
+
+def train_ppo_system():
+    """Main training function - runs first-time or monthly retrain"""
+    
+    print("="*70)
+    print("🚀 HYBRID PPO TRAINING SYSTEM")
+    print("="*70)
+    print(f"📅 Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    print(f"💰 Initial Capital: ${TOTAL_CAPITAL:,.2f}")
+    print(f"📊 Retrain Interval: {PPO_RETRAIN_INTERVAL} days")
+    print(f"🎯 Per-symbol PPO threshold: AUC >= {XGB_AUC_THRESHOLD_FOR_PPO}")
+    print(f"🔢 Max per-symbol models: {MAX_PER_SYMBOL_MODELS}")
+    print("="*70)
+    
+    # Check if retrain needed
+    should_retrain, reason = should_retrain_ppo()
+    is_retrain = should_retrain and os.path.exists(f"{PPO_SHARED_PATH}.zip")
+    
+    print(f"\n📊 Training Status: {reason}")
+    print(f"   Mode: {'RETRAIN' if is_retrain else 'FIRST-TIME'}")
+    
+    # Step 1: Load market data
+    print("\n📂 Step 1: Loading market data...")
+    df = pd.read_csv(CSV_MARKET, parse_dates=["date"])
+    df["date"] = df["date"].dt.strftime("%Y-%m-%d")
+    print(f"   ✅ Loaded {len(df)} rows, {df['symbol'].nunique()} symbols")
+    
+    # Step 2: Load signals
+    print("\n📈 Step 2: Loading trading signals...")
+    signals = load_signals(CSV_SIGNAL)
+    print(f"   ✅ Loaded {len(signals)} signals")
+    
+    # Step 3: Load XGBoost metadata to identify top symbols
+    print("\n🤖 Step 3: Loading XGBoost model metadata...")
+    xgb_metadata = load_xgb_metadata()
+    print(f"   ✅ XGBoost GOOD models: {len(xgb_metadata)}")
+    
+    # Step 4: Select top symbols for per-symbol PPO
+    print("\n🎯 Step 4: Selecting symbols for per-symbol PPO...")
+    top_symbols = xgb_metadata[xgb_metadata['auc'] >= XGB_AUC_THRESHOLD_FOR_PPO]
+    top_symbols = top_symbols.head(MAX_PER_SYMBOL_MODELS)
+    top_symbol_list = top_symbols['symbol'].tolist()
+    print(f"   ✅ Selected {len(top_symbol_list)} symbols:")
+    for i, (_, row) in enumerate(top_symbols.iterrows()):
+        print(f"      {i+1}. {row['symbol']} (AUC: {row['auc']:.2%})")
+    
+    # Step 5: Prepare symbol data
+    print("\n📊 Step 5: Preparing symbol data...")
+    all_symbols_data = {}
+    for symbol in df['symbol'].unique():
+        symbol_df = df[df['symbol'] == symbol].reset_index(drop=True)
+        if len(symbol_df) >= WINDOW + 50:
+            all_symbols_data[symbol] = symbol_df
+    
+    print(f"   ✅ Prepared {len(all_symbols_data)} symbols with sufficient data")
+    
+    # Step 6: Load past mistakes for self-learning
+    print("\n📚 Step 6: Loading past mistakes for self-learning...")
+    past_mistakes = load_past_mistakes()
+    print(f"   ✅ Loaded {len(past_mistakes)} past mistakes")
+    
+    # Step 7: Train per-symbol PPO for top symbols
+    print("\n" + "="*70)
+    print("🏆 Step 7: Training Per-Symbol PPO Models")
+    print("="*70)
+    
+    trained_symbols = []
+    per_symbol_stats = []
+    
+    for symbol in top_symbol_list:
+        if symbol not in all_symbols_data:
+            print(f"\n⚠️ Skipping {symbol}: insufficient data")
+            continue
+        
+        symbol_data = all_symbols_data[symbol]
+        xgb_info = top_symbols[top_symbols['symbol'] == symbol].iloc[0]
+        xgb_auc = xgb_info['auc']
+        
+        try:
+            model, stats = train_per_symbol_ppo(
+                symbol, symbol_data, signals, xgb_auc, is_retrain
+            )
+            trained_symbols.append(symbol)
+            per_symbol_stats.append(stats)
+        except Exception as e:
+            print(f"\n   ❌ Failed to train {symbol}: {e}")
+    
+    print(f"\n✅ Per-symbol PPO trained: {len(trained_symbols)} symbols")
+    
+    # Step 8: Train shared PPO for remaining symbols
+    print("\n" + "="*70)
+    print("🏆 Step 8: Training Shared PPO Model (Fallback)")
+    print("="*70)
+    
+    shared_model, shared_stats = train_shared_ppo(
+        all_symbols_data, signals, exclude_symbols=trained_symbols, is_retrain=is_retrain
+    )
+    
+    # Step 9: Save training metadata
+    print("\n💾 Step 9: Saving training metadata...")
+    
+    metadata = {
         'train_date': datetime.now(),
-        'symbols_count': len(symbol_dfs),
-        'success_rate': stats['success_rate'],
-        'total_trades': stats['total_trades'],
-        'profitable_trades': stats['successful_trades'],
-        'total_return': 0  # Can be calculated from evaluation
-    }])
+        'is_retrain': is_retrain,
+        'per_symbol_count': len(trained_symbols),
+        'per_symbol_list': trained_symbols,
+        'shared_symbols_count': len(all_symbols_data) - len(trained_symbols),
+        'shared_success_rate': shared_stats['success_rate'],
+    }
     
-    metadata = pd.concat([metadata, new_record], ignore_index=True)
-    save_ppo_metadata(metadata)
+    # Save per-symbol stats
+    if per_symbol_stats:
+        stats_df = pd.DataFrame(per_symbol_stats)
+        stats_df.to_csv(PPO_MODEL_DIR / "per_symbol_stats.csv", index=False)
     
-    return model
+    # Update last train date
+    update_last_ppo_train()
+    
+    # Step 10: Summary
+    print("\n" + "="*70)
+    print("🎉 HYBRID PPO TRAINING COMPLETE!")
+    print("="*70)
+    print(f"\n📊 TRAINING SUMMARY:")
+    print(f"   ├── Per-symbol PPO models: {len(trained_symbols)}")
+    print(f"   ├── Shared PPO model: 1")
+    print(f"   └── Total models: {len(trained_symbols) + 1}")
+    
+    if per_symbol_stats:
+        avg_success = np.mean([s['success_rate'] for s in per_symbol_stats])
+        print(f"\n📈 PERFORMANCE:")
+        print(f"   ├── Per-symbol avg success rate: {avg_success:.2%}")
+        print(f"   └── Shared success rate: {shared_stats['success_rate']:.2%}")
+    
+    print(f"\n📁 Model Locations:")
+    print(f"   ├── Per-symbol models: {PPO_SYMBOL_DIR}")
+    print(f"   └── Shared model: {PPO_SHARED_PATH}.zip")
+    print("="*70)
+    
+    return trained_symbols, shared_model
 
 # =========================================================
 # EVALUATION FUNCTION
 # =========================================================
 
-def evaluate_ppo_model():
-    """Evaluate PPO model performance"""
+def evaluate_ppo_system():
+    """Evaluate the hybrid PPO system"""
+    
     print("\n" + "="*70)
-    print("📊 PPO MODEL EVALUATION")
+    print("📊 EVALUATING HYBRID PPO SYSTEM")
     print("="*70)
     
-    if not os.path.exists(f"{PPO_MODEL_PATH}.zip"):
-        print("⚠️ No model found")
-        return None
+    predictor = HybridPPOPredictor()
     
-    # Load model
-    model = PPO.load(PPO_MODEL_PATH, device="cpu")
-    
-    # Load data
+    # Load test data
     df = pd.read_csv(CSV_MARKET, parse_dates=["date"])
     df["date"] = df["date"].dt.strftime("%Y-%m-%d")
     signals = load_signals(CSV_SIGNAL)
     
-    # Create environment (use last 30 days for evaluation)
-    symbol_dfs = {
-        s: sdf.reset_index(drop=True)
-        for s, sdf in df.groupby("symbol")
-        if len(sdf) >= WINDOW
-    }
+    # Test on a few symbols
+    test_symbols = list(predictor.per_symbol_models.keys())[:5] + ['NON_EXISTENT_SYMBOL']
     
-    env = MultiSymbolTradingEnv(
-        symbol_dfs,
-        signals,
-        build_observation,
-        WINDOW,
-        STATE_DIM,
-        total_capital=TOTAL_CAPITAL,
-        risk_percent=RISK_PERCENT,
-    )
-    env = DummyVecEnv([lambda: env])
-    
-    # Evaluate
-    obs = env.reset()
-    total_reward = 0
-    steps = 0
-    trades = []
-    
-    while True:
-        action, _ = model.predict(obs, deterministic=True)
-        obs, reward, done, info = env.step(action)
-        total_reward += reward[0]
-        steps += 1
+    print("\n🔍 Testing predictions:")
+    for symbol in test_symbols:
+        if symbol not in df['symbol'].unique():
+            print(f"\n   {symbol}: NOT IN DATA")
+            continue
         
-        if info[0].get('trade_result'):
-            trades.append(info[0]['trade_result'])
+        symbol_data = df[df['symbol'] == symbol].reset_index(drop=True)
+        if len(symbol_data) < WINDOW + 10:
+            continue
         
-        if done:
-            break
+        model_type = predictor.get_model_info(symbol)
+        print(f"\n   {symbol}: {model_type}")
+        
+        # Make a few predictions
+        for i in range(WINDOW, min(WINDOW + 5, len(symbol_data))):
+            obs = build_observation(symbol_data, i, signals)
+            action = predictor.predict(symbol, obs)
+            action_name = ['HOLD', 'BUY', 'SELL'][action]
+            price = symbol_data.iloc[i]['close']
+            print(f"      Step {i}: Price={price:.2f} → {action_name}")
     
-    profitable = sum(1 for t in trades if t['success'])
-    total_return = info[0]['total_return']
-    
-    print(f"\n📈 Evaluation Results:")
-    print(f"   Total Steps: {steps}")
-    print(f"   Total Reward: {total_reward:.2f}")
-    print(f"   Total Trades: {len(trades)}")
-    print(f"   Profitable: {profitable}")
-    print(f"   Success Rate: {profitable/len(trades)*100:.2f}%" if trades else "N/A")
-    print(f"   Total Return: {total_return:.2f}%")
-    
-    return {
-        'steps': steps,
-        'reward': total_reward,
-        'trades': len(trades),
-        'profitable': profitable,
-        'success_rate': profitable/len(trades) if trades else 0,
-        'total_return': total_return
-    }
+    return predictor
 
 # =========================================================
-# MAIN EXECUTION
+# MAIN
 # =========================================================
 
 def main():
-    print("="*70)
-    print("🚀 PPO TRADING SYSTEM - Training & Self-Learning")
-    print("="*70)
-    print(f"📅 Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    print(f"💰 Initial Capital: ${TOTAL_CAPITAL:,.2f}")
-    print(f"📊 Retrain Interval: {PPO_RETRAIN_INTERVAL} days")
-    print("="*70)
+    """Main execution"""
     
-    # Check if first-time or retrain
-    should_retrain, reason = should_retrain_ppo()
+    # Train the system
+    trained_symbols, shared_model = train_ppo_system()
     
-    if should_retrain:
-        print(f"\n🔄 {reason}")
-        
-        if os.path.exists(f"{PPO_MODEL_PATH}.zip"):
-            # Retrain with self-learning
-            model = retrain_ppo_with_self_learning()
-        else:
-            # First-time training
-            print("   No existing model found. Starting first-time training...")
-            model = train_ppo_first_time()
-        
-        # Update last train date
-        update_last_ppo_train()
-        print(f"\n✅ Last PPO train updated: {datetime.now().strftime('%Y-%m-%d')}")
-        
-    else:
-        print(f"\n✅ {reason}")
-        print("   Skipping retrain. Using existing model.")
-        
-        # Still evaluate
-        evaluate_ppo_model()
-    
-    # Always evaluate after training
-    print("\n" + "="*70)
-    print("🎯 FINAL EVALUATION")
-    print("="*70)
-    eval_results = evaluate_ppo_model()
+    # Evaluate
+    predictor = evaluate_ppo_system()
     
     print("\n" + "="*70)
-    print("🎉 PPO SYSTEM COMPLETE!")
+    print("🎉 PPO SYSTEM READY FOR TRADING!")
     print("="*70)
 
 if __name__ == "__main__":
