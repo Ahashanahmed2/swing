@@ -26,7 +26,7 @@ scripts = [
     "scripts/swing_buy.py",
     #"scripts/liquidly.py",
     "scripts/orderblock.py",
-    "scripts/short_buy.py",
+    #"scripts/short_buy.py",
     "scripts/rsi_diver.py",
     #"scripts/rsi_crose_above_30.py",
     "scripts/gape.py",
