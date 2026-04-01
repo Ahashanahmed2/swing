@@ -1,15 +1,53 @@
-# upload_models.py - Direct model upload
+# upload_models.py - Direct upload script
 import os
-from hf_uploader import SmartDatasetUploader, REPO_ID, HF_TOKEN
+from huggingface_hub import HfApi, upload_file, login
+from dotenv import load_dotenv
 
-print("🚀 Uploading XGBoost models to Hugging Face...")
+load_dotenv()
+HF_TOKEN = os.getenv("hf_token")
+REPO_ID = "ahashanahmed/csv"
 
-uploader = SmartDatasetUploader(REPO_ID, HF_TOKEN)
+print("="*60)
+print("🚀 UPLOADING MODELS TO HUGGING FACE")
+print("="*60)
 
-# আপলোড করুন পুরো ./csv ফোল্ডার
-uploader.smart_upload(
-    local_folder="./csv",
-    unique_columns=['symbol', 'date']
-)
+# Login
+login(token=HF_TOKEN)
+api = HfApi()
 
-print("✅ Models uploaded!")
+# Upload all files from ./csv folder
+local_folder = "./csv"
+uploaded = 0
+failed = 0
+
+for root, dirs, files in os.walk(local_folder):
+    for file in files:
+        file_path = os.path.join(root, file)
+        relative_path = os.path.relpath(file_path, local_folder)
+        
+        # Skip metadata file
+        if relative_path == '.dataset_metadata.json':
+            continue
+            
+        try:
+            print(f"📤 Uploading: {relative_path} ({os.path.getsize(file_path)/1024:.1f} KB)")
+            
+            upload_file(
+                path_or_fileobj=file_path,
+                path_in_repo=relative_path,
+                repo_id=REPO_ID,
+                repo_type="dataset",
+                token=HF_TOKEN
+            )
+            uploaded += 1
+            print(f"   ✅ Uploaded")
+            
+        except Exception as e:
+            print(f"   ❌ Failed: {e}")
+            failed += 1
+
+print("\n" + "="*60)
+print(f"✅ Upload complete!")
+print(f"   Uploaded: {uploaded} files")
+print(f"   Failed: {failed} files")
+print("="*60)
