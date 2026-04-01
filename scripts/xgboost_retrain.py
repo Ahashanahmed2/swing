@@ -1,4 +1,4 @@
-# xgboost_scheduler.py - COMPLETE VERSION (3 Modes + Feedback Learning)
+# xgboost_scheduler.py - COMPLETE VERSION (Daily/Weekly/Monthly + Feedback Learning + HF Upload)
 
 import os
 import pandas as pd
@@ -16,6 +16,7 @@ warnings.filterwarnings('ignore')
 DATA_PATH = './csv/mongodb.csv'
 MODEL_DIR = './csv/xgboost/'
 PREDICTION_LOG = './csv/prediction_log.csv'
+XGB_CONFIDENCE = './csv/xgb_confidence.csv'
 
 os.makedirs(MODEL_DIR, exist_ok=True)
 
@@ -36,7 +37,7 @@ MIN_SAMPLES_PER_SYMBOL = 50
 # MODEL PARAMETERS BY MODE
 # =========================
 
-# Daily Mode (15 minutes) - Best parameters from tuning
+# Daily Mode (15 minutes)
 DAILY_PARAMS = {
     'n_estimators': 1000,
     'max_depth': 8,
@@ -276,17 +277,35 @@ def train_symbol(symbol, group, features, params, feedback_log):
         X_test = X.iloc[split:]
         y_test = y.iloc[split:]
         
+        # Dynamic class weight
+        target_ratio = y_train.mean()
+        if target_ratio < 0.3:
+            scale_pos = (1 - target_ratio) / target_ratio
+            scale_pos = min(scale_pos, 10)
+        elif target_ratio > 0.7:
+            scale_pos = target_ratio / (1 - target_ratio)
+            scale_pos = min(scale_pos, 10)
+        else:
+            scale_pos = 1
+        
+        params_copy = params.copy()
+        params_copy['scale_pos_weight'] = scale_pos
+        
+        print(f"   Class ratio: {target_ratio:.2%} → scale_pos_weight: {scale_pos:.2f}")
+        
         weights = get_sample_weights(group.iloc[:split], feedback_log)
         
-        model = xgb.XGBClassifier(**params)
+        model = xgb.XGBClassifier(**params_copy)
         
         try:
             model.fit(X_train, y_train, sample_weight=weights, eval_set=[(X_test, y_test)], verbose=False)
         except:
             model.fit(X_train, y_train, sample_weight=weights, verbose=False)
         
+        # ✅ SAVE MODEL
         model_path = os.path.join(MODEL_DIR, f'{symbol}.joblib')
         joblib.dump(model, model_path)
+        print(f"   💾 Model saved: {model_path}")
         
         preds = model.predict(X_test)
         prob = model.predict_proba(X_test)[:, 1]
@@ -294,10 +313,10 @@ def train_symbol(symbol, group, features, params, feedback_log):
         acc = accuracy_score(y_test, preds)
         auc = roc_auc_score(y_test, prob) if len(np.unique(y_test)) > 1 else 0.5
         
+        print(f"   ✅ Acc: {acc:.2%}, AUC: {auc:.2%}")
+        
         group['confidence_score'] = model.predict_proba(X)[:, 1] * 100
         group['prediction'] = (group['confidence_score'] > 50).astype(int)
-        
-        print(f"   ✅ Acc: {acc:.2%}, AUC: {auc:.2%}")
         
         return group[['symbol', 'date', 'close', 'confidence_score', 'prediction']]
         
@@ -306,8 +325,37 @@ def train_symbol(symbol, group, features, params, feedback_log):
         return None
 
 # =========================
+# HF UPLOAD FUNCTION
+# =========================
+
+def upload_to_huggingface():
+    """Upload models and CSV files to Hugging Face"""
+    try:
+        from hf_uploader import SmartDatasetUploader, REPO_ID, HF_TOKEN
+        
+        print("\n" + "="*70)
+        print("📤 UPLOADING TO HUGGING FACE")
+        print("="*70)
+        
+        uploader = SmartDatasetUploader(REPO_ID, HF_TOKEN)
+        
+        # Upload entire csv folder
+        uploader.smart_upload(
+            local_folder="./csv",
+            unique_columns=['symbol', 'date']
+        )
+        
+        print("✅ Upload to Hugging Face complete!")
+        return True
+        
+    except Exception as e:
+        print(f"⚠️ HF upload failed: {e}")
+        return False
+
+# =========================
 # MAIN
 # =========================
+
 def main():
     print("="*70)
     print("🚀 XGBOOST SCHEDULER (Daily/Weekly/Monthly + Feedback Learning)")
@@ -336,6 +384,9 @@ def main():
         print(f"   Next Daily: {(datetime.today() + timedelta(days=DAILY_INTERVAL - daily_days)).date()}")
         print(f"   Next Weekly: {(datetime.today() + timedelta(days=WEEKLY_INTERVAL - weekly_days)).date()}")
         print(f"   Next Monthly: {(datetime.today() + timedelta(days=MONTHLY_INTERVAL - monthly_days)).date()}")
+        
+        # Still upload existing files
+        upload_to_huggingface()
         return
     
     print(f"\n{'='*70}")
@@ -371,6 +422,7 @@ def main():
     results = []
     trained_count = 0
     skipped_count = 0
+    model_files = []
     
     for symbol, group in df.groupby('symbol'):
         if len(group) < MIN_SAMPLES_PER_SYMBOL:
@@ -384,17 +436,19 @@ def main():
         if result is not None:
             results.append(result)
             trained_count += 1
+            model_files.append(f'{symbol}.joblib')
         else:
             skipped_count += 1
     
-    # Save results
+    # Save predictions
     print("\n💾 Step 5: Saving results...")
     print("="*70)
     
     if results:
         final = pd.concat(results, ignore_index=True)
-        final.to_csv('./csv/xgb_confidence.csv', index=False)
+        final.to_csv(XGB_CONFIDENCE, index=False)
         print(f"✅ Predictions saved: {len(final):,} rows")
+        
         save_prediction_log(final)
     
     # Update schedule dates
@@ -411,7 +465,20 @@ def main():
     print(f"📊 Models trained: {trained_count}")
     print(f"⚠️ Symbols skipped: {skipped_count}")
     print(f"📁 Models saved: {MODEL_DIR}")
+    
+    # Show saved models
+    if model_files:
+        print(f"\n📋 Model files saved:")
+        for f in model_files[:5]:
+            print(f"   - {f}")
+        if len(model_files) > 5:
+            print(f"   ... and {len(model_files)-5} more")
+    
+    # Upload to Hugging Face
+    upload_to_huggingface()
+    
     print("="*70)
+    print("🎉 DONE!")
 
 if __name__ == "__main__":
     main()
