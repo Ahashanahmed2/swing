@@ -1,3 +1,4 @@
+# mongodb.py
 from pymongo import MongoClient
 import pandas as pd
 import numpy as np
@@ -5,120 +6,140 @@ import ta
 import os
 import sys
 from dotenv import load_dotenv
-from hf_uploader import download_from_hf, REPO_ID, HF_TOKEN
+import requests
+from io import StringIO
 
-# -------------------------------------------------------------------
-# Step 1: Download CSV from HF if needed
-# -------------------------------------------------------------------
-print("📥 Checking for CSV files from Hugging Face...")
+# =========================
+# STEP 1: DOWNLOAD FROM HUGGING FACE FIRST
+# =========================
+print("="*60)
+print("STEP 1: Downloading master CSV from Hugging Face...")
+print("="*60)
 
-# CSV ফোল্ডার তৈরি করুন
-csv_folder = './csv'
-os.makedirs(csv_folder, exist_ok=True)
-
-# HF থেকে ডাউনলোড করার চেষ্টা করুন
-download_success = download_from_hf(csv_folder, REPO_ID, HF_TOKEN)
-
-if download_success:
-    print(f"✅ HF data download success")
-    
-    # ডাউনলোড করা ফাইলগুলো দেখান
-    csv_files = [f for f in os.listdir(csv_folder) if f.endswith('.csv')]
-    print(f"📊 Found {len(csv_files)} CSV files: {csv_files}")
-else:
-    print(f"⚠️ No data found in HF. Will work with existing local data or create new.")
-
-# -------------------------------------------------------------------
-# CSV File Path
-# -------------------------------------------------------------------
 csv_path = './csv/mongodb.csv'
-os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+os.makedirs('./csv', exist_ok=True)
 
-# -------------------------------------------------------------------
-# Step 2: Load CSV
-# -------------------------------------------------------------------
-if os.path.exists(csv_path):
-    print("✅ CSV file exists. Checking for new data in MongoDB...")
-    try:
-        csv_df = pd.read_csv(csv_path)
-        csv_df['date'] = pd.to_datetime(csv_df['date'])
-        csv_last_date = csv_df['date'].max()
-        print(f"🕒 Last date in CSV: {csv_last_date}")
-    except Exception as e:
-        print(f"❌ Error reading CSV: {e}")
-        csv_df = pd.DataFrame()
-        csv_last_date = None
-else:
-    print("🆕 CSV file not found. Will download full data from MongoDB...")
-    csv_df = pd.DataFrame()
-    csv_last_date = None
+# Hugging Face URL
+hf_url = "https://huggingface.co/datasets/ahashanahmed/csv/resolve/main/mongodb.csv"
 
-# -------------------------------------------------------------------
-# Step 3: Connect MongoDB
-# -------------------------------------------------------------------
+try:
+    response = requests.get(hf_url, timeout=60)
+    if response.status_code == 200:
+        # Read CSV from HF
+        df_hf = pd.read_csv(StringIO(response.text), encoding='utf-8-sig')
+        df_hf['date'] = pd.to_datetime(df_hf['date'])
+        
+        print(f"✅ Downloaded from HF:")
+        print(f"   Total rows: {len(df_hf):,}")
+        print(f"   Unique symbols: {df_hf['symbol'].nunique():,}")
+        print(f"   Date range: {df_hf['date'].min().date()} to {df_hf['date'].max().date()}")
+        
+        # Save as base CSV
+        df_hf.to_csv(csv_path, index=False, encoding='utf-8-sig')
+        print(f"💾 Saved to {csv_path}")
+        
+    else:
+        print(f"⚠️ HF download failed: HTTP {response.status_code}")
+        df_hf = pd.DataFrame()
+        
+except Exception as e:
+    print(f"⚠️ HF download error: {e}")
+    df_hf = pd.DataFrame()
+
+# =========================
+# STEP 2: CHECK FOR NEW DATA IN MONGODB
+# =========================
+print("\n" + "="*60)
+print("STEP 2: Checking MongoDB for new data...")
+print("="*60)
+
 load_dotenv()
 client = MongoClient(os.getenv("MONGO_URL"))
 collection = client["candleData"]["candledatas"]
 
-latest_doc = collection.find_one({}, sort=[('date', -1)])
-if not latest_doc:
-    print("❌ MongoDB is empty.")
-    sys.exit(1)
+# Get latest date from HF data
+if not df_hf.empty:
+    hf_last_date = df_hf['date'].max()
+    print(f"📅 Last date in HF: {hf_last_date.date()}")
+else:
+    hf_last_date = None
+    print("📅 No HF data available")
 
-mongo_last_date = pd.to_datetime(latest_doc['date'])
-print(f"🧾 Latest date in MongoDB: {mongo_last_date}")
+# Query MongoDB for data after HF's last date
+if hf_last_date:
+    query = {"date": {"$gt": hf_last_date.strftime('%Y-%m-%d')}}
+else:
+    query = {}  # Get all if no HF data
 
-if csv_last_date and csv_last_date >= mongo_last_date:
-    print(f"✅ No new data in MongoDB after {csv_last_date}. Exiting to prevent re-download.")
-    sys.exit(1)
+print(f"🔍 Looking for data after {hf_last_date.date() if hf_last_date else 'beginning'}...")
 
-query = {"date": {"$gt": csv_last_date.strftime('%Y-%m-%d')}} if csv_last_date else {}
-
-print("📥 Downloading data from MongoDB...")
 data = list(collection.find(query, {'_id': 0, '__v': 0}))
 client.close()
 
 if not data:
-    print("✅ No new data found in MongoDB. Exiting.")
-    sys.exit(0)
+    print("✅ No new data found in MongoDB. Using HF data only.")
+    df_mongo = pd.DataFrame()
+else:
+    print(f"✅ Found {len(data)} new rows in MongoDB")
+    df_mongo = pd.DataFrame(data)
+    
+    # Rename columns to match CSV format
+    df_mongo.rename(columns={
+        'open_price': 'open', 'close_price': 'close',
+        'high_price': 'high', 'low_price': 'low',
+        'vol': 'volume', 'val': 'value', 'trade_count': 'trades',
+        'chg': 'change', 'mcap': 'marketCap'
+    }, inplace=True)
+    
+    df_mongo['date'] = pd.to_datetime(df_mongo['date'], errors='coerce')
+    
+    # Clean numeric columns
+    numeric_cols = ['open', 'close', 'high', 'low', 'volume', 'value', 'trades', 'change', 'marketCap']
+    for col in numeric_cols:
+        if col in df_mongo.columns:
+            df_mongo[col] = pd.to_numeric(df_mongo[col], errors='coerce')
+    
+    if 'collectedAt' in df_mongo.columns:
+        df_mongo.drop(columns=['collectedAt'], inplace=True)
+    
+    print(f"   New data range: {df_mongo['date'].min().date()} to {df_mongo['date'].max().date()}")
+    print(f"   New symbols: {df_mongo['symbol'].nunique()}")
 
-df = pd.DataFrame(data)
+# =========================
+# STEP 3: MERGE HF AND MONGODB DATA
+# =========================
+print("\n" + "="*60)
+print("STEP 3: Merging data...")
+print("="*60)
 
-# -------------------------------------------------------------------
-# Step 4: Data Cleaning
-# -------------------------------------------------------------------
-df.rename(columns={
-    'open_price': 'open', 'close_price': 'close',
-    'high_price': 'high', 'low_price': 'low',
-    'vol': 'volume', 'val': 'value', 'trade_count': 'trades',
-    'chg': 'change', 'mcap': 'marketCap'
-}, inplace=True)
+if df_hf.empty and df_mongo.empty:
+    print("❌ No data available from either source!")
+    sys.exit(1)
 
-df['date'] = pd.to_datetime(df['date'], errors='coerce')
-
-numeric_cols = [
-    'open', 'close', 'high', 'low',
-    'volume', 'value', 'trades',
-    'change', 'marketCap'
-]
-df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
-
-if 'collectedAt' in df.columns:
-    df.drop(columns=['collectedAt'], inplace=True)
-
-# Merge previous CSV
-if not csv_df.empty:
-    df = pd.concat([csv_df, df], ignore_index=True)
+elif df_hf.empty:
+    df = df_mongo
+    print("Using only MongoDB data")
+    
+elif df_mongo.empty:
+    df = df_hf
+    print("Using only HF data")
+    
+else:
+    # Merge both
+    df = pd.concat([df_hf, df_mongo], ignore_index=True)
     df = df.drop_duplicates(['symbol', 'date'], keep='last')
     df = df.sort_values(['symbol', 'date'])
-    print("💾 Appended new data to existing CSV.")
+    print(f"✅ Merged: {len(df_hf)} (HF) + {len(df_mongo)} (Mongo) = {len(df)} total rows")
+    print(f"   Unique symbols: {df['symbol'].nunique()}")
 
-# -------------------------------------------------------------------
-# Step 5: Indicators (ATR safe)
-# -------------------------------------------------------------------
+# =========================
+# STEP 4: CALCULATE INDICATORS
+# =========================
+print("\n" + "="*60)
+print("STEP 4: Calculating technical indicators...")
+print("="*60)
+
 def apply_indicators(group):
-
-    # If data <26 rows → skip indicators to avoid IndexError
     if len(group) < 35:
         group['bb_upper'] = np.nan
         group['bb_middle'] = np.nan
@@ -146,109 +167,121 @@ def apply_indicators(group):
     # RSI
     group['rsi'] = ta.momentum.RSIIndicator(close=group['close']).rsi()
 
-    # ATR — Safe (no IndexError)
+    # ATR
     atr = ta.volatility.AverageTrueRange(
-        high=group['high'],
-        low=group['low'],
-        close=group['close'],
-        window=14
+        high=group['high'], low=group['low'], close=group['close'], window=14
     )
     group['atr'] = atr.average_true_range()
+    
+    # EMA 200
     group['ema_200'] = ta.trend.EMAIndicator(close=group['close'], window=200).ema_indicator()
+    
     return group
 
+print("🔄 Calculating indicators by symbol...")
 df = df.groupby('symbol', group_keys=False).apply(apply_indicators)
 
-# -------------------------------------------------------------------
-# Step 6: ZigZag
-# -------------------------------------------------------------------
+# =========================
+# STEP 5: ZIGZAG
+# =========================
+print("🔄 Calculating ZigZag...")
+
 def compute_zigzag(close, threshold=0.05):
     zz = [np.nan] * len(close)
+    if len(close) == 0:
+        return zz
     last_pivot = close.iloc[0]
-
     for i in range(1, len(close)):
         change = abs(close.iloc[i] - last_pivot) / last_pivot
         if change >= threshold:
             zz[i] = close.iloc[i]
             last_pivot = close.iloc[i]
-
     return zz
 
 df['zigzag'] = df.groupby('symbol')['close'].transform(compute_zigzag)
 
-# -------------------------------------------------------------------
-# Step 7: Pattern Detection
-# -------------------------------------------------------------------
-def detect_patterns(df):
+# =========================
+# STEP 6: PATTERN DETECTION
+# =========================
+print("🔄 Detecting candlestick patterns...")
+
+def detect_patterns(group):
     def hammer(row):
-        return (row['close'] > row['open']) and (
-            row['low'] < row['open'] - (row['high'] - row['low']) * 0.6
-        )
+        body = abs(row['close'] - row['open'])
+        lower_shadow = min(row['open'], row['close']) - row['low']
+        return (row['close'] > row['open']) and (lower_shadow > body * 2)
 
     def bullish_engulfing(prev, curr):
-        return (
-            prev['close'] < prev['open'] and
-            curr['close'] > curr['open'] and
-            curr['close'] > prev['open'] and
-            curr['open'] < prev['close']
-        )
+        return (prev['close'] < prev['open'] and
+                curr['close'] > curr['open'] and
+                curr['close'] > prev['open'] and
+                curr['open'] < prev['close'])
 
     def morning_star(df, i):
         if i < 2:
             return False
         a, b, c = df.iloc[i-2], df.iloc[i-1], df.iloc[i]
-        return (
-            a['close'] < a['open'] and
-            abs(b['close'] - b['open']) < (b['high'] - b['low']) * 0.1 and
-            c['close'] > c['open']
-        )
+        return (a['close'] < a['open'] and
+                abs(b['close'] - b['open']) < (b['high'] - b['low']) * 0.1 and
+                c['close'] > c['open'])
 
     def doji(row):
         return abs(row['close'] - row['open']) <= (row['high'] - row['low']) * 0.1
 
     def piercing_line(prev, curr):
-        return (
-            prev['close'] < prev['open'] and
-            curr['open'] < prev['low'] and
-            curr['close'] > prev['close'] + (prev['open'] - prev['close']) / 2
-        )
+        return (prev['close'] < prev['open'] and
+                curr['open'] < prev['low'] and
+                curr['close'] > prev['close'] + (prev['open'] - prev['close']) / 2)
 
     def three_white_soldiers(df, i):
         if i < 2:
             return False
         a, b, c = df.iloc[i-2], df.iloc[i-1], df.iloc[i]
-        return (
-            a['close'] > a['open'] and
-            b['close'] > b['open'] and
-            c['close'] > c['open'] and
-            a['close'] < b['close'] < c['close']
-        )
+        return (a['close'] > a['open'] and
+                b['close'] > b['open'] and
+                c['close'] > c['open'] and
+                a['close'] < b['close'] < c['close'])
 
-    pattern_data = {k: [] for k in [
-        'Hammer', 'BullishEngulfing', 'MorningStar',
-        'Doji', 'PiercingLine', 'ThreeWhiteSoldiers'
-    ]}
+    patterns = ['Hammer', 'BullishEngulfing', 'MorningStar', 'Doji', 'PiercingLine', 'ThreeWhiteSoldiers']
+    for p in patterns:
+        group[p] = False
 
-    for i in range(len(df)):
-        row = df.iloc[i]
-        prev = df.iloc[i - 1] if i > 0 else row
+    for i in range(len(group)):
+        row = group.iloc[i]
+        prev = group.iloc[i-1] if i > 0 else row
 
-        pattern_data['Hammer'].append(hammer(row))
-        pattern_data['BullishEngulfing'].append(bullish_engulfing(prev, row))
-        pattern_data['MorningStar'].append(morning_star(df, i))
-        pattern_data['Doji'].append(doji(row))
-        pattern_data['PiercingLine'].append(piercing_line(prev, row))
-        pattern_data['ThreeWhiteSoldiers'].append(three_white_soldiers(df, i))
+        group.loc[group.index[i], 'Hammer'] = hammer(row)
+        group.loc[group.index[i], 'BullishEngulfing'] = bullish_engulfing(prev, row)
+        group.loc[group.index[i], 'MorningStar'] = morning_star(group, i)
+        group.loc[group.index[i], 'Doji'] = doji(row)
+        group.loc[group.index[i], 'PiercingLine'] = piercing_line(prev, row)
+        group.loc[group.index[i], 'ThreeWhiteSoldiers'] = three_white_soldiers(group, i)
 
-    for k, v in pattern_data.items():
-        df[k] = v
-
-    return df
+    return group
 
 df = df.groupby('symbol', group_keys=False).apply(detect_patterns)
 
-# -------------------------------------------------------------------
-# Step 8: Save CSV
-# -------------------------------------------------------------------
+# =========================
+# STEP 7: SAVE FINAL CSV
+# =========================
+print("\n" + "="*60)
+print("STEP 5: Saving final CSV...")
+print("="*60)
+
 df.to_csv(csv_path, index=False, encoding='utf-8-sig')
-print(f"✅ {csv_path} updated with new data, ATR and patterns.")
+print(f"✅ Saved to {csv_path}")
+print(f"   Total rows: {len(df):,}")
+print(f"   Unique symbols: {df['symbol'].nunique():,}")
+print(f"   Date range: {df['date'].min().date()} to {df['date'].max().date()}")
+
+# =========================
+# SUMMARY
+# =========================
+print("\n" + "="*60)
+print("SUMMARY")
+print("="*60)
+print(f"📥 HF Data: {len(df_hf):,} rows" if not df_hf.empty else "📥 HF Data: None")
+print(f"📥 MongoDB New Data: {len(df_mongo):,} rows" if not df_mongo.empty else "📥 MongoDB New Data: None")
+print(f"📊 Final CSV: {len(df):,} rows, {df['symbol'].nunique()} symbols")
+print("="*60)
+print("✅ mongodb.py completed!")
