@@ -12,7 +12,7 @@ scripts = [
     
     #"scripts/dse_scraper.py",
     #"scripts/date_check.py",
-    "scripts/mongodb.py",
+    #"scripts/mongodb.py",
     
     #"scripts/hf.py",
     #"scripts/support_buy.py",
@@ -47,11 +47,11 @@ scripts = [
     #"scripts/macd_daily.py",
     #"scripts/down_macd.py",
     #"scripts/ai_trade.py",
-    
-    "scripts/xgboost_retrain.py",
-    "scripts/generate_pdf.py",
-    "scripts/dayliMassage.py",
-    "scripts/email_reports.py",
+    "scripts/hf_data.py",
+    #"scripts/xgboost_retrain.py",
+    #"scripts/generate_pdf.py",
+    #"scripts/dayliMassage.py",
+    #"scripts/email_reports.py",
     
 ]
 
