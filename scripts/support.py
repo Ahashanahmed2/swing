@@ -263,7 +263,6 @@ def process_support_resistance(input_file, output_file):
 def main():
     # Define file paths
     input_file = './csv/mongodb.csv'
-    output_file_1 = './output/ai_signal/support_resistance.csv'
     output_file_2 = './csv/support_resistance.csv'
     
     # Check if input file exists
@@ -301,12 +300,11 @@ def main():
         print(f"✅ Sample data created at: {input_file}")
     
     # Process for both output locations
-    process_support_resistance(input_file, output_file_1)
     process_support_resistance(input_file, output_file_2)
     
     print("\n" + "=" * 80)
     print("✨ PROCESSING COMPLETE!")
-    print(f"📁 Output 1: {output_file_1}")
+    
     print(f"📁 Output 2: {output_file_2}")
     print("=" * 80)
 
