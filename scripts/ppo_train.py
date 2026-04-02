@@ -88,7 +88,7 @@ os.makedirs(TENSORBOARD_LOG, exist_ok=True)
 # CONFIGURATION
 # =========================================================
 
-WINDOW = 10
+WINDOW = 5
 TOTAL_CAPITAL = 500_000
 RISK_PERCENT = 0.01
 PPO_RETRAIN_INTERVAL = 30
@@ -120,7 +120,7 @@ MAX_DRAWDOWN_LIMIT = 0.25
 
 # PPO Configuration
 PPO_CONFIG = {
-    'n_steps': 1024,
+    'n_steps': 256,
     'batch_size': 256,
     'gamma': 0.995,
     'learning_rate': 1e-4,
@@ -128,13 +128,12 @@ PPO_CONFIG = {
     'clip_range': 0.1,
     'vf_coef': 0.5,
     'max_grad_norm': 0.5,
-    'tensorboard_log': str(TENSORBOARD_LOG),
 }
 
 PPO_PER_SYMBOL_CONFIG = {
-    'high_quality': {'n_steps': 2048, 'batch_size': 512, 'learning_rate': 2e-4, 'timesteps': 50000},
-    'good_quality': {'n_steps': 1024, 'batch_size': 256, 'learning_rate': 1e-4, 'timesteps': 30000},
-    'fallback': {'n_steps': 1024, 'batch_size': 256, 'learning_rate': 1e-4, 'timesteps': 20000},
+    'high_quality': {'n_steps': 256, 'batch_size': 512, 'learning_rate': 2e-4, 'timesteps': 5000},
+    'good_quality': {'n_steps': 156, 'batch_size': 256, 'learning_rate': 1e-4, 'timesteps': 5000},
+    'fallback': {'n_steps': 156, 'batch_size': 256, 'learning_rate': 1e-4, 'timesteps': 5000},
 }
 
 # =========================================================
