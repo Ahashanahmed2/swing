@@ -1,4 +1,4 @@
-# ppo_train.py - HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM
+# ppo_train.py - HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM (FULLY UPDATED)
 # Features:
 # 1. Per-symbol PPO for top GOOD XGBoost models (AUC >= 0.70)
 # 2. Shared PPO for all other symbols (fallback)
@@ -25,6 +25,20 @@ from pathlib import Path
 from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
+
+# =========================================================
+# ✅ FIXED: Import for Stable-Baselines3 with fallback
+# =========================================================
+
+try:
+    from stable_baselines3 import PPO
+    from stable_baselines3.common.vec_env import DummyVecEnv
+    from stable_baselines3.common.callbacks import BaseCallback, EvalCallback
+    SB3_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Stable-Baselines3 not available: {e}")
+    print("   Install with: pip install stable-baselines3 gymnasium")
+    SB3_AVAILABLE = False
 
 # =========================================================
 # PATHS
@@ -123,15 +137,15 @@ class SharpeRatioReward:
         self.window = window
         self.returns = []
         self.trades = []
-    
+
     def reset(self):
         self.returns = []
         self.trades = []
-    
+
     def add_trade(self, pnl):
         self.returns.append(pnl)
         self.trades.append({'pnl': pnl, 'timestamp': datetime.now()})
-    
+
     def calculate_sharpe(self, returns=None):
         if returns is None:
             returns = self.returns
@@ -145,7 +159,7 @@ class SharpeRatioReward:
         excess_return = mean_return - self.risk_free_rate
         sharpe = excess_return / std_return * np.sqrt(252)
         return sharpe
-    
+
     def get_reward(self, current_pnl):
         if current_pnl is None:
             return 0.0
@@ -160,49 +174,50 @@ class SharpeRatioReward:
         return np.clip(reward, -1.0, 2.0)
 
 # =========================================================
-# ✅ EARLY STOPPING CALLBACK
+# ✅ EARLY STOPPING CALLBACK (Only if SB3 available)
 # =========================================================
 
-class EarlyStoppingCallback(BaseCallback):
-    def __init__(self, eval_env, patience=10, threshold=0.001, verbose=0):
-        super().__init__(verbose)
-        self.eval_env = eval_env
-        self.patience = patience
-        self.threshold = threshold
-        self.best_mean_reward = -np.inf
-        self.no_improvement_count = 0
-        self.eval_freq = EVAL_FREQ
-    
-    def _on_step(self):
-        if self.n_calls % self.eval_freq == 0:
-            mean_reward = self._evaluate()
-            if mean_reward > self.best_mean_reward + self.threshold:
-                self.best_mean_reward = mean_reward
-                self.no_improvement_count = 0
-                if self.verbose > 0:
-                    print(f"\n   📈 New best reward: {mean_reward:.4f}")
-            else:
-                self.no_improvement_count += 1
-                if self.verbose > 0:
-                    print(f"\n   ⏳ No improvement ({self.no_improvement_count}/{self.patience})")
-            if self.no_improvement_count >= self.patience:
-                if self.verbose > 0:
-                    print(f"\n   🛑 Early stopping triggered after {self.n_calls} steps")
-                return False
-        return True
-    
-    def _evaluate(self):
-        obs = self.eval_env.reset()
-        total_reward = 0
-        steps = 0
-        while True:
-            action, _ = self.model.predict(obs, deterministic=True)
-            obs, reward, done, info = self.eval_env.step(action)
-            total_reward += reward[0] if isinstance(reward, np.ndarray) else reward
-            steps += 1
-            if done:
-                break
-        return total_reward / steps if steps > 0 else 0
+if SB3_AVAILABLE:
+    class EarlyStoppingCallback(BaseCallback):
+        def __init__(self, eval_env, patience=10, threshold=0.001, verbose=0):
+            super().__init__(verbose)
+            self.eval_env = eval_env
+            self.patience = patience
+            self.threshold = threshold
+            self.best_mean_reward = -np.inf
+            self.no_improvement_count = 0
+            self.eval_freq = EVAL_FREQ
+
+        def _on_step(self):
+            if self.n_calls % self.eval_freq == 0:
+                mean_reward = self._evaluate()
+                if mean_reward > self.best_mean_reward + self.threshold:
+                    self.best_mean_reward = mean_reward
+                    self.no_improvement_count = 0
+                    if self.verbose > 0:
+                        print(f"\n   📈 New best reward: {mean_reward:.4f}")
+                else:
+                    self.no_improvement_count += 1
+                    if self.verbose > 0:
+                        print(f"\n   ⏳ No improvement ({self.no_improvement_count}/{self.patience})")
+                if self.no_improvement_count >= self.patience:
+                    if self.verbose > 0:
+                        print(f"\n   🛑 Early stopping triggered after {self.n_calls} steps")
+                    return False
+            return True
+
+        def _evaluate(self):
+            obs = self.eval_env.reset()
+            total_reward = 0
+            steps = 0
+            while True:
+                action, _ = self.model.predict(obs, deterministic=True)
+                obs, reward, done, info = self.eval_env.step(action)
+                total_reward += reward[0] if isinstance(reward, np.ndarray) else reward
+                steps += 1
+                if done:
+                    break
+            return total_reward / steps if steps > 0 else 0
 
 # =========================================================
 # ✅ WALK-FORWARD TRAINER
@@ -215,7 +230,7 @@ class WalkForwardTrainer:
         self.step = step
         self.splits = []
         self._create_splits()
-    
+
     def _create_splits(self):
         total_length = len(self.data)
         for start in range(0, total_length - self.window, self.step):
@@ -227,7 +242,7 @@ class WalkForwardTrainer:
                     'val_start': train_end, 'val_end': val_end,
                     'iteration': len(self.splits) + 1
                 })
-    
+
     def get_all_splits(self):
         return self.splits
 
@@ -242,11 +257,11 @@ class HedgeFundTradingEnv:
     - Noise Injection (overfitting killer)
     - Randomized episodes
     """
-    
+
     def __init__(self, symbol_dfs, signals, build_observation, window, state_dim,
                  total_capital=500_000, risk_percent=0.01, symbol_name="shared",
                  shuffle_episodes=True, use_noise=True):
-        
+
         self.symbol_dfs = symbol_dfs
         self.signals = signals
         self.build_observation = build_observation
@@ -257,25 +272,25 @@ class HedgeFundTradingEnv:
         self.symbol_name = symbol_name
         self.shuffle_episodes = shuffle_episodes
         self.use_noise = use_noise
-        
+
         self.symbols = list(symbol_dfs.keys())
         self.symbol_order = self.symbols.copy()
         self.sharpe_calculator = SharpeRatioReward()
         self.reset()
-    
+
     def _add_noise(self, price):
         """✅ Noise Injection - Overfitting killer"""
         if self.use_noise:
             noise = np.random.normal(1, NOISE_STD)
             return price * noise
         return price
-    
+
     def reset(self):
         if self.shuffle_episodes:
             self.symbol_order = np.random.permutation(self.symbols).tolist()
         else:
             self.symbol_order = self.symbols.copy()
-        
+
         self.current_symbol_idx = 0
         self._load_current_symbol()
         self.current_step = self.window
@@ -285,9 +300,9 @@ class HedgeFundTradingEnv:
         self.total_reward = 0
         self.trades = []
         self.sharpe_calculator.reset()
-        
+
         return self._get_obs()
-    
+
     def _load_current_symbol(self):
         if self.current_symbol_idx < len(self.symbol_order):
             self.current_symbol = self.symbol_order[self.current_symbol_idx]
@@ -295,33 +310,33 @@ class HedgeFundTradingEnv:
         else:
             self.current_symbol = None
             self.current_df = None
-    
+
     def _get_obs(self):
         if self.current_symbol is None or self.current_step >= len(self.current_df):
             return np.zeros(self.state_dim, dtype=np.float32)
         obs = self.build_observation(self.current_df, self.current_step, self.signals)
         return np.array(obs, dtype=np.float32)
-    
+
     def step(self, action):
         if self.current_symbol is None:
             return self._get_obs(), 0, True, False, {}
-        
+
         if self.current_step >= len(self.current_df) - 1:
             return self._move_to_next_symbol()
-        
+
         row = self.current_df.iloc[self.current_step]
         next_row = self.current_df.iloc[self.current_step + 1]
-        
+
         # ✅ Apply noise to price (overfitting killer)
         price = self._add_noise(row['close'])
         next_price = self._add_noise(next_row['close'])
-        
+
         reward = 0
         trade_result = None
-        
+
         sig = self.signals.get((self.current_symbol, row['date']))
         buy_price = sig['buy'] if sig else None
-        
+
         if action == 1:  # BUY
             if self.position == 0 and buy_price:
                 risk_amount = self.capital * self.risk_percent
@@ -333,7 +348,7 @@ class HedgeFundTradingEnv:
                 reward -= 0.001
                 if price <= buy_price * 1.02:
                     reward += 0.02
-        
+
         elif action == 2:  # SELL
             if self.position > 0:
                 sell_amount = self.position * price * 0.999
@@ -352,19 +367,19 @@ class HedgeFundTradingEnv:
                 self.capital += sell_amount
                 self.position = 0
                 self.entry_price = 0
-        
+
         if action == 0 and self.position == 0:
             if next_price > price:
                 reward += 0.001
             elif next_price < price:
                 reward -= 0.001
-        
+
         self.current_step += 1
         self.total_reward += reward
-        
+
         if self.current_step >= len(self.current_df) - 1:
             return self._move_to_next_symbol()
-        
+
         return self._get_obs(), reward, False, False, {
             'balance': self.capital,
             'symbol': self.current_symbol,
@@ -372,7 +387,7 @@ class HedgeFundTradingEnv:
             'total_return': (self.capital / self.total_capital - 1) * 100,
             'sharpe_ratio': self.sharpe_calculator.calculate_sharpe()
         }
-    
+
     def _move_to_next_symbol(self):
         self.current_symbol_idx += 1
         if self.current_symbol_idx >= len(self.symbol_order):
@@ -398,56 +413,58 @@ class HedgeFundTradingEnv:
 # ✅ ENSEMBLE PPO (Multiple models average decision)
 # =========================================================
 
-class EnsemblePPO:
-    """
-    Ensemble of multiple PPO models for robust decision making
-    """
-    
-    def __init__(self, model_paths, weights=None):
-        self.models = []
-        self.weights = weights if weights else [1.0 / len(model_paths)] * len(model_paths)
-        
-        for path in model_paths:
-            try:
-                model = PPO.load(path, device="cpu")
-                self.models.append(model)
-                print(f"   ✅ Loaded ensemble model: {path}")
-            except Exception as e:
-                print(f"   ⚠️ Failed to load {path}: {e}")
-    
-    def predict(self, observation, deterministic=True):
-        """Ensemble prediction - average of all models"""
-        if not self.models:
-            return 0, None
-        
-        all_actions = []
-        all_probs = []
-        
-        for model in self.models:
-            action, _ = model.predict(observation, deterministic=deterministic)
-            all_actions.append(action[0] if isinstance(action, np.ndarray) else action)
-            
-            # Get action probabilities if available
-            try:
-                probs = model.policy.get_distribution(observation).distribution.probs
-                all_probs.append(probs.detach().numpy())
-            except:
-                pass
-        
-        # Weighted average of actions
-        final_action = np.average(all_actions, weights=self.weights)
-        final_action = int(round(final_action))
-        
-        return final_action, {'actions': all_actions, 'weights': self.weights}
-    
-    def save_ensemble(self, path):
-        """Save ensemble metadata"""
-        ensemble_info = {
-            'model_paths': [str(p) for p in self.model_paths],
-            'weights': self.weights,
-            'created_at': datetime.now().isoformat()
-        }
-        joblib.dump(ensemble_info, path)
+if SB3_AVAILABLE:
+    class EnsemblePPO:
+        """
+        Ensemble of multiple PPO models for robust decision making
+        """
+
+        def __init__(self, model_paths, weights=None):
+            self.models = []
+            self.weights = weights if weights else [1.0 / len(model_paths)] * len(model_paths)
+            self.model_paths = model_paths
+
+            for path in model_paths:
+                try:
+                    model = PPO.load(path, device="cpu")
+                    self.models.append(model)
+                    print(f"   ✅ Loaded ensemble model: {path}")
+                except Exception as e:
+                    print(f"   ⚠️ Failed to load {path}: {e}")
+
+        def predict(self, observation, deterministic=True):
+            """Ensemble prediction - average of all models"""
+            if not self.models:
+                return 0, None
+
+            all_actions = []
+            all_probs = []
+
+            for model in self.models:
+                action, _ = model.predict(observation, deterministic=deterministic)
+                all_actions.append(action[0] if isinstance(action, np.ndarray) else action)
+
+                # Get action probabilities if available
+                try:
+                    probs = model.policy.get_distribution(observation).distribution.probs
+                    all_probs.append(probs.detach().numpy())
+                except:
+                    pass
+
+            # Weighted average of actions
+            final_action = np.average(all_actions, weights=self.weights)
+            final_action = int(round(final_action))
+
+            return final_action, {'actions': all_actions, 'weights': self.weights}
+
+        def save_ensemble(self, path):
+            """Save ensemble metadata"""
+            ensemble_info = {
+                'model_paths': [str(p) for p in self.model_paths],
+                'weights': self.weights,
+                'created_at': datetime.now().isoformat()
+            }
+            joblib.dump(ensemble_info, path)
 
 # =========================================================
 # ✅ TRAIN WITH FINAL TEST PHASE
@@ -462,25 +479,29 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
     4. Ensemble training
     5. Final test on NEVER TOUCHED data
     """
-    
+
+    if not SB3_AVAILABLE:
+        print(f"\n   ⚠️ Skipping {symbol}: SB3 not available")
+        return None, {}
+
     print(f"\n{'─'*50}")
     print(f"🎯 HEDGE FUND LEVEL TRAINING: {symbol} (AUC: {xgb_auc:.2%})")
     print(f"{'─'*50}")
-    
+
     # ✅ Step 1: Create FINAL TEST split (never touched during training)
     total_len = len(symbol_data)
     train_end = int(total_len * TRAIN_RATIO)
     val_end = int(total_len * (TRAIN_RATIO + VALIDATION_RATIO))
-    
+
     train_data = symbol_data.iloc[:train_end]
     val_data = symbol_data.iloc[train_end:val_end]
     test_data = symbol_data.iloc[val_end:]
-    
+
     print(f"   📊 Data Split:")
     print(f"      Train: {len(train_data)} rows ({TRAIN_RATIO:.0%})")
     print(f"      Validation: {len(val_data)} rows ({VALIDATION_RATIO:.0%})")
     print(f"      🧪 FINAL TEST: {len(test_data)} rows ({TEST_RATIO:.0%}) - NEVER TOUCHED")
-    
+
     # Select config based on XGBoost quality
     if xgb_auc >= 0.85:
         config = PPO_PER_SYMBOL_CONFIG['high_quality']
@@ -488,18 +509,18 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
         config = PPO_PER_SYMBOL_CONFIG['good_quality']
     else:
         config = PPO_PER_SYMBOL_CONFIG['fallback']
-    
+
     # ✅ Step 2: Train multiple ensemble models
     ensemble_models = []
     ensemble_stats = []
-    
+
     for ensemble_idx in range(ENSEMBLE_SIZE if USE_ENSEMBLE else 1):
         print(f"\n   🧠 Training Ensemble Model {ensemble_idx + 1}/{ENSEMBLE_SIZE}")
-        
+
         # Create environments with noise injection
         train_dfs = {symbol: train_data}
         val_dfs = {symbol: val_data}
-        
+
         train_env = HedgeFundTradingEnv(
             train_dfs, signals, build_observation, WINDOW, STATE_DIM,
             TOTAL_CAPITAL, RISK_PERCENT, f"{symbol}_train_ens{ensemble_idx}",
@@ -510,10 +531,10 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
             TOTAL_CAPITAL, RISK_PERCENT, f"{symbol}_val_ens{ensemble_idx}",
             shuffle_episodes=False, use_noise=False
         )
-        
+
         train_env = DummyVecEnv([lambda: train_env])
         val_env = DummyVecEnv([lambda: val_env])
-        
+
         # Create model with different random seed for diversity
         ppo_config = PPO_CONFIG.copy()
         ppo_config.update({
@@ -522,15 +543,15 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
             'learning_rate': config['learning_rate'],
             'seed': 42 + ensemble_idx
         })
-        
+
         model = PPO("MlpPolicy", train_env, **ppo_config, verbose=0)
-        
+
         # Early stopping callback
         early_stop = EarlyStoppingCallback(val_env, patience=EARLY_STOPPING_PATIENCE, verbose=0)
-        
+
         # Train
         model.learn(total_timesteps=config['timesteps'], callback=early_stop)
-        
+
         # ✅ Step 3: Evaluate on validation
         obs = val_env.reset()
         total_return = 0
@@ -542,34 +563,34 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
             steps += 1
             if done:
                 break
-        
+
         val_sharpe = info[0].get('sharpe_ratio', 0) if isinstance(info, list) else info.get('sharpe_ratio', 0)
         print(f"      Val Return: {total_return:.2f} | Sharpe: {val_sharpe:.3f}")
-        
+
         # Save individual model
         model_path = PPO_ENSEMBLE_DIR / f"ppo_{symbol}_ens{ensemble_idx}"
         model.save(model_path)
         ensemble_models.append(model_path)
         ensemble_stats.append({'sharpe': val_sharpe, 'return': total_return})
-    
+
     # ✅ Step 4: Create ensemble predictor
     if USE_ENSEMBLE and len(ensemble_models) > 1:
         # Weight models by validation Sharpe ratio
         sharpe_vals = [s['sharpe'] for s in ensemble_stats]
         total_sharpe = sum(sharpe_vals) if sum(sharpe_vals) > 0 else 1
         weights = [s / total_sharpe for s in sharpe_vals]
-        
+
         ensemble = EnsemblePPO(ensemble_models, weights)
         print(f"\n   🎯 Ensemble created with {len(ensemble_models)} models")
         print(f"   Weights: {[round(w, 2) for w in weights]}")
-        
+
         final_model = ensemble
     else:
         final_model = PPO.load(ensemble_models[0], device="cpu")
-    
+
     # ✅ Step 5: FINAL TEST on never-touched data
     print(f"\n   🧪 FINAL TEST on NEVER-TOUCHED data ({len(test_data)} rows)")
-    
+
     test_dfs = {symbol: test_data}
     test_env = HedgeFundTradingEnv(
         test_dfs, signals, build_observation, WINDOW, STATE_DIM,
@@ -577,40 +598,40 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
         shuffle_episodes=False, use_noise=False
     )
     test_env = DummyVecEnv([lambda: test_env])
-    
+
     obs = test_env.reset()
     total_return = 0
     test_trades = []
     steps = 0
-    
+
     while True:
         if USE_ENSEMBLE and isinstance(final_model, EnsemblePPO):
             action, _ = final_model.predict(obs, deterministic=True)
         else:
             action, _ = final_model.predict(obs, deterministic=True)
             action = action[0] if isinstance(action, np.ndarray) else action
-        
+
         obs, reward, done, info = test_env.step(action)
         total_return += reward[0] if isinstance(reward, np.ndarray) else reward
         steps += 1
-        
+
         if info[0].get('trade_result'):
             test_trades.append(info[0]['trade_result'])
-        
+
         if done:
             break
-    
+
     final_sharpe = info[0].get('sharpe_ratio', 0) if isinstance(info, list) else info.get('sharpe_ratio', 0)
     profitable_trades = sum(1 for t in test_trades if t.get('success', False))
     total_trades = len(test_trades)
     win_rate = profitable_trades / total_trades if total_trades > 0 else 0
-    
+
     print(f"\n   📊 FINAL TEST RESULTS:")
     print(f"      Total Return: {total_return:.2f}%")
     print(f"      Sharpe Ratio: {final_sharpe:.3f}")
     print(f"      Win Rate: {win_rate:.2%} ({profitable_trades}/{total_trades})")
     print(f"      Total Trades: {total_trades}")
-    
+
     # Save final model
     final_path = PPO_SYMBOL_DIR / f"ppo_{symbol}"
     if USE_ENSEMBLE and isinstance(final_model, EnsemblePPO):
@@ -619,9 +640,9 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
         joblib.dump({'model_paths': ensemble_models, 'weights': weights}, ensemble_info_path)
     else:
         final_model.save(final_path)
-    
+
     print(f"   ✅ Model saved: {final_path}")
-    
+
     return final_model, {
         'success_rate': win_rate,
         'sharpe_ratio': final_sharpe,
@@ -749,38 +770,42 @@ def update_last_ppo_train():
 
 def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, is_retrain=False):
     """Train shared PPO with Hedge Fund level features"""
-    
+
+    if not SB3_AVAILABLE:
+        print("\n   ⚠️ Skipping shared PPO: SB3 not available")
+        return None, {}
+
     print(f"\n{'='*60}")
     print(f"🎯 HEDGE FUND LEVEL - Shared PPO Training")
     print(f"{'='*60}")
-    
+
     if exclude_symbols:
         filtered_data = {k: v for k, v in all_symbols_data.items() if k not in exclude_symbols}
         print(f"   Excluding {len(exclude_symbols)} symbols")
     else:
         filtered_data = all_symbols_data
-    
+
     # Combine all symbols data
     combined_data = pd.concat(filtered_data.values(), ignore_index=True)
     combined_data = combined_data.sort_values('date').reset_index(drop=True)
-    
+
     # Create train/val/test split
     total_len = len(combined_data)
     train_end = int(total_len * TRAIN_RATIO)
     val_end = int(total_len * (TRAIN_RATIO + VALIDATION_RATIO))
-    
+
     train_data = combined_data.iloc[:train_end]
     val_data = combined_data.iloc[train_end:val_end]
     test_data = combined_data.iloc[val_end:]
-    
+
     print(f"   Data Split: Train={len(train_data)}, Val={len(val_data)}, 🧪Test={len(test_data)}")
-    
+
     # Train ensemble
     ensemble_models = []
-    
+
     for ensemble_idx in range(ENSEMBLE_SIZE if USE_ENSEMBLE else 1):
         print(f"\n   🧠 Training Shared Ensemble {ensemble_idx + 1}/{ENSEMBLE_SIZE}")
-        
+
         train_env = HedgeFundTradingEnv(
             filtered_data, signals, build_observation, WINDOW, STATE_DIM,
             TOTAL_CAPITAL, RISK_PERCENT, f"shared_ens{ensemble_idx}",
@@ -791,10 +816,10 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
             TOTAL_CAPITAL, RISK_PERCENT, f"shared_val_ens{ensemble_idx}",
             shuffle_episodes=False, use_noise=False
         )
-        
+
         train_env = DummyVecEnv([lambda: train_env])
         val_env = DummyVecEnv([lambda: val_env])
-        
+
         if is_retrain and os.path.exists(f"{PPO_SHARED_PATH}.zip"):
             model = PPO.load(PPO_SHARED_PATH, env=train_env, device="cpu")
             model.learning_rate = PPO_CONFIG['learning_rate'] * 0.5
@@ -804,12 +829,12 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
             ppo_config['seed'] = 42 + ensemble_idx
             model = PPO("MlpPolicy", train_env, **ppo_config, verbose=0)
             timesteps = 100000
-        
+
         early_stop = EarlyStoppingCallback(val_env, patience=EARLY_STOPPING_PATIENCE, verbose=0)
         model.learn(total_timesteps=timesteps, callback=early_stop)
-        
+
         ensemble_models.append(model)
-    
+
     # Final test on never-touched data
     print(f"\n   🧪 FINAL TEST on never-touched data")
     test_env = HedgeFundTradingEnv(
@@ -818,32 +843,32 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
         shuffle_episodes=False, use_noise=False
     )
     test_env = DummyVecEnv([lambda: test_env])
-    
+
     # Use ensemble average for final test
     obs = test_env.reset()
     total_return = 0
     steps = 0
-    
+
     while True:
         all_actions = []
         for model in ensemble_models:
             action, _ = model.predict(obs, deterministic=True)
             all_actions.append(action[0] if isinstance(action, np.ndarray) else action)
         final_action = int(round(np.mean(all_actions)))
-        
+
         obs, reward, done, info = test_env.step(final_action)
         total_return += reward[0] if isinstance(reward, np.ndarray) else reward
         steps += 1
         if done:
             break
-    
+
     final_sharpe = info[0].get('sharpe_ratio', 0) if isinstance(info, list) else info.get('sharpe_ratio', 0)
     print(f"   📊 Test Sharpe: {final_sharpe:.3f} | Return: {total_return:.2f}%")
-    
+
     # Save best model
     ensemble_models[0].save(PPO_SHARED_PATH)
     print(f"   ✅ Shared model saved: {PPO_SHARED_PATH}")
-    
+
     return ensemble_models[0], {'sharpe_ratio': final_sharpe, 'ensemble_size': len(ensemble_models)}
 
 # =========================================================
@@ -852,7 +877,7 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
 
 def train_ppo_system():
     """Main training function - HEDGE FUND LEVEL"""
-    
+
     print("="*70)
     print("🏦 HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM")
     print("="*70)
@@ -860,32 +885,38 @@ def train_ppo_system():
     print(f"💰 Initial Capital: ${TOTAL_CAPITAL:,.2f}")
     print(f"📊 Features: Train/Val/Test Split | Noise Injection | Ensemble PPO | Sharpe Ratio")
     print("="*70)
-    
+
+    if not SB3_AVAILABLE:
+        print("\n⚠️ Stable-Baselines3 not available!")
+        print("   Install with: pip install stable-baselines3 gymnasium")
+        print("   Skipping PPO training...")
+        return [], None
+
     should_retrain, reason = should_retrain_ppo()
     is_retrain = should_retrain and os.path.exists(f"{PPO_SHARED_PATH}.zip")
-    
+
     print(f"\n📊 Training Status: {reason}")
     print(f"   Mode: {'RETRAIN' if is_retrain else 'FIRST-TIME'}")
-    
+
     # Load data
     print("\n📂 Loading market data...")
     if not os.path.exists(CSV_MARKET):
         print(f"   ❌ Market data not found")
         return [], None
-    
+
     df = pd.read_csv(CSV_MARKET)
     if 'date' in df.columns:
         df['date'] = pd.to_datetime(df['date']).dt.strftime("%Y-%m-%d")
     print(f"   ✅ Loaded {len(df)} rows, {df['symbol'].nunique()} symbols")
-    
+
     signals = load_signals(CSV_SIGNAL)
     xgb_metadata = load_xgb_metadata()
-    
+
     if not xgb_metadata.empty:
         top_symbols = xgb_metadata[xgb_metadata['auc'] >= XGB_AUC_THRESHOLD_FOR_PPO].head(MAX_PER_SYMBOL_MODELS)
         top_symbol_list = top_symbols['symbol'].tolist()
         print(f"   ✅ Selected {len(top_symbol_list)} symbols for per-symbol PPO")
-    
+
     # Prepare data
     all_symbols_data = {}
     for symbol in df['symbol'].unique():
@@ -893,27 +924,23 @@ def train_ppo_system():
         if len(symbol_df) >= WINDOW + 50:
             all_symbols_data[symbol] = symbol_df
     print(f"   ✅ Prepared {len(all_symbols_data)} symbols")
-    
+
     load_past_mistakes()
-    
+
     # Train per-symbol PPO (Hedge Fund Level)
     trained_symbols = []
     per_symbol_stats = []
-    
+
     try:
-        from stable_baselines3 import PPO
-        from stable_baselines3.common.vec_env import DummyVecEnv
-        from stable_baselines3.common.callbacks import BaseCallback
-        
         print("\n🏆 Training Per-Symbol PPO Models (Hedge Fund Level)")
-        
+
         for symbol in top_symbol_list[:3]:  # Limit for demonstration
             if symbol not in all_symbols_data:
                 continue
-            
+
             symbol_data = all_symbols_data[symbol]
             xgb_info = top_symbols[top_symbols['symbol'] == symbol].iloc[0]
-            
+
             try:
                 model, stats = train_with_final_test(
                     symbol, symbol_data, signals, xgb_info['auc'], is_retrain
@@ -922,29 +949,29 @@ def train_ppo_system():
                 per_symbol_stats.append(stats)
             except Exception as e:
                 print(f"\n   ❌ Failed to train {symbol}: {e}")
-        
+
         print(f"\n✅ Per-symbol PPO trained: {len(trained_symbols)} symbols")
-        
+
         # Train shared PPO (Hedge Fund Level)
         print("\n🏆 Training Shared PPO Model (Hedge Fund Level)")
         shared_model, shared_stats = train_shared_ppo_hedgefund(
             all_symbols_data, signals, exclude_symbols=trained_symbols, is_retrain=is_retrain
         )
-        
+
         update_last_ppo_train()
-        
+
     except ImportError as e:
         print(f"\n   ⚠️ PPO dependencies not available: {e}")
     except Exception as e:
         print(f"\n   ⚠️ PPO training error: {e}")
-    
+
     print("\n" + "="*70)
     print("🏦 HEDGE FUND LEVEL PPO TRAINING COMPLETE!")
     print("="*70)
     print(f"   Per-symbol models: {len(trained_symbols)}")
     print(f"   ✅ Train/Val/Test Split | ✅ Noise Injection | ✅ Ensemble PPO | ✅ Sharpe Ratio")
     print("="*70)
-    
+
     return trained_symbols, shared_model
 
 def main():
