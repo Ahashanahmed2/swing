@@ -1,4 +1,4 @@
-# ppo_train.py - HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM (FULLY UPDATED)
+# ppo_train.py - HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM (GYMNASIUM COMPATIBLE)
 # Features:
 # 1. Per-symbol PPO for top GOOD XGBoost models (AUC >= 0.70)
 # 2. Shared PPO for all other symbols (fallback)
@@ -15,6 +15,7 @@
 # 13. ✅ Ensemble PPO (multiple models average decision)
 # 14. ✅ Fixed date parsing for prediction_log.csv
 # 15. ✅ Graceful handling of missing files
+# 16. ✅ FULL GYMNASIUM COMPLIANCE
 
 import os
 import sys
@@ -27,13 +28,23 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # =========================================================
-# ✅ FIXED: Import for Stable-Baselines3 with fallback
+# ✅ GYMNASIUM IMPORTS WITH FALLBACK
 # =========================================================
+
+try:
+    import gymnasium as gym
+    from gymnasium import spaces
+    GYM_AVAILABLE = True
+except ImportError:
+    print("⚠️ gymnasium not available. Installing recommended:")
+    print("   pip install gymnasium")
+    GYM_AVAILABLE = False
 
 try:
     from stable_baselines3 import PPO
     from stable_baselines3.common.vec_env import DummyVecEnv
     from stable_baselines3.common.callbacks import BaseCallback, EvalCallback
+    from stable_baselines3.common.env_checker import check_env
     SB3_AVAILABLE = True
 except ImportError as e:
     print(f"⚠️ Stable-Baselines3 not available: {e}")
@@ -174,7 +185,246 @@ class SharpeRatioReward:
         return np.clip(reward, -1.0, 2.0)
 
 # =========================================================
-# ✅ EARLY STOPPING CALLBACK (Only if SB3 available)
+# ✅ GYMNASIUM COMPATIBLE HEDGE FUND TRADING ENVIRONMENT
+# =========================================================
+
+class HedgeFundTradingEnv(gym.Env):
+    """
+    Hedge Fund Level Trading Environment with:
+    - FULL Gymnasium compliance
+    - Sharpe Ratio reward
+    - Noise Injection (overfitting killer)
+    - Randomized episodes
+    """
+    metadata = {'render_modes': ['human']}
+
+    def __init__(self, symbol_dfs, signals, build_observation, window, state_dim,
+                 total_capital=500_000, risk_percent=0.01, symbol_name="shared",
+                 shuffle_episodes=True, use_noise=True):
+
+        super().__init__()
+        
+        self.symbol_dfs = symbol_dfs
+        self.signals = signals
+        self.build_observation = build_observation
+        self.window = window
+        self.state_dim = state_dim
+        self.total_capital = total_capital
+        self.risk_percent = risk_percent
+        self.symbol_name = symbol_name
+        self.shuffle_episodes = shuffle_episodes
+        self.use_noise = use_noise
+
+        self.symbols = list(symbol_dfs.keys())
+        self.symbol_order = self.symbols.copy()
+        self.sharpe_calculator = SharpeRatioReward()
+        
+        # ✅ Define action space: 0=Hold, 1=Buy, 2=Sell
+        self.action_space = spaces.Discrete(3)
+        
+        # ✅ Define observation space (Gymnasium requirement)
+        self.observation_space = spaces.Box(
+            low=-np.inf, 
+            high=np.inf, 
+            shape=(state_dim,), 
+            dtype=np.float32
+        )
+        
+        self.reset()
+
+    def _add_noise(self, price):
+        """✅ Noise Injection - Overfitting killer"""
+        if self.use_noise:
+            noise = np.random.normal(1, NOISE_STD)
+            return price * noise
+        return price
+
+    def reset(self, seed=None, options=None):
+        """✅ Gymnasium compliant reset method"""
+        super().reset(seed=seed)
+        
+        if self.shuffle_episodes:
+            self.symbol_order = np.random.permutation(self.symbols).tolist()
+        else:
+            self.symbol_order = self.symbols.copy()
+
+        self.current_symbol_idx = 0
+        self._load_current_symbol()
+        self.current_step = self.window
+        self.capital = self.total_capital
+        self.position = 0
+        self.entry_price = 0
+        self.total_reward = 0
+        self.trades = []
+        self.sharpe_calculator.reset()
+
+        observation = self._get_obs()
+        info = {
+            'balance': self.capital,
+            'symbol': self.current_symbol if self.current_symbol else 'NONE',
+            'total_return': 0,
+            'sharpe_ratio': 0
+        }
+        
+        return observation, info
+
+    def _load_current_symbol(self):
+        if self.current_symbol_idx < len(self.symbol_order):
+            self.current_symbol = self.symbol_order[self.current_symbol_idx]
+            self.current_df = self.symbol_dfs[self.current_symbol]
+        else:
+            self.current_symbol = None
+            self.current_df = None
+
+    def _get_obs(self):
+        if self.current_symbol is None or self.current_step >= len(self.current_df):
+            return np.zeros(self.state_dim, dtype=np.float32)
+        obs = self.build_observation(self.current_df, self.current_step, self.signals)
+        return np.array(obs, dtype=np.float32)
+
+    def step(self, action):
+        """
+        ✅ Gymnasium compliant step method
+        Returns: observation, reward, terminated, truncated, info
+        """
+        if self.current_symbol is None:
+            return self._get_obs(), 0, True, False, {}
+
+        if self.current_step >= len(self.current_df) - 1:
+            return self._move_to_next_symbol()
+
+        row = self.current_df.iloc[self.current_step]
+        next_row = self.current_df.iloc[self.current_step + 1]
+
+        # ✅ Apply noise to price (overfitting killer)
+        price = self._add_noise(row['close'])
+        next_price = self._add_noise(next_row['close'])
+
+        reward = 0
+        trade_result = None
+
+        sig = self.signals.get((self.current_symbol, row['date']))
+        buy_price = sig['buy'] if sig else None
+
+        # Action handling
+        if action == 1:  # BUY
+            if self.position == 0 and buy_price:
+                risk_amount = self.capital * self.risk_percent
+                shares = risk_amount / (price * 0.03)
+                shares = min(shares, self.capital / price)
+                self.position = shares
+                self.entry_price = price
+                self.capital -= shares * price
+                reward -= 0.001
+                if price <= buy_price * 1.02:
+                    reward += 0.02
+
+        elif action == 2:  # SELL
+            if self.position > 0:
+                sell_amount = self.position * price * 0.999
+                pnl = (price - self.entry_price) / self.entry_price
+                sharpe_reward = self.sharpe_calculator.get_reward(pnl)
+                reward = pnl * 10 + sharpe_reward
+                trade_result = {
+                    'symbol': self.current_symbol,
+                    'entry_price': self.entry_price,
+                    'exit_price': price,
+                    'pnl': pnl,
+                    'success': pnl > 0,
+                    'sharpe_reward': sharpe_reward
+                }
+                self.trades.append(trade_result)
+                self.capital += sell_amount
+                self.position = 0
+                self.entry_price = 0
+
+        # Hold action reward
+        if action == 0 and self.position == 0:
+            if next_price > price:
+                reward += 0.001
+            elif next_price < price:
+                reward -= 0.001
+
+        self.current_step += 1
+        self.total_reward += reward
+
+        # Check if episode is done
+        terminated = self.current_step >= len(self.current_df) - 1
+        truncated = False  # We don't use truncation in this environment
+
+        if terminated:
+            return self._move_to_next_symbol()
+
+        info = {
+            'balance': self.capital,
+            'symbol': self.current_symbol,
+            'trade_result': trade_result,
+            'total_return': (self.capital / self.total_capital - 1) * 100,
+            'sharpe_ratio': self.sharpe_calculator.calculate_sharpe()
+        }
+
+        return self._get_obs(), reward, terminated, truncated, info
+
+    def _move_to_next_symbol(self):
+        """Move to next symbol or end episode"""
+        self.current_symbol_idx += 1
+        
+        if self.current_symbol_idx >= len(self.symbol_order):
+            # Episode finished
+            observation = self._get_obs()
+            reward = 0
+            terminated = True
+            truncated = False
+            info = {
+                'balance': self.capital,
+                'symbol': 'END',
+                'total_return': (self.capital / self.total_capital - 1) * 100,
+                'sharpe_ratio': self.sharpe_calculator.calculate_sharpe()
+            }
+            return observation, reward, terminated, truncated, info
+        else:
+            # Move to next symbol
+            self._load_current_symbol()
+            self.current_step = self.window
+            self.position = 0
+            self.entry_price = 0
+            
+            observation = self._get_obs()
+            reward = 0
+            terminated = False
+            truncated = False
+            info = {
+                'balance': self.capital,
+                'symbol': self.current_symbol,
+                'total_return': (self.capital / self.total_capital - 1) * 100,
+                'sharpe_ratio': self.sharpe_calculator.calculate_sharpe()
+            }
+            return observation, reward, terminated, truncated, info
+
+    def render(self, mode='human'):
+        """✅ Optional render method for debugging"""
+        if mode == 'human':
+            print(f"Symbol: {self.current_symbol}, Step: {self.current_step}, "
+                  f"Capital: ${self.capital:,.2f}, Position: {self.position:.2f}")
+
+# =========================================================
+# ✅ ENVIRONMENT VALIDATION FUNCTION
+# =========================================================
+
+def validate_environment(env):
+    """Validate environment is Gymnasium compliant"""
+    if GYM_AVAILABLE and SB3_AVAILABLE:
+        try:
+            check_env(env)
+            print("   ✅ Environment validation passed")
+            return True
+        except Exception as e:
+            print(f"   ⚠️ Environment validation warning: {e}")
+            return False
+    return True
+
+# =========================================================
+# ✅ EARLY STOPPING CALLBACK (SB3 compatible)
 # =========================================================
 
 if SB3_AVAILABLE:
@@ -207,20 +457,24 @@ if SB3_AVAILABLE:
             return True
 
         def _evaluate(self):
-            obs = self.eval_env.reset()
+            obs, _ = self.eval_env.reset()
             total_reward = 0
             steps = 0
-            while True:
+            terminated = False
+            truncated = False
+            
+            while not (terminated or truncated):
                 action, _ = self.model.predict(obs, deterministic=True)
-                obs, reward, done, info = self.eval_env.step(action)
-                total_reward += reward[0] if isinstance(reward, np.ndarray) else reward
+                obs, reward, terminated, truncated, info = self.eval_env.step(action)
+                total_reward += reward
                 steps += 1
-                if done:
+                if steps > 10000:  # Safety limit
                     break
+                    
             return total_reward / steps if steps > 0 else 0
 
 # =========================================================
-# ✅ WALK-FORWARD TRAINER
+# ✅ WALK-FORWARD TRAINER (Kept as is - no changes needed)
 # =========================================================
 
 class WalkForwardTrainer:
@@ -245,169 +499,6 @@ class WalkForwardTrainer:
 
     def get_all_splits(self):
         return self.splits
-
-# =========================================================
-# ✅ HEDGE FUND LEVEL TRADING ENVIRONMENT
-# =========================================================
-
-class HedgeFundTradingEnv:
-    """
-    Hedge Fund Level Trading Environment with:
-    - Sharpe Ratio reward
-    - Noise Injection (overfitting killer)
-    - Randomized episodes
-    """
-
-    def __init__(self, symbol_dfs, signals, build_observation, window, state_dim,
-                 total_capital=500_000, risk_percent=0.01, symbol_name="shared",
-                 shuffle_episodes=True, use_noise=True):
-
-        self.symbol_dfs = symbol_dfs
-        self.signals = signals
-        self.build_observation = build_observation
-        self.window = window
-        self.state_dim = state_dim
-        self.total_capital = total_capital
-        self.risk_percent = risk_percent
-        self.symbol_name = symbol_name
-        self.shuffle_episodes = shuffle_episodes
-        self.use_noise = use_noise
-
-        self.symbols = list(symbol_dfs.keys())
-        self.symbol_order = self.symbols.copy()
-        self.sharpe_calculator = SharpeRatioReward()
-        self.reset()
-
-    def _add_noise(self, price):
-        """✅ Noise Injection - Overfitting killer"""
-        if self.use_noise:
-            noise = np.random.normal(1, NOISE_STD)
-            return price * noise
-        return price
-
-    def reset(self):
-        if self.shuffle_episodes:
-            self.symbol_order = np.random.permutation(self.symbols).tolist()
-        else:
-            self.symbol_order = self.symbols.copy()
-
-        self.current_symbol_idx = 0
-        self._load_current_symbol()
-        self.current_step = self.window
-        self.capital = self.total_capital
-        self.position = 0
-        self.entry_price = 0
-        self.total_reward = 0
-        self.trades = []
-        self.sharpe_calculator.reset()
-
-        return self._get_obs()
-
-    def _load_current_symbol(self):
-        if self.current_symbol_idx < len(self.symbol_order):
-            self.current_symbol = self.symbol_order[self.current_symbol_idx]
-            self.current_df = self.symbol_dfs[self.current_symbol]
-        else:
-            self.current_symbol = None
-            self.current_df = None
-
-    def _get_obs(self):
-        if self.current_symbol is None or self.current_step >= len(self.current_df):
-            return np.zeros(self.state_dim, dtype=np.float32)
-        obs = self.build_observation(self.current_df, self.current_step, self.signals)
-        return np.array(obs, dtype=np.float32)
-
-    def step(self, action):
-        if self.current_symbol is None:
-            return self._get_obs(), 0, True, False, {}
-
-        if self.current_step >= len(self.current_df) - 1:
-            return self._move_to_next_symbol()
-
-        row = self.current_df.iloc[self.current_step]
-        next_row = self.current_df.iloc[self.current_step + 1]
-
-        # ✅ Apply noise to price (overfitting killer)
-        price = self._add_noise(row['close'])
-        next_price = self._add_noise(next_row['close'])
-
-        reward = 0
-        trade_result = None
-
-        sig = self.signals.get((self.current_symbol, row['date']))
-        buy_price = sig['buy'] if sig else None
-
-        if action == 1:  # BUY
-            if self.position == 0 and buy_price:
-                risk_amount = self.capital * self.risk_percent
-                shares = risk_amount / (price * 0.03)
-                shares = min(shares, self.capital / price)
-                self.position = shares
-                self.entry_price = price
-                self.capital -= shares * price
-                reward -= 0.001
-                if price <= buy_price * 1.02:
-                    reward += 0.02
-
-        elif action == 2:  # SELL
-            if self.position > 0:
-                sell_amount = self.position * price * 0.999
-                pnl = (price - self.entry_price) / self.entry_price
-                sharpe_reward = self.sharpe_calculator.get_reward(pnl)
-                reward = pnl * 10 + sharpe_reward
-                trade_result = {
-                    'symbol': self.current_symbol,
-                    'entry_price': self.entry_price,
-                    'exit_price': price,
-                    'pnl': pnl,
-                    'success': pnl > 0,
-                    'sharpe_reward': sharpe_reward
-                }
-                self.trades.append(trade_result)
-                self.capital += sell_amount
-                self.position = 0
-                self.entry_price = 0
-
-        if action == 0 and self.position == 0:
-            if next_price > price:
-                reward += 0.001
-            elif next_price < price:
-                reward -= 0.001
-
-        self.current_step += 1
-        self.total_reward += reward
-
-        if self.current_step >= len(self.current_df) - 1:
-            return self._move_to_next_symbol()
-
-        return self._get_obs(), reward, False, False, {
-            'balance': self.capital,
-            'symbol': self.current_symbol,
-            'trade_result': trade_result,
-            'total_return': (self.capital / self.total_capital - 1) * 100,
-            'sharpe_ratio': self.sharpe_calculator.calculate_sharpe()
-        }
-
-    def _move_to_next_symbol(self):
-        self.current_symbol_idx += 1
-        if self.current_symbol_idx >= len(self.symbol_order):
-            return self._get_obs(), 0, True, False, {
-                'balance': self.capital,
-                'symbol': 'END',
-                'total_return': (self.capital / self.total_capital - 1) * 100,
-                'sharpe_ratio': self.sharpe_calculator.calculate_sharpe()
-            }
-        else:
-            self._load_current_symbol()
-            self.current_step = self.window
-            self.position = 0
-            self.entry_price = 0
-            return self._get_obs(), 0, False, False, {
-                'balance': self.capital,
-                'symbol': self.current_symbol,
-                'total_return': (self.capital / self.total_capital - 1) * 100,
-                'sharpe_ratio': self.sharpe_calculator.calculate_sharpe()
-            }
 
 # =========================================================
 # ✅ ENSEMBLE PPO (Multiple models average decision)
@@ -444,13 +535,6 @@ if SB3_AVAILABLE:
                 action, _ = model.predict(observation, deterministic=deterministic)
                 all_actions.append(action[0] if isinstance(action, np.ndarray) else action)
 
-                # Get action probabilities if available
-                try:
-                    probs = model.policy.get_distribution(observation).distribution.probs
-                    all_probs.append(probs.detach().numpy())
-                except:
-                    pass
-
             # Weighted average of actions
             final_action = np.average(all_actions, weights=self.weights)
             final_action = int(round(final_action))
@@ -467,7 +551,7 @@ if SB3_AVAILABLE:
             joblib.dump(ensemble_info, path)
 
 # =========================================================
-# ✅ TRAIN WITH FINAL TEST PHASE
+# ✅ TRAIN WITH FINAL TEST PHASE (UPDATED FOR GYMNASIUM)
 # =========================================================
 
 def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=False):
@@ -480,8 +564,8 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
     5. Final test on NEVER TOUCHED data
     """
 
-    if not SB3_AVAILABLE:
-        print(f"\n   ⚠️ Skipping {symbol}: SB3 not available")
+    if not SB3_AVAILABLE or not GYM_AVAILABLE:
+        print(f"\n   ⚠️ Skipping {symbol}: Required packages not available")
         return None, {}
 
     print(f"\n{'─'*50}")
@@ -532,6 +616,10 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
             shuffle_episodes=False, use_noise=False
         )
 
+        # ✅ Validate environments
+        validate_environment(train_env)
+
+        # Wrap for SB3
         train_env = DummyVecEnv([lambda: train_env])
         val_env = DummyVecEnv([lambda: val_env])
 
@@ -556,12 +644,15 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
         obs = val_env.reset()
         total_return = 0
         steps = 0
-        while True:
+        terminated = False
+        truncated = False
+        
+        while not (terminated or truncated):
             action, _ = model.predict(obs, deterministic=True)
-            obs, reward, done, info = val_env.step(action)
+            obs, reward, terminated, truncated, info = val_env.step(action)
             total_return += reward[0] if isinstance(reward, np.ndarray) else reward
             steps += 1
-            if done:
+            if steps > 10000:  # Safety limit
                 break
 
         val_sharpe = info[0].get('sharpe_ratio', 0) if isinstance(info, list) else info.get('sharpe_ratio', 0)
@@ -603,22 +694,24 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
     total_return = 0
     test_trades = []
     steps = 0
+    terminated = False
+    truncated = False
 
-    while True:
+    while not (terminated or truncated):
         if USE_ENSEMBLE and isinstance(final_model, EnsemblePPO):
             action, _ = final_model.predict(obs, deterministic=True)
         else:
             action, _ = final_model.predict(obs, deterministic=True)
             action = action[0] if isinstance(action, np.ndarray) else action
 
-        obs, reward, done, info = test_env.step(action)
+        obs, reward, terminated, truncated, info = test_env.step(action)
         total_return += reward[0] if isinstance(reward, np.ndarray) else reward
         steps += 1
 
         if info[0].get('trade_result'):
             test_trades.append(info[0]['trade_result'])
 
-        if done:
+        if steps > 10000:  # Safety limit
             break
 
     final_sharpe = info[0].get('sharpe_ratio', 0) if isinstance(info, list) else info.get('sharpe_ratio', 0)
@@ -651,7 +744,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
     }
 
 # =========================================================
-# UTILITY FUNCTIONS
+# UTILITY FUNCTIONS (Kept as is)
 # =========================================================
 
 def load_past_mistakes():
@@ -765,14 +858,14 @@ def update_last_ppo_train():
         f.write(datetime.now().strftime('%Y-%m-%d'))
 
 # =========================================================
-# SHARED PPO TRAINING (Hedge Fund Level)
+# SHARED PPO TRAINING (Hedge Fund Level - UPDATED FOR GYMNASIUM)
 # =========================================================
 
 def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, is_retrain=False):
     """Train shared PPO with Hedge Fund level features"""
 
-    if not SB3_AVAILABLE:
-        print("\n   ⚠️ Skipping shared PPO: SB3 not available")
+    if not SB3_AVAILABLE or not GYM_AVAILABLE:
+        print("\n   ⚠️ Skipping shared PPO: Required packages not available")
         return None, {}
 
     print(f"\n{'='*60}")
@@ -817,6 +910,10 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
             shuffle_episodes=False, use_noise=False
         )
 
+        # Validate environments
+        validate_environment(train_env)
+        validate_environment(val_env)
+
         train_env = DummyVecEnv([lambda: train_env])
         val_env = DummyVecEnv([lambda: val_env])
 
@@ -848,18 +945,20 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
     obs = test_env.reset()
     total_return = 0
     steps = 0
+    terminated = False
+    truncated = False
 
-    while True:
+    while not (terminated or truncated):
         all_actions = []
         for model in ensemble_models:
             action, _ = model.predict(obs, deterministic=True)
             all_actions.append(action[0] if isinstance(action, np.ndarray) else action)
         final_action = int(round(np.mean(all_actions)))
 
-        obs, reward, done, info = test_env.step(final_action)
+        obs, reward, terminated, truncated, info = test_env.step(final_action)
         total_return += reward[0] if isinstance(reward, np.ndarray) else reward
         steps += 1
-        if done:
+        if steps > 10000:  # Safety limit
             break
 
     final_sharpe = info[0].get('sharpe_ratio', 0) if isinstance(info, list) else info.get('sharpe_ratio', 0)
@@ -886,8 +985,8 @@ def train_ppo_system():
     print(f"📊 Features: Train/Val/Test Split | Noise Injection | Ensemble PPO | Sharpe Ratio")
     print("="*70)
 
-    if not SB3_AVAILABLE:
-        print("\n⚠️ Stable-Baselines3 not available!")
+    if not SB3_AVAILABLE or not GYM_AVAILABLE:
+        print("\n⚠️ Required packages not available!")
         print("   Install with: pip install stable-baselines3 gymnasium")
         print("   Skipping PPO training...")
         return [], None
@@ -912,6 +1011,7 @@ def train_ppo_system():
     signals = load_signals(CSV_SIGNAL)
     xgb_metadata = load_xgb_metadata()
 
+    top_symbol_list = []
     if not xgb_metadata.empty:
         top_symbols = xgb_metadata[xgb_metadata['auc'] >= XGB_AUC_THRESHOLD_FOR_PPO].head(MAX_PER_SYMBOL_MODELS)
         top_symbol_list = top_symbols['symbol'].tolist()
@@ -960,10 +1060,10 @@ def train_ppo_system():
 
         update_last_ppo_train()
 
-    except ImportError as e:
-        print(f"\n   ⚠️ PPO dependencies not available: {e}")
     except Exception as e:
         print(f"\n   ⚠️ PPO training error: {e}")
+        import traceback
+        traceback.print_exc()
 
     print("\n" + "="*70)
     print("🏦 HEDGE FUND LEVEL PPO TRAINING COMPLETE!")
@@ -972,7 +1072,7 @@ def train_ppo_system():
     print(f"   ✅ Train/Val/Test Split | ✅ Noise Injection | ✅ Ensemble PPO | ✅ Sharpe Ratio")
     print("="*70)
 
-    return trained_symbols, shared_model
+    return trained_symbols, shared_model if 'shared_model' in dir() else None
 
 def main():
     try:
