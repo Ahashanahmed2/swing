@@ -22,11 +22,11 @@ XGB_MODEL_DIR = "./csv/xgboost/"
 DATA_PATH = "./csv/mongodb.csv"
 PPO_MODEL_DIR = "./csv/ppo_models/"
 LOG_DIR = "./logs/ppo/"
-OUTPUT_DIR = "./output/ai_signal/"
+#OUTPUT_DIR = "./output/ai_signal/"
 
 os.makedirs(PPO_MODEL_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+#os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Trading parameters
 INITIAL_BALANCE = 100000
