@@ -281,7 +281,7 @@ class SB3CompatibleEnv(gym.Env):
     def step(self, action):
         """✅ FIX 5: Clear reward signal"""
         if self.current_step >= len(self.data) - 1:
-            return self._get_obs(), 0, True, {}
+            return self._get_obs(), 0, True , False,{}
         
         row = self.data.iloc[self.current_step]
         next_row = self.data.iloc[self.current_step + 1]
