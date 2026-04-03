@@ -561,7 +561,7 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata):
             failed_attempts = 0
             
         else:
-            #print(f"   ⚠️ BAD MODEL (AUC {auc:.2%} < {AUC_THRESHOLD}) - Not saving")
+            print(f"   ⚠️ BAD MODEL (AUC {auc:.2%} < {AUC_THRESHOLD}) - Not saving")
             
             if not metadata.empty and symbol in metadata['symbol'].values:
                 prev_data = metadata[metadata['symbol'] == symbol].iloc[0]
@@ -653,11 +653,11 @@ def download_from_huggingface():
             #print("   ✅ Download complete!")
             return True
         else:
-            #print(f"   ✅ Local data exists ({os.path.getsize(DATA_PATH)/1024:.1f} KB)")
+            print(f"   ✅ Local data exists ({os.path.getsize(DATA_PATH)/1024:.1f} KB)")
             return True
             
     except Exception as e:
-        #print(f"   ⚠️ Download failed: {e}")
+        print(f"   ⚠️ Download failed: {e}")
         return False
 
 # =========================
@@ -666,7 +666,7 @@ def download_from_huggingface():
 
 def main():
     #print("="*70)
-    #print("🚀 XGBOOST SCHEDULER (Advanced Features + Monthly Retry)")
+    print("🚀 XGBOOST SCHEDULER (Advanced Features + Monthly Retry)")
     #print("="*70)
     
     # Step 0: Download latest data from HF
@@ -691,7 +691,7 @@ def main():
         params = DAILY_PARAMS
         expected_time = "15 minutes"
     else:
-        #print("\n✅ No training needed today!")
+        print("\n✅ No training needed today!")
         #print(f"   Next Daily: {(datetime.today() + timedelta(days=DAILY_INTERVAL - daily_days)).date()}")
         #print(f"   Next Weekly: {(datetime.today() + timedelta(days=WEEKLY_INTERVAL - weekly_days)).date()}")
         #print(f"   Next Monthly: {(datetime.today() + timedelta(days=MONTHLY_INTERVAL - monthly_days)).date()}")
@@ -721,7 +721,7 @@ def main():
     df = load_data()
 
     if df.empty:
-        #print("❌ No data loaded. Exiting.")
+        print("❌ No data loaded. Exiting.")
         return
 
     #print(f"   Loaded {len(df):,} rows, {df['symbol'].nunique()} symbols")
@@ -761,7 +761,7 @@ def main():
         should_train, reason = should_retrain(symbol, metadata)
         
         if not should_train:
-            #print(f"\n🔸 {symbol} ({len(group)} rows) - SKIPPED: {reason}")
+            print(f"\n🔸 {symbol} ({len(group)} rows) - SKIPPED: {reason}")
             skipped_count += 1
             continue
         
@@ -837,38 +837,38 @@ def main():
     
     # Show retry statistics
     if retry_reasons['new_symbol']:
-        #print(f"\n🆕 New symbols trained: {len(retry_reasons['new_symbol'])}")
+        print(f"\n🆕 New symbols trained: {len(retry_reasons['new_symbol'])}")
     if retry_reasons['good_model_update']:
-        #print(f"🟢 Good models updated: {len(retry_reasons['good_model_update'])}")
+        print(f"🟢 Good models updated: {len(retry_reasons['good_model_update'])}")
     if retry_reasons['bad_retry']:
-        #print(f"🔴 Bad models retrying: {len(retry_reasons['bad_retry'])}")
+        print(f"🔴 Bad models retrying: {len(retry_reasons['bad_retry'])}")
     if retry_reasons['monthly_retry']:
-        #print(f"📅 Monthly retry (failed models): {len(retry_reasons['monthly_retry'])}")
+        print(f"📅 Monthly retry (failed models): {len(retry_reasons['monthly_retry'])}")
         if retry_reasons['monthly_retry']:
-            #print(f"   Symbols: {', '.join(retry_reasons['monthly_retry'][:10])}")
+            print(f"   Symbols: {', '.join(retry_reasons['monthly_retry'][:10])}")
             if len(retry_reasons['monthly_retry']) > 10:
-                #print(f"   ... and {len(retry_reasons['monthly_retry'])-10} more")
+                print(f"   ... and {len(retry_reasons['monthly_retry'])-10} more")
 
     # Show good models
     if good_count > 0 and 'final_metadata' in locals():
         good_models = final_metadata[final_metadata['status'] == 'GOOD'].sort_values('auc', ascending=False)
         if len(good_models) > 0:
-            #print(f"\n🟢 TOP 10 GOOD MODELS:")
+            print(f"\n🟢 TOP 10 GOOD MODELS:")
             for _, row in good_models.head(10).iterrows():
-                #print(f"   {row['symbol']}: AUC={row['auc']:.2%}, Acc={row['acc']:.2%}")
+                print(f"   {row['symbol']}: AUC={row['auc']:.2%}, Acc={row['acc']:.2%}")
 
     # Show bad models status
     if bad_count > 0 and 'final_metadata' in locals():
         bad_models = final_metadata[final_metadata['status'] == 'BAD'].sort_values('failed_attempts', ascending=False)
         if len(bad_models) > 0:
-            #print(f"\n🔴 BAD MODELS STATUS:")
+            print(f"\n🔴 BAD MODELS STATUS:")
             for _, row in bad_models.head(10).iterrows():
                 attempts = row['failed_attempts']
                 if attempts >= RETRAIN_ATTEMPTS:
-                    #print(f"   {row['symbol']}: AUC={row['auc']:.2%}, Attempts={attempts} (Monthly retry mode)")
+                    print(f"   {row['symbol']}: AUC={row['auc']:.2%}, Attempts={attempts} (Monthly retry mode)")
                 else:
                     remaining = RETRAIN_ATTEMPTS - attempts
-                    #print(f"   {row['symbol']}: AUC={row['auc']:.2%}, Attempts={attempts}, Remaining={remaining}")
+                    print(f"   {row['symbol']}: AUC={row['auc']:.2%}, Attempts={attempts}, Remaining={remaining}")
 
     # Upload to Hugging Face
     upload_to_huggingface()
