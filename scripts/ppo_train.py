@@ -116,7 +116,6 @@ PPO_CONFIG = {
     'clip_range': 0.1,
     'vf_coef': 0.5,
     'max_grad_norm': 0.5,
-    'tensorboard_log': str(TENSORBOARD_LOG),
 }
 
 PPO_PER_SYMBOL_CONFIG = {
