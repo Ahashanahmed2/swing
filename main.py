@@ -50,7 +50,6 @@ scripts = [
     #"scripts/hf_data.py",
     "scripts/xgboost _Elliott_support.py",
     "scripts/ppo_train.py",
-    "scripts/ovs.py",
     #"scripts/generate_pdf.py",
     #"scripts/upload_csv.py",
     #"scripts/dayliMassage.py",
