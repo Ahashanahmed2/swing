@@ -16,7 +16,7 @@
 # 14. ✅ Fixed date parsing for prediction_log.csv
 # 15. ✅ Graceful handling of missing files
 # 16. ✅ FULL GYMNASIUM COMPLIANCE with xgboost_ppo_env.py
-# 17. ✅ SB3 COMPATIBILITY FIXED (Gymnasium 5-value return)
+# 17. ✅ SB3 COMPATIBILITY FIXED (DummyVecEnv 4-value conversion)
 
 import os
 import sys
@@ -68,6 +68,21 @@ except ImportError as e:
     print(f"⚠️ Stable-Baselines3 not available: {e}")
     print("   Install with: pip install stable-baselines3 gymnasium")
     SB3_AVAILABLE = False
+
+# =========================================================
+# ✅ SB3 COMPATIBILITY WRAPPER (Gymnasium 5-value to SB3 4-value)
+# =========================================================
+
+class GymnasiumToSB3Wrapper(gym.Wrapper):
+    """Convert Gymnasium (5 values) to SB3 (4 values) for DummyVecEnv compatibility"""
+    
+    def __init__(self, env):
+        super().__init__(env)
+        
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        done = terminated or truncated
+        return obs, reward, done, info
 
 # =========================================================
 # PATHS
@@ -218,7 +233,7 @@ def validate_environment(env):
     return True
 
 # =========================================================
-# ✅ EARLY STOPPING CALLBACK (SB3 compatible - FIXED)
+# ✅ EARLY STOPPING CALLBACK (SB3 compatible - FIXED for DummyVecEnv)
 # =========================================================
 
 if SB3_AVAILABLE:
@@ -251,17 +266,16 @@ if SB3_AVAILABLE:
             return True
 
         def _evaluate(self):
-            """✅ FIXED: Handle Gymnasium 5-value return"""
+            """✅ FIXED: DummyVecEnv returns 4 values (obs, reward, done, info)"""
             obs = self.eval_env.reset()
             total_reward = 0
             steps = 0
-            terminated = False
-            truncated = False
+            done = False
             
-            while not (terminated or truncated):
+            while not done:
                 action, _ = self.model.predict(obs, deterministic=True)
-                obs, reward, terminated, truncated, info = self.eval_env.step(action)
-                total_reward += reward
+                obs, reward, done, info = self.eval_env.step(action)
+                total_reward += reward[0] if isinstance(reward, np.ndarray) else reward
                 steps += 1
                 if steps > 10000:
                     break
@@ -316,7 +330,7 @@ if not ENV_AVAILABLE:
             self.current_step = 0
             self.balance = 500000
             self.position = 0
-            return np.zeros(10, dtype=np.float32), {}  # ✅ FIXED: return 2 values
+            return np.zeros(10, dtype=np.float32), {}
         
         def step(self, action):
             self.current_step += 1
@@ -324,7 +338,7 @@ if not ENV_AVAILABLE:
             truncated = False
             reward = 0
             info = {'balance': self.balance, 'sharpe_ratio': 0}
-            return np.zeros(10, dtype=np.float32), reward, terminated, truncated, info  # ✅ FIXED: 5 values
+            return np.zeros(10, dtype=np.float32), reward, terminated, truncated, info
 
 # =========================================================
 # ✅ ENSEMBLE PPO (Multiple models average decision)
@@ -429,23 +443,28 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
     for ensemble_idx in range(ENSEMBLE_SIZE if USE_ENSEMBLE else 1):
         print(f"\n   🧠 Training Ensemble Model {ensemble_idx + 1}/{ENSEMBLE_SIZE}")
 
-        # ✅ Create environments using HedgeFundTradingEnv
+        # ✅ Create environments using HedgeFundTradingEnv with SB3 wrapper
         try:
             if ENV_AVAILABLE:
-                train_env = HedgeFundTradingEnv(
+                raw_train_env = HedgeFundTradingEnv(
                     data=train_data,
                     xgb_model_dir=str(XGB_MODEL_DIR),
                     config=HedgeFundConfig()
                 )
-                val_env = HedgeFundTradingEnv(
+                raw_val_env = HedgeFundTradingEnv(
                     data=val_data,
                     xgb_model_dir=str(XGB_MODEL_DIR),
                     config=HedgeFundConfig()
                 )
+                
+                # ✅ Wrap for SB3 compatibility (converts 5-value to 4-value)
+                train_env = GymnasiumToSB3Wrapper(raw_train_env)
+                val_env = GymnasiumToSB3Wrapper(raw_val_env)
             else:
-                # Use fallback
-                train_env = HedgeFundTradingEnv(train_data)
-                val_env = HedgeFundTradingEnv(val_data)
+                raw_train_env = HedgeFundTradingEnv(train_data)
+                raw_val_env = HedgeFundTradingEnv(val_data)
+                train_env = GymnasiumToSB3Wrapper(raw_train_env)
+                val_env = GymnasiumToSB3Wrapper(raw_val_env)
         except Exception as e:
             print(f"   ⚠️ Error creating environment: {e}")
             continue
@@ -478,21 +497,20 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
             print(f"   ⚠️ Training failed: {e}")
             continue
 
-
-        # ✅ Step 3: Evaluate on validation
+        # ✅ Step 3: Evaluate on validation (DummyVecEnv returns 4 values)
         obs = val_env.reset()
         total_return = 0
         steps = 0
-        terminated = False
-        truncated = False
+        done = False
         
-        while not (terminated or truncated):
+        while not done:
             action, _ = model.predict(obs, deterministic=True)
-            obs, reward, terminated, truncated, info = val_env.step(action)
+            obs, reward, done, info = val_env.step(action)
             total_return += reward[0] if isinstance(reward, np.ndarray) else reward
             steps += 1
             if steps > 10000:
                 break
+                
         val_sharpe = info[0].get('sharpe_ratio', 0) if isinstance(info, list) else info.get('sharpe_ratio', 0)
         print(f"      Val Return: {total_return:.2f} | Sharpe: {val_sharpe:.3f}")
 
@@ -525,13 +543,15 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
 
     try:
         if ENV_AVAILABLE:
-            test_env = HedgeFundTradingEnv(
+            raw_test_env = HedgeFundTradingEnv(
                 data=test_data,
                 xgb_model_dir=str(XGB_MODEL_DIR),
                 config=HedgeFundConfig()
             )
+            test_env = GymnasiumToSB3Wrapper(raw_test_env)
         else:
-            test_env = HedgeFundTradingEnv(test_data)
+            raw_test_env = HedgeFundTradingEnv(test_data)
+            test_env = GymnasiumToSB3Wrapper(raw_test_env)
     except Exception as e:
         print(f"   ⚠️ Error creating test environment: {e}")
         return None, {}
@@ -542,17 +562,16 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
     total_return = 0
     test_trades = []
     steps = 0
-    terminated = False
-    truncated = False
+    done = False
 
-    while not (terminated or truncated):
+    while not done:
         if USE_ENSEMBLE and isinstance(final_model, EnsemblePPO):
             action, _ = final_model.predict(obs, deterministic=True)
         else:
             action, _ = final_model.predict(obs, deterministic=True)
             action = action[0] if isinstance(action, np.ndarray) else action
 
-        obs, reward, terminated, truncated, info = test_env.step(action)
+        obs, reward, done, info = test_env.step(action)
         total_return += reward[0] if isinstance(reward, np.ndarray) else reward
         steps += 1
 
@@ -750,19 +769,23 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
 
         try:
             if ENV_AVAILABLE:
-                train_env = HedgeFundTradingEnv(
+                raw_train_env = HedgeFundTradingEnv(
                     data=train_data,
                     xgb_model_dir=str(XGB_MODEL_DIR),
                     config=HedgeFundConfig()
                 )
-                val_env = HedgeFundTradingEnv(
+                raw_val_env = HedgeFundTradingEnv(
                     data=val_data,
                     xgb_model_dir=str(XGB_MODEL_DIR),
                     config=HedgeFundConfig()
                 )
+                train_env = GymnasiumToSB3Wrapper(raw_train_env)
+                val_env = GymnasiumToSB3Wrapper(raw_val_env)
             else:
-                train_env = HedgeFundTradingEnv(train_data)
-                val_env = HedgeFundTradingEnv(val_data)
+                raw_train_env = HedgeFundTradingEnv(train_data)
+                raw_val_env = HedgeFundTradingEnv(val_data)
+                train_env = GymnasiumToSB3Wrapper(raw_train_env)
+                val_env = GymnasiumToSB3Wrapper(raw_val_env)
         except Exception as e:
             print(f"   ⚠️ Error creating shared environment: {e}")
             continue
@@ -797,13 +820,15 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
     
     try:
         if ENV_AVAILABLE:
-            test_env = HedgeFundTradingEnv(
+            raw_test_env = HedgeFundTradingEnv(
                 data=test_data,
                 xgb_model_dir=str(XGB_MODEL_DIR),
                 config=HedgeFundConfig()
             )
+            test_env = GymnasiumToSB3Wrapper(raw_test_env)
         else:
-            test_env = HedgeFundTradingEnv(test_data)
+            raw_test_env = HedgeFundTradingEnv(test_data)
+            test_env = GymnasiumToSB3Wrapper(raw_test_env)
     except Exception as e:
         print(f"   ⚠️ Error creating test environment: {e}")
         return ensemble_models[0], {}
@@ -813,17 +838,16 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
     obs = test_env.reset()
     total_return = 0
     steps = 0
-    terminated = False
-    truncated = False
+    done = False
 
-    while not (terminated or truncated):
+    while not done:
         all_actions = []
         for model in ensemble_models:
             action, _ = model.predict(obs, deterministic=True)
             all_actions.append(action[0] if isinstance(action, np.ndarray) else action)
         final_action = int(round(np.mean(all_actions)))
 
-        obs, reward, terminated, truncated, info = test_env.step(final_action)
+        obs, reward, done, info = test_env.step(final_action)
         total_return += reward[0] if isinstance(reward, np.ndarray) else reward
         steps += 1
         if steps > 10000:
