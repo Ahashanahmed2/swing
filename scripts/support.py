@@ -170,7 +170,7 @@ def process_support_resistance(input_file, output_file):
         
         elif support_exists:
             # Only support found
-            #print(f"\n📌 LATEST LEVEL: SUPPORT (Only Support found)")
+            print(f"\n📌 LATEST LEVEL: SUPPORT (Only Support found)")
             results.append({
                 'type': 'support',
                 'symbol': symbol,
@@ -201,7 +201,7 @@ def process_support_resistance(input_file, output_file):
             })
         
         else:
-            #print(f"\n⚠️ No Support or Resistance found for {symbol}")
+            print(f"\n⚠️ No Support or Resistance found for {symbol}")
     
     # ==================== CREATE OUTPUT DATAFRAME ====================
     if results:
@@ -249,7 +249,7 @@ def process_support_resistance(input_file, output_file):
             #print(f"Resistance: {len(resistance_df)} symbols | Avg Gap: {resistance_df['gap_days'].mean():.1f} days")
         
     else:
-        #print("\n❌ No support or resistance levels found")
+        print("\n❌ No support or resistance levels found")
         empty_df = pd.DataFrame(columns=[
             'no', 'type', 'symbol', 'current_date', 'current_low', 'current_high', 
             'current_close', 'level_date', 'level_price', 'gap_days', 'strength'
