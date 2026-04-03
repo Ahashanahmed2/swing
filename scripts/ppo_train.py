@@ -252,7 +252,7 @@ if SB3_AVAILABLE:
 
         def _evaluate(self):
             """✅ FIXED: Handle Gymnasium 5-value return"""
-            obs, _ = self.eval_env.reset()
+            obs = self.eval_env.reset()
             total_reward = 0
             steps = 0
             terminated = False
@@ -478,8 +478,9 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
             print(f"   ⚠️ Training failed: {e}")
             continue
 
+
         # ✅ Step 3: Evaluate on validation
-        obs, _= val_env.reset()
+        obs = val_env.reset()
         total_return = 0
         steps = 0
         terminated = False
@@ -492,7 +493,6 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
             steps += 1
             if steps > 10000:
                 break
-
         val_sharpe = info[0].get('sharpe_ratio', 0) if isinstance(info, list) else info.get('sharpe_ratio', 0)
         print(f"      Val Return: {total_return:.2f} | Sharpe: {val_sharpe:.3f}")
 
@@ -538,7 +538,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
 
     test_env = DummyVecEnv([lambda: test_env])
 
-    obs, _ = test_env.reset()
+    obs = test_env.reset()
     total_return = 0
     test_trades = []
     steps = 0
