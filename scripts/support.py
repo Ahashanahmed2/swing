@@ -244,9 +244,9 @@ def process_support_resistance(input_file, output_file):
         resistance_df = output_df[output_df['type'] == 'resistance']
         
         if len(support_df) > 0:
-            #print(f"Support: {len(support_df)} symbols | Avg Gap: {support_df['gap_days'].mean():.1f} days")
+            print(f"Support: {len(support_df)} symbols | Avg Gap: {support_df['gap_days'].mean():.1f} days")
         if len(resistance_df) > 0:
-            #print(f"Resistance: {len(resistance_df)} symbols | Avg Gap: {resistance_df['gap_days'].mean():.1f} days")
+            print(f"Resistance: {len(resistance_df)} symbols | Avg Gap: {resistance_df['gap_days'].mean():.1f} days")
         
     else:
         print("\n❌ No support or resistance levels found")
