@@ -479,7 +479,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
             continue
 
         # ✅ Step 3: Evaluate on validation
-        obs = val_env.reset()
+        obs, _= val_env.reset()
         total_return = 0
         steps = 0
         terminated = False
@@ -538,7 +538,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
 
     test_env = DummyVecEnv([lambda: test_env])
 
-    obs = test_env.reset()
+    obs, _ = test_env.reset()
     total_return = 0
     test_trades = []
     steps = 0
@@ -810,7 +810,7 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
 
     test_env = DummyVecEnv([lambda: test_env])
 
-    obs = test_env.reset()
+    obs , _ = test_env.reset()
     total_return = 0
     steps = 0
     terminated = False
