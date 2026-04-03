@@ -810,7 +810,7 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
 
     test_env = DummyVecEnv([lambda: test_env])
 
-    obs , _ = test_env.reset()
+    obs = test_env.reset()
     total_return = 0
     steps = 0
     terminated = False
