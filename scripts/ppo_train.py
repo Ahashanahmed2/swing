@@ -545,7 +545,7 @@ def train_ppo_system():
     for symbol in df['symbol'].unique()[:5]:  # Limit for demo
         symbol_data = df[df['symbol'] == symbol].copy()
         
-        if len(symbol_data) < 500:
+        if len(symbol_data) < 200:
             continue
         
         # Get AUC
