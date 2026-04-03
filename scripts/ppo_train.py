@@ -567,4 +567,5 @@ def train_ppo_system():
     return trained_symbols, None
 
 if __name__ == "__main__":
+    print("ppo_train শুরু")
     train_ppo_system()
