@@ -241,7 +241,7 @@ class SB3CompatibleEnv(gym.Env):
         # ✅ FIX 2: Sharpe reward tracker
         self.sharpe_reward = SharpeReward(trading_fee=TRADING_FEE, slippage=SLIPPAGE)
         
-        return self._get_obs()
+        return self._get_obs(),{}
     
     def _add_noise(self, price):
         """✅ FIX 1: Noise injection applied"""
@@ -337,7 +337,7 @@ class SB3CompatibleEnv(gym.Env):
         self.total_reward += reward
         done = self.current_step >= len(self.data) - 1
         
-        return self._get_obs(), reward, done, {
+        return self._get_obs(), reward, terminated , truncated, {
             'balance': self.balance,
             'symbol': self.symbol,
             'sharpe': self.sharpe_reward.calculate_sharpe(),
