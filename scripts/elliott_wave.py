@@ -420,9 +420,9 @@ def detect_elliott_wave(df, symbol):
 # মেইন ফাংশন
 # =========================
 def main():
-    print("=" * 80)
-    print("এলিয়ট ওয়েভ সম্পূর্ণ প্যাটার্ন লাইব্রেরি অ্যানালাইসিস")
-    print("=" * 80)
+    #print("=" * 80)
+    #print("এলিয়ট ওয়েভ সম্পূর্ণ প্যাটার্ন লাইব্রেরি অ্যানালাইসিস")
+    #print("=" * 80)
     
     df = pd.read_csv(INPUT_FILE)
     df['date'] = pd.to_datetime(df['date'])
@@ -438,18 +438,18 @@ def main():
         s_df = df[df['symbol'] == symbol].sort_values('date')
         res = detect_elliott_wave(s_df, symbol)
         results.append(res)
-        print(f"[{i}/{len(symbols)}] প্রসেসিং: {symbol} -> {res['WAVE']}")
+        #print(f"[{i}/{len(symbols)}] প্রসেসিং: {symbol} -> {res['WAVE']}")
     
     out = pd.DataFrame(results)
     out.to_csv(OUTPUT_FILE, index=False)
     
-    print("\n" + "=" * 80)
-    print(f"✅ কাজ সম্পন্ন হয়েছে: {OUTPUT_FILE}")
-    print(f"📊 মোট {len(out)}টি সিম্বল প্রসেস করা হয়েছে")
-    print("=" * 80)
+    #print("\n" + "=" * 80)
+    #print(f"✅ কাজ সম্পন্ন হয়েছে: {OUTPUT_FILE}")
+    #print(f"📊 মোট {len(out)}টি সিম্বল প্রসেস করা হয়েছে")
+    #print("=" * 80)
     
     # প্যাটার্ন ডিস্ট্রিবিউশন দেখানো
-    print("\n📈 প্যাটার্ন ডিস্ট্রিবিউশন:")
+    #print("\n📈 প্যাটার্ন ডিস্ট্রিবিউশন:")
     pattern_counts = out['WAVE'].value_counts()
     for pattern, count in pattern_counts.items():
         print(f"   {pattern}: {count} ({count/len(out)*100:.1f}%)")
