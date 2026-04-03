@@ -200,11 +200,11 @@ class SharpeReward:
 # ✅ SB3 COMPATIBLE ENVIRONMENT WITH ALL FIXES
 # =========================================================
 
-class SB3CompatibleEnv(gym.Wrapper):
+class SB3CompatibleEnv(gym.Env):
     """Complete trading environment with all fixes"""
     
     def __init__(self, data, symbol, use_noise=True, use_scaling=True):
-        super().__init__(None)  # Will set env after
+        super().__init__()  # Will set env after
         
         self.data = data.reset_index(drop=True)
         self.symbol = symbol
