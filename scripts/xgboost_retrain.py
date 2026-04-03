@@ -191,7 +191,7 @@ def should_retrain(symbol, metadata, current_date=None):
 def load_data():
     """Load data with proper encoding"""
     if not os.path.exists(DATA_PATH):
-        print(f"❌ Data file not found: {DATA_PATH}")
+        #print(f"❌ Data file not found: {DATA_PATH}")
         return pd.DataFrame()
 
     df = pd.read_csv(DATA_PATH, encoding='utf-8-sig')
@@ -265,9 +265,9 @@ def engineer_features(df):
                 if col in df.columns:
                     df[col] = df[col].fillna(0)
             
-            print(f"   ✅ Added support/resistance features")
+            #print(f"   ✅ Added support/resistance features")
         else:
-            print(f"   ⚠️ Support/Resistance file not found: {SUPPORT_RESISTANCE_PATH}")
+            #print(f"   ⚠️ Support/Resistance file not found: {SUPPORT_RESISTANCE_PATH}")
             df['dist_from_sr'] = 0
             df['is_support'] = 0
             df['is_resistance'] = 0
@@ -275,7 +275,7 @@ def engineer_features(df):
             df['sr_gap_days'] = 0
             
     except Exception as e:
-        print(f"   ⚠️ Support/Resistance features failed: {e}")
+        #print(f"   ⚠️ Support/Resistance features failed: {e}")
         df['dist_from_sr'] = 0
         df['is_support'] = 0
         df['is_resistance'] = 0
@@ -306,7 +306,7 @@ def engineer_features(df):
             
             df.drop(['last_date'], axis=1, errors='ignore', inplace=True)
             
-            print(f"   ✅ Added RSI divergence features")
+            #print(f"   ✅ Added RSI divergence features")
         else:
             print(f"   ⚠️ RSI Divergence file not found: {RSI_DIVERGENCE_PATH}")
             df['is_bullish_div'] = 0
@@ -355,14 +355,14 @@ def engineer_features(df):
             df['above_ema'] = df['above_ema'].fillna(0)
             df['ema_200'] = df['ema_200'].fillna(df['close'])
             
-            print(f"   ✅ Added EMA200 features")
+            #print(f"   ✅ Added EMA200 features")
         else:
             print(f"   ⚠️ EMA200 file not found: {EMA_200_PATH}")
             df['dist_from_ema'] = 0
             df['above_ema'] = 0
             
     except Exception as e:
-        print(f"   ⚠️ EMA200 features failed: {e}")
+        #print(f"   ⚠️ EMA200 features failed: {e}")
         df['dist_from_ema'] = 0
         df['above_ema'] = 0
 
@@ -439,7 +439,7 @@ def update_actual_results():
 
     if updated > 0:
         log.to_csv(PREDICTION_LOG, index=False)
-        print(f"🔄 Feedback updated: {updated} rows")
+        #print(f"🔄 Feedback updated: {updated} rows")
 
     return log
 
@@ -465,7 +465,7 @@ def get_sample_weights(df, log):
 
     if wrong.sum() > 0:
         weights[wrong.values] = 2.0
-        print(f"⚖️ Wrong samples boosted: {wrong.sum()}")
+        #print(f"⚖️ Wrong samples boosted: {wrong.sum()}")
 
     return weights
 
@@ -522,7 +522,7 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata):
         params_copy = params.copy()
         params_copy['scale_pos_weight'] = scale_pos
 
-        print(f"   Class ratio: {target_ratio:.2%} → scale_pos_weight: {scale_pos:.2f}")
+        #print(f"   Class ratio: {target_ratio:.2%} → scale_pos_weight: {scale_pos:.2f}")
 
         weights = get_sample_weights(group.iloc[:split], feedback_log)
 
@@ -539,13 +539,13 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata):
         acc = accuracy_score(y_test, preds)
         auc = roc_auc_score(y_test, prob) if len(np.unique(y_test)) > 1 else 0.5
 
-        print(f"   ✅ Acc: {acc:.2%}, AUC: {auc:.2%}")
+        #print(f"   ✅ Acc: {acc:.2%}, AUC: {auc:.2%}")
         
         # Feature importance (optional, for debugging)
         if auc >= AUC_THRESHOLD:
             importance = model.feature_importances_
             top_features = sorted(zip(features, importance), key=lambda x: x[1], reverse=True)[:5]
-            print(f"   📊 Top features: {', '.join([f'{f}:{imp:.3f}' for f, imp in top_features])}")
+            #print(f"   📊 Top features: {', '.join([f'{f}:{imp:.3f}' for f, imp in top_features])}")
 
         # Check if model is good enough
         if auc >= AUC_THRESHOLD:
@@ -561,7 +561,7 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata):
             failed_attempts = 0
             
         else:
-            print(f"   ⚠️ BAD MODEL (AUC {auc:.2%} < {AUC_THRESHOLD}) - Not saving")
+            #print(f"   ⚠️ BAD MODEL (AUC {auc:.2%} < {AUC_THRESHOLD}) - Not saving")
             
             if not metadata.empty and symbol in metadata['symbol'].values:
                 prev_data = metadata[metadata['symbol'] == symbol].iloc[0]
@@ -589,7 +589,7 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata):
         }
 
     except Exception as e:
-        print(f"   ❌ Error: {e}")
+        #print(f"   ❌ Error: {e}")
         return None, None
 
 # =========================
@@ -612,9 +612,9 @@ def upload_to_huggingface():
         api = HfApi()
         repo_id = "ahashanahmed/csv"
         
-        print("\n" + "="*70)
-        print("📤 UPLOADING TO HUGGING FACE (SINGLE COMMIT)")
-        print("="*70)
+        #print("\n" + "="*70)
+        #print("📤 UPLOADING TO HUGGING FACE (SINGLE COMMIT)")
+        #print("="*70)
         
         api.upload_folder(
             folder_path="./csv",
@@ -624,11 +624,11 @@ def upload_to_huggingface():
             ignore_patterns=["*.tmp", "*.log", "__pycache__", ".DS_Store"]
         )
         
-        print("✅ Upload complete! (single commit)")
+        #print("✅ Upload complete! (single commit)")
         return True
         
     except Exception as e:
-        print(f"⚠️ HF upload failed: {e}")
+        #print(f"⚠️ HF upload failed: {e}")
         return False
 
 # =========================
@@ -640,7 +640,7 @@ def download_from_huggingface():
     try:
         from huggingface_hub import snapshot_download
         
-        print("\n📥 Checking for existing data...")
+        #print("\n📥 Checking for existing data...")
         
         if not os.path.exists(DATA_PATH) or os.path.getsize(DATA_PATH) < 1000:
             print("   Downloading from Hugging Face...")
@@ -650,14 +650,14 @@ def download_from_huggingface():
                 local_dir="./csv",
                 local_dir_use_symlinks=False
             )
-            print("   ✅ Download complete!")
+            #print("   ✅ Download complete!")
             return True
         else:
-            print(f"   ✅ Local data exists ({os.path.getsize(DATA_PATH)/1024:.1f} KB)")
+            #print(f"   ✅ Local data exists ({os.path.getsize(DATA_PATH)/1024:.1f} KB)")
             return True
             
     except Exception as e:
-        print(f"   ⚠️ Download failed: {e}")
+        #print(f"   ⚠️ Download failed: {e}")
         return False
 
 # =========================
@@ -665,9 +665,9 @@ def download_from_huggingface():
 # =========================
 
 def main():
-    print("="*70)
-    print("🚀 XGBOOST SCHEDULER (Advanced Features + Monthly Retry)")
-    print("="*70)
+    #print("="*70)
+    #print("🚀 XGBOOST SCHEDULER (Advanced Features + Monthly Retry)")
+    #print("="*70)
     
     # Step 0: Download latest data from HF
     download_from_huggingface()
@@ -691,52 +691,52 @@ def main():
         params = DAILY_PARAMS
         expected_time = "15 minutes"
     else:
-        print("\n✅ No training needed today!")
-        print(f"   Next Daily: {(datetime.today() + timedelta(days=DAILY_INTERVAL - daily_days)).date()}")
-        print(f"   Next Weekly: {(datetime.today() + timedelta(days=WEEKLY_INTERVAL - weekly_days)).date()}")
-        print(f"   Next Monthly: {(datetime.today() + timedelta(days=MONTHLY_INTERVAL - monthly_days)).date()}")
+        #print("\n✅ No training needed today!")
+        #print(f"   Next Daily: {(datetime.today() + timedelta(days=DAILY_INTERVAL - daily_days)).date()}")
+        #print(f"   Next Weekly: {(datetime.today() + timedelta(days=WEEKLY_INTERVAL - weekly_days)).date()}")
+        #print(f"   Next Monthly: {(datetime.today() + timedelta(days=MONTHLY_INTERVAL - monthly_days)).date()}")
         
         upload_to_huggingface()
         return
 
-    print(f"\n{'='*70}")
-    print(f"🎯 RUNNING {mode} MODE")
-    print(f"⏱️ Expected time: {expected_time}")
-    print(f"📊 Parameters: n_estimators={params['n_estimators']}, depth={params['max_depth']}, lr={params['learning_rate']}")
-    print(f"📈 Model threshold: AUC >= {AUC_THRESHOLD} to save")
-    print(f"🔄 Bad models: {RETRAIN_ATTEMPTS} attempts, then monthly retry")
-    print(f"📁 Advanced features: Support/Resistance, RSI Divergence, EMA200")
-    print(f"{'='*70}\n")
+    #print(f"\n{'='*70}")
+    #print(f"🎯 RUNNING {mode} MODE")
+    #print(f"⏱️ Expected time: {expected_time}")
+    #print(f"📊 Parameters: n_estimators={params['n_estimators']}, depth={params['max_depth']}, lr={params['learning_rate']}")
+    #print(f"📈 Model threshold: AUC >= {AUC_THRESHOLD} to save")
+    #print(f"🔄 Bad models: {RETRAIN_ATTEMPTS} attempts, then monthly retry")
+    #print(f"📁 Advanced features: Support/Resistance, RSI Divergence, EMA200")
+    #print(f"{'='*70}\n")
 
     # Feedback update
-    print("📊 Step 1: Updating feedback...")
+    #print("📊 Step 1: Updating feedback...")
     feedback_log = update_actual_results()
 
     # Load metadata
     metadata = load_model_metadata()
-    print(f"📋 Loaded metadata: {len(metadata)} symbols tracked")
+    #print(f"📋 Loaded metadata: {len(metadata)} symbols tracked")
 
     # Load data
-    print("\n📂 Step 2: Loading data...")
+    #print("\n📂 Step 2: Loading data...")
     df = load_data()
 
     if df.empty:
-        print("❌ No data loaded. Exiting.")
+        #print("❌ No data loaded. Exiting.")
         return
 
-    print(f"   Loaded {len(df):,} rows, {df['symbol'].nunique()} symbols")
+    #print(f"   Loaded {len(df):,} rows, {df['symbol'].nunique()} symbols")
 
     # Feature engineering
-    print("\n🔧 Step 3: Feature engineering (with advanced features)...")
+    #print("\n🔧 Step 3: Feature engineering (with advanced features)...")
     df = engineer_features(df)
     features = get_features(df)
-    print(f"   Using {len(features)} features: {features}")
+    #print(f"   Using {len(features)} features: {features}")
 
     # Train models
-    print("\n🏆 Step 4: Training models...")
-    print("="*70)
-    print(f"🎯 Target: Save only models with AUC >= {AUC_THRESHOLD}")
-    print("="*70)
+    #print("\n🏆 Step 4: Training models...")
+    #print("="*70)
+    #print(f"🎯 Target: Save only models with AUC >= {AUC_THRESHOLD}")
+    #print("="*70)
 
     results = []
     updated_metadata = []
@@ -761,7 +761,7 @@ def main():
         should_train, reason = should_retrain(symbol, metadata)
         
         if not should_train:
-            print(f"\n🔸 {symbol} ({len(group)} rows) - SKIPPED: {reason}")
+            #print(f"\n🔸 {symbol} ({len(group)} rows) - SKIPPED: {reason}")
             skipped_count += 1
             continue
         
@@ -776,7 +776,7 @@ def main():
         elif reason == 'good_model_update':
             retry_reasons['good_model_update'].append(symbol)
 
-        print(f"\n🔹 {symbol} ({len(group)} rows) - Reason: {reason}")
+        #print(f"\n🔹 {symbol} ({len(group)} rows) - Reason: {reason}")
         
         result, model_info = train_symbol(symbol, group, features, params, feedback_log, metadata)
         
@@ -794,13 +794,13 @@ def main():
             skipped_count += 1
 
     # Save predictions
-    print("\n💾 Step 5: Saving results...")
-    print("="*70)
+    #print("\n💾 Step 5: Saving results...")
+    #print("="*70)
 
     if results:
         final = pd.concat(results, ignore_index=True)
         final.to_csv(XGB_CONFIDENCE, index=False)
-        print(f"✅ Predictions saved: {len(final):,} rows")
+        #print(f"✅ Predictions saved: {len(final):,} rows")
         save_prediction_log(final)
 
     # Update metadata
@@ -813,9 +813,9 @@ def main():
         
         final_metadata = pd.concat([metadata, new_metadata], ignore_index=True)
         save_model_metadata(final_metadata)
-        print(f"✅ Metadata updated: {len(final_metadata)} symbols tracked")
-        print(f"   🟢 Good models: {len(final_metadata[final_metadata['status'] == 'GOOD'])}")
-        print(f"   🔴 Bad models: {len(final_metadata[final_metadata['status'] == 'BAD'])}")
+        #print(f"✅ Metadata updated: {len(final_metadata)} symbols tracked")
+        #print(f"   🟢 Good models: {len(final_metadata[final_metadata['status'] == 'GOOD'])}")
+        #print(f"   🔴 Bad models: {len(final_metadata[final_metadata['status'] == 'BAD'])}")
 
     # Update schedule dates
     if daily_needed:
@@ -826,49 +826,49 @@ def main():
         update_last_run(LAST_MONTHLY_FILE, datetime.today())
 
     # Summary
-    print("\n" + "="*70)
-    print(f"✅ {mode} MODE TRAINING COMPLETE!")
-    print("="*70)
-    print(f"📊 Models trained: {trained_count}")
-    print(f"   🟢 Good models saved: {good_count} (AUC >= {AUC_THRESHOLD})")
-    print(f"   🔴 Bad models (not saved): {bad_count}")
-    print(f"   🔄 Monthly retry attempts: {monthly_retry_count}")
-    print(f"⚠️ Symbols skipped: {skipped_count}")
+    #print("\n" + "="*70)
+    #print(f"✅ {mode} MODE TRAINING COMPLETE!")
+    #print("="*70)
+    #print(f"📊 Models trained: {trained_count}")
+    #print(f"   🟢 Good models saved: {good_count} (AUC >= {AUC_THRESHOLD})")
+    #print(f"   🔴 Bad models (not saved): {bad_count}")
+    #print(f"   🔄 Monthly retry attempts: {monthly_retry_count}")
+    #print(f"⚠️ Symbols skipped: {skipped_count}")
     
     # Show retry statistics
     if retry_reasons['new_symbol']:
-        print(f"\n🆕 New symbols trained: {len(retry_reasons['new_symbol'])}")
+        #print(f"\n🆕 New symbols trained: {len(retry_reasons['new_symbol'])}")
     if retry_reasons['good_model_update']:
-        print(f"🟢 Good models updated: {len(retry_reasons['good_model_update'])}")
+        #print(f"🟢 Good models updated: {len(retry_reasons['good_model_update'])}")
     if retry_reasons['bad_retry']:
-        print(f"🔴 Bad models retrying: {len(retry_reasons['bad_retry'])}")
+        #print(f"🔴 Bad models retrying: {len(retry_reasons['bad_retry'])}")
     if retry_reasons['monthly_retry']:
-        print(f"📅 Monthly retry (failed models): {len(retry_reasons['monthly_retry'])}")
+        #print(f"📅 Monthly retry (failed models): {len(retry_reasons['monthly_retry'])}")
         if retry_reasons['monthly_retry']:
-            print(f"   Symbols: {', '.join(retry_reasons['monthly_retry'][:10])}")
+            #print(f"   Symbols: {', '.join(retry_reasons['monthly_retry'][:10])}")
             if len(retry_reasons['monthly_retry']) > 10:
-                print(f"   ... and {len(retry_reasons['monthly_retry'])-10} more")
+                #print(f"   ... and {len(retry_reasons['monthly_retry'])-10} more")
 
     # Show good models
     if good_count > 0 and 'final_metadata' in locals():
         good_models = final_metadata[final_metadata['status'] == 'GOOD'].sort_values('auc', ascending=False)
         if len(good_models) > 0:
-            print(f"\n🟢 TOP 10 GOOD MODELS:")
+            #print(f"\n🟢 TOP 10 GOOD MODELS:")
             for _, row in good_models.head(10).iterrows():
-                print(f"   {row['symbol']}: AUC={row['auc']:.2%}, Acc={row['acc']:.2%}")
+                #print(f"   {row['symbol']}: AUC={row['auc']:.2%}, Acc={row['acc']:.2%}")
 
     # Show bad models status
     if bad_count > 0 and 'final_metadata' in locals():
         bad_models = final_metadata[final_metadata['status'] == 'BAD'].sort_values('failed_attempts', ascending=False)
         if len(bad_models) > 0:
-            print(f"\n🔴 BAD MODELS STATUS:")
+            #print(f"\n🔴 BAD MODELS STATUS:")
             for _, row in bad_models.head(10).iterrows():
                 attempts = row['failed_attempts']
                 if attempts >= RETRAIN_ATTEMPTS:
-                    print(f"   {row['symbol']}: AUC={row['auc']:.2%}, Attempts={attempts} (Monthly retry mode)")
+                    #print(f"   {row['symbol']}: AUC={row['auc']:.2%}, Attempts={attempts} (Monthly retry mode)")
                 else:
                     remaining = RETRAIN_ATTEMPTS - attempts
-                    print(f"   {row['symbol']}: AUC={row['auc']:.2%}, Attempts={attempts}, Remaining={remaining}")
+                    #print(f"   {row['symbol']}: AUC={row['auc']:.2%}, Attempts={attempts}, Remaining={remaining}")
 
     # Upload to Hugging Face
     upload_to_huggingface()
