@@ -18,6 +18,7 @@ scripts = [
     #"scripts/sync_emails.py",
     #"scripts/trand.py",
     #"scripts/trend_signal.py",
+     "scripts/trade_stock_ai.py",
     #"scripts/pattarn.py",
     #"scripts/elliott_wave.py",
     #"scripts/ema_200.py",
