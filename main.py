@@ -49,7 +49,7 @@ scripts = [
     #"scripts/down_macd.py",
     #"scripts/ai_trade.py",
     #"scripts/xgboost_retrain.py",
-    #"scripts/hf_data.py",
+    #"scripts/create_buy.py",
     #"scripts/xgboost _Elliott_support.py",
     "scripts/ppo_train.py",
     #"scripts/generate_pdf.py",
