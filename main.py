@@ -14,7 +14,7 @@ scripts = [
     #"scripts/date_check.py",
     "scripts/hf_download.py",
     "scripts/mongodb.py",
-    "scripts/support_buy.py",
+    #"scripts/support_buy.py",
     #"scripts/sync_emails.py",
     #"scripts/trand.py",
     #"scripts/trend_signal.py",
