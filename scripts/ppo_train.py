@@ -1,5 +1,5 @@
-# ppo_train.py - HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM (UPDATED WITH FALLBACK)
-# স্ট্রাকচার অপরিবর্তিত - শুধু ফ্যালব্যাক মেকানিজম যুক্ত
+# ppo_train.py - HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM (FULLY UPDATED WITH MISTAKE LEARNING)
+# স্ট্রাকচার অপরিবর্তিত - শুধু ভুল থেকে শেখার মেকানিজম যুক্ত
 
 import os
 import sys
@@ -68,6 +68,7 @@ MODEL_METADATA = BASE_DIR / "csv" / "model_metadata.csv"
 PREDICTION_LOG = BASE_DIR / "csv" / "prediction_log.csv"
 LAST_PPO_TRAIN = BASE_DIR / "csv" / "last_ppo_train.txt"
 TENSORBOARD_LOG = BASE_DIR / "logs" / "ppo_tensorboard"
+MISTAKES_FILE = BASE_DIR / "csv" / "trading_mistakes.csv"  # NEW
 
 os.makedirs(PPO_MODEL_DIR, exist_ok=True)
 os.makedirs(PPO_SYMBOL_DIR, exist_ok=True)
@@ -117,6 +118,16 @@ FALLBACK_CONFIG = {
     'alert_on_no_signals': True
 }
 
+# ✅ MISTAKE LEARNING CONFIGURATION (NEW)
+MISTAKE_LEARNING_CONFIG = {
+    'enabled': True,
+    'max_mistakes_per_symbol': 3,
+    'penalty_multiplier': 0.7,
+    'review_interval_days': 7,
+    'forget_after_days': 90,  # Forget mistakes after 90 days
+    'save_mistakes': True
+}
+
 # Market columns for features
 DEFAULT_MARKET_COLS = ["open", "high", "low", "close", "volume"]
 
@@ -148,160 +159,453 @@ PPO_PER_SYMBOL_CONFIG = {
 }
 
 # =========================================================
-# ✅ FALLBACK SIGNAL GENERATOR (NEW FUNCTION)
+# ✅ MISTAKE LEARNING CLASS (NEW)
 # =========================================================
 
-def generate_fallback_signals(market_df, top_n=10):
+class MistakeLearner:
     """
-    Generate fallback BUY signals when no real signals exist
-    
-    Args:
-        market_df: Market data DataFrame
-        top_n: Number of fallback signals to generate
-    
-    Returns:
-        Dictionary of fallback signals in PPO format
+    ভুল থেকে শেখার সিস্টেম
+    - False positives (ভুল BUY সিগন্যাল)
+    - False negatives (মিস করা BUY সিগন্যাল)
+    - Poor risk-reward trades
     """
-    fallback_signals = {}
-    latest_date = market_df['date'].max()
     
-    print(f"   🔧 Generating fallback signals (strategy: {FALLBACK_CONFIG['fallback_strategy']})")
+    def __init__(self, mistakes_file=MISTAKES_FILE):
+        self.mistakes_file = Path(mistakes_file)
+        self.mistakes = []
+        self.patterns = {}
+        self.load_mistakes()
     
-    # Strategy 1: Top XGBoost confidence symbols
-    if FALLBACK_CONFIG['fallback_strategy'] == 'top_xgboost' or True:
-        if os.path.exists(PREDICTION_LOG):
+    def load_mistakes(self):
+        """পূর্বের ভুলগুলো লোড করুন"""
+        if self.mistakes_file.exists():
             try:
-                pred_df = pd.read_csv(PREDICTION_LOG)
-                if 'confidence_score' in pred_df.columns:
-                    # Get latest confidence per symbol
-                    pred_df['date'] = pd.to_datetime(pred_df['date'])
-                    latest_pred = pred_df.sort_values('date').groupby('symbol').last()
-                    top_symbols = latest_pred.nlargest(top_n, 'confidence_score').index.tolist()
-                    
-                    for symbol in top_symbols:
-                        sym_data = market_df[market_df['symbol'] == symbol].sort_values('date')
-                        if len(sym_data) > 0:
-                            latest_price = sym_data.iloc[-1]['close']
-                            confidence = latest_pred.loc[symbol, 'confidence_score'] / 100
-                            if confidence >= FALLBACK_CONFIG['min_confidence_for_fallback']:
-                                fallback_signals[(symbol, latest_date.strftime('%Y-%m-%d'))] = {
-                                    'buy': round(latest_price, 2),
-                                    'SL': round(latest_price * 0.97, 2),
-                                    'tp': round(latest_price * 1.06, 2),
-                                    'RRR': 2.0
-                                }
-                    if fallback_signals:
-                        print(f"      ✅ Generated {len(fallback_signals)} signals from top XGBoost symbols")
+                df = pd.read_csv(self.mistakes_file)
+                self.mistakes = df.to_dict('records')
+                print(f"   ✅ Loaded {len(self.mistakes)} past mistakes")
             except Exception as e:
-                print(f"      ⚠️ Error reading prediction log: {e}")
+                print(f"   ⚠️ Could not load mistakes: {e}")
+                self.mistakes = []
     
-    # Strategy 2: Trending symbols (uptrend detection)
-    if len(fallback_signals) < top_n:
-        for symbol in market_df['symbol'].unique():
-            if symbol in [s[0] for s in fallback_signals.keys()]:
-                continue
-            sym_data = market_df[market_df['symbol'] == symbol].sort_values('date')
-            if len(sym_data) >= 10:
-                # Check uptrend: price above 5-day SMA and 5-day SMA above 20-day SMA
-                sma_5 = sym_data['close'].rolling(5).mean()
-                sma_20 = sym_data['close'].rolling(20).mean()
-                latest_price = sym_data.iloc[-1]['close']
-                if (latest_price > sma_5.iloc[-1] and 
-                    sma_5.iloc[-1] > sma_20.iloc[-1] and
-                    len(sym_data) > 0):
-                    fallback_signals[(symbol, latest_date.strftime('%Y-%m-%d'))] = {
-                        'buy': round(latest_price, 2),
-                        'SL': round(latest_price * 0.97, 2),
-                        'tp': round(latest_price * 1.06, 2),
-                        'RRR': 2.0
-                    }
-                    if len(fallback_signals) >= top_n:
-                        break
+    def record_mistake(self, trade_info):
+        """
+        ট্রেড করার পর ভুল রেকর্ড করুন
         
-        if fallback_signals:
-            print(f"      ✅ Generated {len(fallback_signals)} signals from trending symbols")
-    
-    # Strategy 3: Momentum symbols (strong recent gains)
-    if len(fallback_signals) < top_n:
-        for symbol in market_df['symbol'].unique():
-            if symbol in [s[0] for s in fallback_signals.keys()]:
-                continue
-            sym_data = market_df[market_df['symbol'] == symbol].sort_values('date')
-            if len(sym_data) >= 5:
-                # Check momentum: 5-day return > 2%
-                returns = sym_data['close'].pct_change().dropna()
-                if len(returns) >= 5:
-                    momentum = returns.tail(5).sum()
-                    if momentum > 0.02:
-                        latest_price = sym_data.iloc[-1]['close']
-                        fallback_signals[(symbol, latest_date.strftime('%Y-%m-%d'))] = {
-                            'buy': round(latest_price, 2),
-                            'SL': round(latest_price * 0.97, 2),
-                            'tp': round(latest_price * 1.06, 2),
-                            'RRR': 2.0
-                        }
-                        if len(fallback_signals) >= top_n:
-                            break
-        
-        if fallback_signals:
-            print(f"      ✅ Generated {len(fallback_signals)} signals from momentum symbols")
-    
-    # Strategy 4: Dummy signals (last resort)
-    if len(fallback_signals) == 0:
-        print(f"      ⚠️ No fallback signals found! Using dummy symbols...")
-        dummy_symbols = ['KPCL', 'AAMRANET', 'SONALIANSH', 'SALVOCHEM', 'FAREASTFIN']
-        for symbol in dummy_symbols[:top_n]:
-            fallback_signals[(symbol, latest_date.strftime('%Y-%m-%d'))] = {
-                'buy': 100.0,
-                'SL': 97.0,
-                'tp': 106.0,
-                'RRR': 2.0
+        Args:
+            trade_info: {
+                'symbol': str,
+                'entry_date': date,
+                'exit_date': date,
+                'entry_price': float,
+                'exit_price': float,
+                'signal_type': 'BUY'/'SELL',
+                'pnl': float,
+                'reason': 'stop_loss'/'take_profit'/'manual',
+                'signal_score': float
             }
-        print(f"      ✅ Created {len(fallback_signals)} dummy signals")
-    
-    return fallback_signals
-
-
-def ensure_buy_signals(signals, market_df):
-    """
-    Ensure there are BUY signals. If not, generate fallbacks.
-    
-    Args:
-        signals: Current signals dictionary
-        market_df: Market data DataFrame
-    
-    Returns:
-        Updated signals dictionary with guaranteed BUY signals
-    """
-    if not FALLBACK_CONFIG['enabled']:
-        return signals
-    
-    # Check if there are any BUY signals
-    if len(signals) > 0:
-        # Count actual BUY signals (with valid buy price)
-        valid_buy_count = 0
-        for key, sig in signals.items():
-            if sig.get('buy', 0) > 0:
-                valid_buy_count += 1
+        """
+        if not MISTAKE_LEARNING_CONFIG['enabled']:
+            return None
         
-        if valid_buy_count > 0:
-            print(f"   ✅ Using {valid_buy_count} existing BUY signals")
-            return signals
+        # Only record losses
+        if trade_info.get('pnl', 0) >= 0:
+            return None
+        
+        mistake = {
+            **trade_info,
+            'recorded_at': datetime.now().isoformat(),
+            'loss_amount': abs(trade_info['pnl']),
+            'loss_percent': abs(trade_info['pnl']) / trade_info['entry_price'] * 100,
+            'lesson': self._analyze_mistake(trade_info)
+        }
+        self.mistakes.append(mistake)
+        
+        if MISTAKE_LEARNING_CONFIG['save_mistakes']:
+            self._save_mistakes()
+        
+        return mistake['lesson']
     
-    # No BUY signals found - generate fallbacks
-    print(f"   ⚠️ No BUY signals found! Generating fallback signals...")
+    def _analyze_mistake(self, trade_info):
+        """ভুল বিশ্লেষণ করে শিক্ষা নিন"""
+        loss_pct = abs(trade_info['pnl']) / trade_info['entry_price']
+        signal_score = trade_info.get('signal_score', 0.5)
+        
+        if loss_pct > 0.05:  # 5% এর বেশি লস
+            return {
+                'type': 'high_loss',
+                'message': f'Avoid {trade_info["symbol"]} - high volatility',
+                'weight': 0.8,
+                'action': 'reduce_exposure'
+            }
+        elif trade_info.get('reason') == 'stop_loss':
+            return {
+                'type': 'tight_sl',
+                'message': f'Widen stop loss for {trade_info["symbol"]}',
+                'weight': 0.6,
+                'action': 'adjust_sl'
+            }
+        elif signal_score > 0.7 and loss_pct > 0.03:
+            return {
+                'type': 'false_signal',
+                'message': f'Reduce confidence for {trade_info["symbol"]}',
+                'weight': 0.7,
+                'action': 'lower_confidence'
+            }
+        else:
+            return {
+                'type': 'wrong_signal',
+                'message': f'Review {trade_info["symbol"]} pattern',
+                'weight': 0.5,
+                'action': 'review'
+            }
     
-    if FALLBACK_CONFIG['alert_on_no_signals']:
-        print(f"   📢 ALERT: No BUY signals available for PPO training!")
+    def get_mistake_penalty(self, symbol, signal_score):
+        """
+        পূর্বের ভুলের উপর ভিত্তি করে পেনাল্টি ক্যালকুলেট করুন
+        
+        Returns:
+            adjusted_score: modified signal score
+        """
+        if not MISTAKE_LEARNING_CONFIG['enabled']:
+            return signal_score
+        
+        # Filter recent mistakes (within forget_after_days)
+        cutoff_date = datetime.now() - pd.Timedelta(days=MISTAKE_LEARNING_CONFIG['forget_after_days'])
+        recent_mistakes = []
+        
+        for m in self.mistakes:
+            if m.get('symbol') != symbol:
+                continue
+            try:
+                mistake_date = pd.to_datetime(m.get('recorded_at', '2000-01-01'))
+                if mistake_date > cutoff_date:
+                    recent_mistakes.append(m)
+            except:
+                continue
+        
+        if not recent_mistakes:
+            return signal_score
+        
+        # Calculate penalty based on number of recent mistakes
+        mistake_count = len(recent_mistakes)
+        
+        if mistake_count >= MISTAKE_LEARNING_CONFIG['max_mistakes_per_symbol']:
+            penalty = 0.5
+        elif mistake_count >= 2:
+            penalty = 0.3
+        else:
+            penalty = 0.1
+        
+        # Higher penalty for larger losses
+        avg_loss = np.mean([m.get('loss_percent', 0) for m in recent_mistakes]) if recent_mistakes else 0
+        if avg_loss > 5:  # 5%+ average loss
+            penalty += 0.2
+        elif avg_loss > 3:
+            penalty += 0.1
+        
+        adjusted = signal_score * (1 - penalty * MISTAKE_LEARNING_CONFIG['penalty_multiplier'])
+        return max(0.1, min(1.0, adjusted))
     
-    fallback_signals = generate_fallback_signals(market_df, FALLBACK_CONFIG['max_fallback_symbols'])
+    def get_avoid_list(self):
+        """যে সিম্বল এড়িয়ে চলা উচিত"""
+        bad_symbols = {}
+        cutoff_date = datetime.now() - pd.Timedelta(days=MISTAKE_LEARNING_CONFIG['forget_after_days'])
+        
+        for mistake in self.mistakes:
+            symbol = mistake.get('symbol')
+            if not symbol:
+                continue
+            
+            try:
+                mistake_date = pd.to_datetime(mistake.get('recorded_at', '2000-01-01'))
+                if mistake_date < cutoff_date:
+                    continue
+            except:
+                continue
+            
+            if symbol not in bad_symbols:
+                bad_symbols[symbol] = 0
+            bad_symbols[symbol] += 1
+        
+        # Return symbols with too many mistakes
+        return [s for s, count in bad_symbols.items() 
+                if count >= MISTAKE_LEARNING_CONFIG['max_mistakes_per_symbol']]
     
-    # Merge with existing signals (existing take priority)
-    updated_signals = signals.copy()
-    updated_signals.update(fallback_signals)
+    def get_reduced_confidence_symbols(self):
+        """যে সিম্বলে কনফিডেন্স কমানো উচিত"""
+        reduced = {}
+        for mistake in self.mistakes:
+            symbol = mistake.get('symbol')
+            if symbol and mistake.get('loss_percent', 0) > 3:
+                if symbol not in reduced:
+                    reduced[symbol] = 0
+                reduced[symbol] += 1
+        return reduced
     
-    print(f"   ✅ Total signals after fallback: {len(updated_signals)}")
-    return updated_signals
+    def _save_mistakes(self):
+        """মিসটেক সেভ করুন"""
+        try:
+            df = pd.DataFrame(self.mistakes)
+            df.to_csv(self.mistakes_file, index=False)
+        except Exception as e:
+            print(f"   ⚠️ Could not save mistakes: {e}")
+    
+    def get_summary(self):
+        """মিসটেক সারাংশ"""
+        if not self.mistakes:
+            return "No mistakes recorded"
+        
+        df = pd.DataFrame(self.mistakes)
+        summary = {
+            'total_mistakes': len(self.mistakes),
+            'unique_symbols': df['symbol'].nunique() if 'symbol' in df.columns else 0,
+            'avg_loss_percent': df['loss_percent'].mean() if 'loss_percent' in df.columns else 0,
+            'top_mistake_types': df['lesson'].apply(lambda x: x.get('type') if isinstance(x, dict) else 'unknown').value_counts().to_dict() if 'lesson' in df.columns else {}
+        }
+        return summary
+
+
+# =========================================================
+# ✅ SMART REWARD FUNCTION WITH MISTAKE LEARNING (NEW)
+# =========================================================
+
+class SmartRewardFunction:
+    """
+    স্মার্ট রিওয়ার্ড ফাংশন যা ভুল থেকে শেখে
+    """
+    
+    def __init__(self):
+        self.mistake_learner = MistakeLearner()
+        self.consecutive_losses = 0
+        self.winning_streak = 0
+        self.trade_history = []
+        
+    def calculate_reward(self, trade_result, symbol, signal_score):
+        """
+        ট্রেড রেজাল্টের উপর ভিত্তি করে রিওয়ার্ড ক্যালকুলেট করুন
+        
+        Args:
+            trade_result: {'pnl': float, 'success': bool, 'exit_reason': str}
+            symbol: str
+            signal_score: float (0-1)
+        
+        Returns:
+            reward: float
+        """
+        pnl = trade_result.get('pnl', 0)
+        is_win = trade_result.get('success', False)
+        exit_reason = trade_result.get('exit_reason', 'unknown')
+        
+        # Base reward
+        if is_win:
+            # Winning trade
+            reward = pnl * 10
+            
+            # Bonus for winning streak
+            self.consecutive_losses = 0
+            self.winning_streak += 1
+            if self.winning_streak >= 3:
+                reward *= 1.2  # 20% bonus for 3+ wins
+            elif self.winning_streak >= 5:
+                reward *= 1.5  # 50% bonus for 5+ wins
+        else:
+            # Losing trade - LEARN FROM MISTAKE
+            reward = pnl * 15  # Higher penalty for losses
+            
+            # Record the mistake
+            lesson = self.mistake_learner.record_mistake({
+                'symbol': symbol,
+                'pnl': pnl,
+                'entry_price': trade_result.get('entry_price', 100),
+                'exit_price': trade_result.get('exit_price', 100),
+                'signal_score': signal_score,
+                'reason': exit_reason,
+                'signal_type': 'BUY'
+            })
+            
+            # Additional penalty for repeated mistakes
+            self.consecutive_losses += 1
+            self.winning_streak = 0
+            
+            if self.consecutive_losses >= 2:
+                reward *= 1.5  # 50% extra penalty for consecutive losses
+            elif self.consecutive_losses >= 3:
+                reward *= 2.0  # 100% extra penalty for 3+ consecutive losses
+        
+        # Apply mistake-based penalty to signal
+        adjusted_score = self.mistake_learner.get_mistake_penalty(symbol, signal_score)
+        if adjusted_score < signal_score:
+            reward -= 0.1  # Small penalty for using problematic symbols
+        
+        self.trade_history.append({
+            'symbol': symbol,
+            'pnl': pnl,
+            'is_win': is_win,
+            'reward': reward,
+            'timestamp': datetime.now()
+        })
+        
+        return np.clip(reward, -2.0, 5.0)
+    
+    def get_insights(self):
+        """শেখা থেকে প্রাপ্ত অন্তর্দৃষ্টি"""
+        avoid_list = self.mistake_learner.get_avoid_list()
+        reduced_confidence = self.mistake_learner.get_reduced_confidence_symbols()
+        mistake_summary = self.mistake_learner.get_summary()
+        
+        return {
+            'avoid_symbols': avoid_list,
+            'reduced_confidence_symbols': reduced_confidence,
+            'consecutive_losses': self.consecutive_losses,
+            'winning_streak': self.winning_streak,
+            'total_trades': len(self.trade_history),
+            'mistake_summary': mistake_summary
+        }
+    
+    def get_win_rate(self):
+        """বর্তমান উইন রেট"""
+        if not self.trade_history:
+            return 0
+        wins = sum(1 for t in self.trade_history if t.get('is_win', False))
+        return wins / len(self.trade_history)
+
+
+# =========================================================
+# ✅ ENHANCED ENVIRONMENT WITH MISTAKE LEARNING (NEW)
+# =========================================================
+
+class HedgeFundTradingEnvWithMistakeLearning:
+    """
+    ভুল থেকে শেখার ক্ষমতা সম্পন্ন এনভায়রনমেন্ট
+    Original HedgeFundTradingEnv-এর wrapper
+    """
+    
+    def __init__(self, original_env, mistake_learner=None):
+        self.original_env = original_env
+        self.mistake_learner = mistake_learner or MistakeLearner()
+        self.smart_reward = SmartRewardFunction()
+        self.current_symbol = None
+        self.current_signal_score = 0.5
+        
+    def __getattr__(self, name):
+        """Delegate all attributes to original environment"""
+        return getattr(self.original_env, name)
+    
+    def step(self, action):
+        """Enhanced step with mistake learning"""
+        
+        # Get original step result
+        result = self.original_env.step(action)
+        
+        # Handle different return formats
+        if len(result) == 5:
+            obs, reward, terminated, truncated, info = result
+        elif len(result) == 4:
+            obs, reward, terminated, info = result
+            truncated = False
+        else:
+            return result
+        
+        # Check if a trade was closed
+        if info and isinstance(info, dict):
+            trade_result = info.get('trade_result')
+            if trade_result and trade_result.get('pnl', 0) < 0:
+                # This was a losing trade - learn from it
+                symbol = self.current_symbol or info.get('symbol', 'UNKNOWN')
+                signal_score = self.current_signal_score
+                
+                # Calculate enhanced reward
+                enhanced_reward = self.smart_reward.calculate_reward(
+                    trade_result, symbol, signal_score
+                )
+                reward = enhanced_reward
+                
+                # Update info with learning insights
+                info['mistake_learning'] = self.smart_reward.get_insights()
+                info['adjusted_reward'] = True
+        
+        return obs, reward, terminated, truncated, info
+    
+    def reset(self, **kwargs):
+        """Reset with mistake learning context"""
+        result = self.original_env.reset(**kwargs)
+        
+        # Try to get current symbol from data
+        if hasattr(self.original_env, 'data') and hasattr(self.original_env, 'current_step'):
+            try:
+                if 'symbol' in self.original_env.data.columns:
+                    idx = min(self.original_env.current_step, len(self.original_env.data)-1)
+                    self.current_symbol = self.original_env.data.iloc[idx]['symbol']
+            except:
+                pass
+        
+        return result
+
+
+def wrap_env_with_mistake_learning(env):
+    """Environment কে mistake learning দিয়ে wrap করুন"""
+    if MISTAKE_LEARNING_CONFIG['enabled'] and ENV_AVAILABLE:
+        return HedgeFundTradingEnvWithMistakeLearning(env)
+    return env
+
+
+# =========================================================
+# ✅ PERIODIC MISTAKE REVIEW FUNCTION (NEW)
+# =========================================================
+
+def review_mistakes_and_adjust():
+    """
+    পর্যায়ক্রমে ভুল রিভিউ করুন এবং স্ট্র্যাটেজি অ্যাডজাস্ট করুন
+    """
+    if not MISTAKE_LEARNING_CONFIG['enabled']:
+        return []
+    
+    mistake_learner = MistakeLearner()
+    
+    if not mistake_learner.mistakes:
+        print("   No mistakes to review")
+        return []
+    
+    # Group mistakes by symbol
+    mistakes_by_symbol = {}
+    for m in mistake_learner.mistakes:
+        symbol = m.get('symbol')
+        if symbol:
+            if symbol not in mistakes_by_symbol:
+                mistakes_by_symbol[symbol] = []
+            mistakes_by_symbol[symbol].append(m)
+    
+    print(f"\n📊 MISTAKE REVIEW SUMMARY:")
+    print(f"   Total mistakes: {len(mistake_learner.mistakes)}")
+    print(f"   Symbols with mistakes: {len(mistakes_by_symbol)}")
+    
+    # Identify problematic symbols
+    problem_symbols = mistake_learner.get_avoid_list()
+    reduced_symbols = mistake_learner.get_reduced_confidence_symbols()
+    
+    if problem_symbols:
+        print(f"   ⚠️ Problematic symbols (AVOID): {problem_symbols[:5]}{'...' if len(problem_symbols) > 5 else ''}")
+    
+    if reduced_symbols:
+        print(f"   ⚠️ Reduced confidence symbols: {list(reduced_symbols.keys())[:5]}{'...' if len(reduced_symbols) > 5 else ''}")
+    
+    # Update model metadata for problematic symbols
+    if problem_symbols and MODEL_METADATA.exists():
+        try:
+            meta_df = pd.read_csv(MODEL_METADATA)
+            for symbol in problem_symbols:
+                mask = meta_df['symbol'] == symbol
+                if mask.any():
+                    # Reduce AUC for problematic symbols
+                    original_auc = meta_df.loc[mask, 'auc'].values[0]
+                    reduced_auc = original_auc * 0.85
+                    meta_df.loc[mask, 'auc'] = reduced_auc
+                    print(f"   🔧 Adjusted AUC for {symbol}: {original_auc:.2%} → {reduced_auc:.2%}")
+            meta_df.to_csv(MODEL_METADATA, index=False)
+        except Exception as e:
+            print(f"   ⚠️ Could not update metadata: {e}")
+    
+    return problem_symbols
 
 
 # =========================================================
@@ -317,6 +621,7 @@ def ensure_vecenv_action(action):
     elif isinstance(action, (list, tuple)):
         return list(action)
     return action
+
 
 # =========================================================
 # ✅ SHARPE RATIO REWARD FUNCTION
@@ -364,6 +669,7 @@ class SharpeRatioReward:
             reward += 0.2
         return np.clip(reward, -1.0, 2.0)
 
+
 # =========================================================
 # ✅ ENVIRONMENT VALIDATION FUNCTION
 # =========================================================
@@ -379,6 +685,7 @@ def validate_environment(env):
             print(f"   ⚠️ Environment validation warning: {e}")
             return False
     return True
+
 
 # =========================================================
 # ✅ EARLY STOPPING CALLBACK (SB3 compatible - FULLY FIXED)
@@ -460,6 +767,7 @@ if SB3_AVAILABLE:
 
             return total_reward / steps if steps > 0 else 0
 
+
 # =========================================================
 # ✅ WALK-FORWARD TRAINER
 # =========================================================
@@ -487,6 +795,7 @@ class WalkForwardTrainer:
     def get_all_splits(self):
         return self.splits
 
+
 # =========================================================
 # ✅ FALLBACK ENVIRONMENT
 # =========================================================
@@ -507,6 +816,7 @@ if not ENV_AVAILABLE:
             self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(10,), dtype=np.float32)
             self._sharpe_calculator = SharpeRatioReward()
             self.trade_count = 0
+            self.mistake_learner = MistakeLearner()
 
         def reset(self, seed=None, options=None):
             super().reset(seed=seed)
@@ -532,6 +842,7 @@ if not ENV_AVAILABLE:
 
             reward = 0
             trade_pnl = 0
+            trade_result = None
 
             if self.current_step > 1:
                 prev_price = self.data.iloc[min(self.current_step-1, len(self.data)-1)]['close'] if 'close' in self.data.columns else 100
@@ -543,11 +854,27 @@ if not ENV_AVAILABLE:
                 if self.position == 0:
                     self.position = 1
                     self.entry_price = current_price
+                    self.entry_step = self.current_step
                     reward = -0.005
             elif action == 2:  # Sell
                 if self.position == 1:
                     trade_pnl = (current_price - self.entry_price) / self.entry_price
-                    reward = trade_pnl * 10
+                    trade_result = {
+                        'pnl': trade_pnl,
+                        'success': trade_pnl > 0,
+                        'entry_price': self.entry_price,
+                        'exit_price': current_price,
+                        'exit_reason': 'take_profit' if trade_pnl > 0.03 else 'stop_loss' if trade_pnl < -0.02 else 'manual'
+                    }
+                    
+                    # Use smart reward if available
+                    if MISTAKE_LEARNING_CONFIG['enabled']:
+                        smart_reward = SmartRewardFunction()
+                        symbol = self._get_current_symbol()
+                        reward = smart_reward.calculate_reward(trade_result, symbol, 0.6)
+                    else:
+                        reward = trade_pnl * 10
+                    
                     self.position = 0
                     self.entry_price = 0
                     self.trade_count += 1
@@ -556,6 +883,8 @@ if not ENV_AVAILABLE:
                 if self.position == 1:
                     unrealized_pnl = (current_price - self.entry_price) / self.entry_price
                     reward = unrealized_pnl * 0.3
+                    if self.current_step - self.entry_step > 20:
+                        reward -= 0.01
                 else:
                     reward = -0.0005
 
@@ -568,8 +897,9 @@ if not ENV_AVAILABLE:
                 'balance': self.balance,
                 'sharpe_ratio': current_sharpe,
                 'position': self.position,
-                'trade_result': {'success': trade_pnl > 0, 'pnl': trade_pnl} if trade_pnl != 0 else None,
-                'trade_count': self.trade_count
+                'trade_result': trade_result,
+                'trade_count': self.trade_count,
+                'symbol': self._get_current_symbol()
             }
 
             obs = np.zeros(self.observation_space.shape[0], dtype=np.float32)
@@ -578,6 +908,13 @@ if not ENV_AVAILABLE:
             obs[2] = reward
 
             return obs, reward, terminated, truncated, info
+        
+        def _get_current_symbol(self):
+            """Get current symbol from data"""
+            if 'symbol' in self.data.columns:
+                return self.data.iloc[min(self.current_step, len(self.data)-1)]['symbol']
+            return 'UNKNOWN'
+
 
 # =========================================================
 # ✅ ENSEMBLE PPO (Multiple models average decision - FULLY FIXED)
@@ -642,12 +979,13 @@ if SB3_AVAILABLE:
             }
             joblib.dump(ensemble_info, path)
 
+
 # =========================================================
-# ✅ TRAIN WITH FINAL TEST PHASE
+# ✅ TRAIN WITH FINAL TEST PHASE (UPDATED WITH MISTAKE LEARNING)
 # =========================================================
 
 def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=False):
-    """Hedge Fund Level Training with fallback support"""
+    """Hedge Fund Level Training with fallback support and mistake learning"""
 
     if not SB3_AVAILABLE or not GYM_AVAILABLE:
         print(f"\n   ⚠️ Skipping {symbol}: Required packages not available")
@@ -695,6 +1033,10 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
                     xgb_model_dir=str(XGB_MODEL_DIR),
                     config=HedgeFundConfig()
                 )
+                # Wrap with mistake learning if enabled
+                if MISTAKE_LEARNING_CONFIG['enabled']:
+                    train_env = wrap_env_with_mistake_learning(train_env)
+                    val_env = wrap_env_with_mistake_learning(val_env)
             else:
                 train_env = HedgeFundTradingEnv(train_data)
                 val_env = HedgeFundTradingEnv(val_data)
@@ -808,6 +1150,8 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
                 xgb_model_dir=str(XGB_MODEL_DIR),
                 config=HedgeFundConfig()
             )
+            if MISTAKE_LEARNING_CONFIG['enabled']:
+                test_env = wrap_env_with_mistake_learning(test_env)
         else:
             test_env = HedgeFundTradingEnv(test_data)
     except Exception as e:
@@ -911,42 +1255,178 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
         'ensemble_size': len(ensemble_models)
     }
 
+
 # =========================================================
 # UTILITY FUNCTIONS
 # =========================================================
 
 def load_past_mistakes():
-    if not os.path.exists(PREDICTION_LOG):
-        return []
-    try:
-        df = pd.read_csv(PREDICTION_LOG)
-        if 'date' in df.columns:
-            date_formats = ['%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', 'mixed']
-            for fmt in date_formats:
-                try:
-                    if fmt == 'mixed':
-                        df['date'] = pd.to_datetime(df['date'], errors='coerce')
-                    else:
-                        df['date'] = pd.to_datetime(df['date'], format=fmt, errors='coerce')
-                    if df['date'].notna().sum() > 0:
+    """Load mistakes using MistakeLearner"""
+    if MISTAKE_LEARNING_CONFIG['enabled']:
+        mistake_learner = MistakeLearner()
+        return mistake_learner.mistakes
+    return []
+
+
+def generate_fallback_signals(market_df, top_n=10):
+    """
+    Generate fallback BUY signals when no real signals exist
+    
+    Args:
+        market_df: Market data DataFrame
+        top_n: Number of fallback signals to generate
+    
+    Returns:
+        Dictionary of fallback signals in PPO format
+    """
+    fallback_signals = {}
+    latest_date = market_df['date'].max()
+    
+    print(f"   🔧 Generating fallback signals (strategy: {FALLBACK_CONFIG['fallback_strategy']})")
+    
+    # Apply mistake learning to avoid problematic symbols
+    avoid_symbols = []
+    if MISTAKE_LEARNING_CONFIG['enabled']:
+        mistake_learner = MistakeLearner()
+        avoid_symbols = mistake_learner.get_avoid_list()
+        if avoid_symbols:
+            print(f"      🛡️ Avoiding problematic symbols: {avoid_symbols[:3]}...")
+    
+    # Strategy 1: Top XGBoost confidence symbols
+    if FALLBACK_CONFIG['fallback_strategy'] == 'top_xgboost' or True:
+        if os.path.exists(PREDICTION_LOG):
+            try:
+                pred_df = pd.read_csv(PREDICTION_LOG)
+                if 'confidence_score' in pred_df.columns:
+                    pred_df['date'] = pd.to_datetime(pred_df['date'])
+                    latest_pred = pred_df.sort_values('date').groupby('symbol').last()
+                    
+                    # Filter out avoid symbols
+                    available_symbols = [s for s in latest_pred.index if s not in avoid_symbols]
+                    top_symbols = latest_pred.loc[available_symbols].nlargest(top_n, 'confidence_score').index.tolist() if available_symbols else []
+                    
+                    for symbol in top_symbols:
+                        sym_data = market_df[market_df['symbol'] == symbol].sort_values('date')
+                        if len(sym_data) > 0:
+                            latest_price = sym_data.iloc[-1]['close']
+                            confidence = latest_pred.loc[symbol, 'confidence_score'] / 100
+                            if confidence >= FALLBACK_CONFIG['min_confidence_for_fallback']:
+                                fallback_signals[(symbol, latest_date.strftime('%Y-%m-%d'))] = {
+                                    'buy': round(latest_price, 2),
+                                    'SL': round(latest_price * 0.97, 2),
+                                    'tp': round(latest_price * 1.06, 2),
+                                    'RRR': 2.0
+                                }
+                    if fallback_signals:
+                        print(f"      ✅ Generated {len(fallback_signals)} signals from top XGBoost symbols")
+            except Exception as e:
+                print(f"      ⚠️ Error reading prediction log: {e}")
+    
+    # Strategy 2: Trending symbols (uptrend detection)
+    if len(fallback_signals) < top_n:
+        for symbol in market_df['symbol'].unique():
+            if symbol in avoid_symbols or symbol in [s[0] for s in fallback_signals.keys()]:
+                continue
+            sym_data = market_df[market_df['symbol'] == symbol].sort_values('date')
+            if len(sym_data) >= 10:
+                sma_5 = sym_data['close'].rolling(5).mean()
+                sma_20 = sym_data['close'].rolling(20).mean()
+                latest_price = sym_data.iloc[-1]['close']
+                if (latest_price > sma_5.iloc[-1] and 
+                    sma_5.iloc[-1] > sma_20.iloc[-1] and
+                    len(sym_data) > 0):
+                    fallback_signals[(symbol, latest_date.strftime('%Y-%m-%d'))] = {
+                        'buy': round(latest_price, 2),
+                        'SL': round(latest_price * 0.97, 2),
+                        'tp': round(latest_price * 1.06, 2),
+                        'RRR': 2.0
+                    }
+                    if len(fallback_signals) >= top_n:
                         break
-                except:
-                    continue
-        mistakes = []
-        for _, row in df.iterrows():
-            if row.get('checked', 0) == 1 and row.get('prediction', 0) != row.get('actual', 0):
-                mistakes.append({
-                    'symbol': row.get('symbol', 'unknown'),
-                    'date': row.get('date', datetime.now()),
-                    'prediction': row.get('prediction', 0),
-                    'actual': row.get('actual', 0),
-                    'close': row.get('close', 0)
-                })
-        print(f"   ✅ Loaded {len(mistakes)} past mistakes")
-        return mistakes
-    except Exception as e:
-        print(f"   ⚠️ Could not load prediction log: {e}")
-        return []
+        
+        if fallback_signals:
+            print(f"      ✅ Generated {len(fallback_signals)} signals from trending symbols")
+    
+    # Strategy 3: Momentum symbols (strong recent gains)
+    if len(fallback_signals) < top_n:
+        for symbol in market_df['symbol'].unique():
+            if symbol in avoid_symbols or symbol in [s[0] for s in fallback_signals.keys()]:
+                continue
+            sym_data = market_df[market_df['symbol'] == symbol].sort_values('date')
+            if len(sym_data) >= 5:
+                returns = sym_data['close'].pct_change().dropna()
+                if len(returns) >= 5:
+                    momentum = returns.tail(5).sum()
+                    if momentum > 0.02:
+                        latest_price = sym_data.iloc[-1]['close']
+                        fallback_signals[(symbol, latest_date.strftime('%Y-%m-%d'))] = {
+                            'buy': round(latest_price, 2),
+                            'SL': round(latest_price * 0.97, 2),
+                            'tp': round(latest_price * 1.06, 2),
+                            'RRR': 2.0
+                        }
+                        if len(fallback_signals) >= top_n:
+                            break
+        
+        if fallback_signals:
+            print(f"      ✅ Generated {len(fallback_signals)} signals from momentum symbols")
+    
+    # Strategy 4: Dummy signals (last resort)
+    if len(fallback_signals) == 0:
+        print(f"      ⚠️ No fallback signals found! Using dummy symbols...")
+        dummy_symbols = ['KPCL', 'AAMRANET', 'SONALIANSH', 'SALVOCHEM', 'FAREASTFIN']
+        for symbol in dummy_symbols[:top_n]:
+            if symbol not in avoid_symbols:
+                fallback_signals[(symbol, latest_date.strftime('%Y-%m-%d'))] = {
+                    'buy': 100.0,
+                    'SL': 97.0,
+                    'tp': 106.0,
+                    'RRR': 2.0
+                }
+        print(f"      ✅ Created {len(fallback_signals)} dummy signals")
+    
+    return fallback_signals
+
+
+def ensure_buy_signals(signals, market_df):
+    """
+    Ensure there are BUY signals. If not, generate fallbacks.
+    
+    Args:
+        signals: Current signals dictionary
+        market_df: Market data DataFrame
+    
+    Returns:
+        Updated signals dictionary with guaranteed BUY signals
+    """
+    if not FALLBACK_CONFIG['enabled']:
+        return signals
+    
+    # Check if there are any BUY signals
+    if len(signals) > 0:
+        valid_buy_count = 0
+        for key, sig in signals.items():
+            if sig.get('buy', 0) > 0:
+                valid_buy_count += 1
+        
+        if valid_buy_count > 0:
+            print(f"   ✅ Using {valid_buy_count} existing BUY signals")
+            return signals
+    
+    # No BUY signals found - generate fallbacks
+    print(f"   ⚠️ No BUY signals found! Generating fallback signals...")
+    
+    if FALLBACK_CONFIG['alert_on_no_signals']:
+        print(f"   📢 ALERT: No BUY signals available for PPO training!")
+    
+    fallback_signals = generate_fallback_signals(market_df, FALLBACK_CONFIG['max_fallback_symbols'])
+    
+    # Merge with existing signals (existing take priority)
+    updated_signals = signals.copy()
+    updated_signals.update(fallback_signals)
+    
+    print(f"   ✅ Total signals after fallback: {len(updated_signals)}")
+    return updated_signals
 
 
 def load_signals_with_fallback(path, market_df=None):
@@ -975,6 +1455,28 @@ def load_signals_with_fallback(path, market_df=None):
         for key, sig in signals.items():
             if sig.get('buy', 0) > 0:
                 valid_buy_count += 1
+        
+        # Apply mistake-based filtering
+        if MISTAKE_LEARNING_CONFIG['enabled'] and valid_buy_count > 0:
+            mistake_learner = MistakeLearner()
+            avoid_symbols = mistake_learner.get_avoid_list()
+            reduced_symbols = mistake_learner.get_reduced_confidence_symbols()
+            
+            filtered_signals = {}
+            for (symbol, date), sig in signals.items():
+                if symbol in avoid_symbols:
+                    # Skip problematic symbols
+                    continue
+                elif symbol in reduced_symbols:
+                    # Reduce confidence
+                    sig['confidence'] = sig.get('confidence', 0.7) * 0.8
+                    sig['adjusted'] = True
+                filtered_signals[(symbol, date)] = sig
+            
+            if len(filtered_signals) < valid_buy_count:
+                print(f"   🔧 Filtered {valid_buy_count - len(filtered_signals)} signals due to past mistakes")
+                signals = filtered_signals
+                valid_buy_count = len(signals)
         
         if valid_buy_count == 0 and market_df is not None and FALLBACK_CONFIG['enabled']:
             print(f"   ⚠️ Signal file exists but no valid BUY signals!")
@@ -1100,6 +1602,10 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
                     xgb_model_dir=str(XGB_MODEL_DIR),
                     config=HedgeFundConfig()
                 )
+                # Wrap with mistake learning if enabled
+                if MISTAKE_LEARNING_CONFIG['enabled']:
+                    train_env = wrap_env_with_mistake_learning(train_env)
+                    val_env = wrap_env_with_mistake_learning(val_env)
             else:
                 train_env = HedgeFundTradingEnv(train_data)
                 val_env = HedgeFundTradingEnv(val_data)
@@ -1149,6 +1655,8 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
                 xgb_model_dir=str(XGB_MODEL_DIR),
                 config=HedgeFundConfig()
             )
+            if MISTAKE_LEARNING_CONFIG['enabled']:
+                test_env = wrap_env_with_mistake_learning(test_env)
         else:
             test_env = HedgeFundTradingEnv(test_data)
     except Exception as e:
@@ -1225,11 +1733,11 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
     return ensemble_models[0], {'sharpe_ratio': final_sharpe, 'ensemble_size': len(ensemble_models)}
 
 # =========================================================
-# MAIN TRAINING FUNCTION (UPDATED WITH FALLBACK)
+# MAIN TRAINING FUNCTION (UPDATED WITH FALLBACK AND MISTAKE LEARNING)
 # =========================================================
 
 def train_ppo_system():
-    """Main training function - HEDGE FUND LEVEL with fallback support"""
+    """Main training function - HEDGE FUND LEVEL with fallback support and mistake learning"""
 
     print("="*70)
     print("🏦 HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM")
@@ -1238,6 +1746,7 @@ def train_ppo_system():
     print(f"💰 Initial Capital: ${TOTAL_CAPITAL:,.2f}")
     print(f"📊 Features: Train/Val/Test Split | Noise Injection | Ensemble PPO | Sharpe Ratio")
     print(f"🔄 Fallback: {'ENABLED' if FALLBACK_CONFIG['enabled'] else 'DISABLED'}")
+    print(f"🎓 Mistake Learning: {'ENABLED' if MISTAKE_LEARNING_CONFIG['enabled'] else 'DISABLED'}")
     print("="*70)
 
     if not SB3_AVAILABLE or not GYM_AVAILABLE:
@@ -1245,6 +1754,13 @@ def train_ppo_system():
         print("   Install with: pip install stable-baselines3 gymnasium")
         print("   Skipping PPO training...")
         return [], None
+
+    # Review past mistakes before training
+    if MISTAKE_LEARNING_CONFIG['enabled']:
+        print("\n📚 Reviewing past mistakes...")
+        problem_symbols = review_mistakes_and_adjust()
+        if problem_symbols:
+            print(f"   🛡️ Will avoid {len(problem_symbols)} problematic symbols")
 
     should_retrain, reason = should_retrain_ppo()
     is_retrain = should_retrain and os.path.exists(f"{PPO_SHARED_PATH}.zip")
@@ -1274,6 +1790,14 @@ def train_ppo_system():
 
     top_symbol_list = []
     if not xgb_metadata.empty:
+        # Apply mistake-based filtering to symbol selection
+        if MISTAKE_LEARNING_CONFIG['enabled']:
+            mistake_learner = MistakeLearner()
+            avoid_symbols = mistake_learner.get_avoid_list()
+            # Filter out problematic symbols
+            xgb_metadata = xgb_metadata[~xgb_metadata['symbol'].isin(avoid_symbols)]
+            print(f"   🛡️ Filtered out {len(avoid_symbols)} problematic symbols")
+        
         top_symbols = xgb_metadata[xgb_metadata['auc'] >= XGB_AUC_THRESHOLD_FOR_PPO].head(MAX_PER_SYMBOL_MODELS)
         top_symbol_list = top_symbols['symbol'].tolist()
         print(f"   ✅ Selected {len(top_symbol_list)} symbols for per-symbol PPO")
@@ -1286,6 +1810,7 @@ def train_ppo_system():
             all_symbols_data[symbol] = symbol_df
     print(f"   ✅ Prepared {len(all_symbols_data)} symbols")
 
+    # Load past mistakes (using new system)
     load_past_mistakes()
 
     # Train per-symbol PPO
@@ -1327,12 +1852,26 @@ def train_ppo_system():
         import traceback
         traceback.print_exc()
 
+    # Final mistake learning summary
+    if MISTAKE_LEARNING_CONFIG['enabled']:
+        print("\n📚 MISTAKE LEARNING SUMMARY")
+        mistake_learner = MistakeLearner()
+        summary = mistake_learner.get_summary()
+        if isinstance(summary, dict):
+            print(f"   Total mistakes learned: {summary.get('total_mistakes', 0)}")
+            print(f"   Unique symbols with mistakes: {summary.get('unique_symbols', 0)}")
+            if summary.get('avg_loss_percent', 0) > 0:
+                print(f"   Average loss per mistake: {summary.get('avg_loss_percent', 0):.2f}%")
+        else:
+            print(f"   {summary}")
+
     print("\n" + "="*70)
     print("🏦 HEDGE FUND LEVEL PPO TRAINING COMPLETE!")
     print("="*70)
     print(f"   Per-symbol models: {len(trained_symbols)}")
     print(f"   ✅ Train/Val/Test Split | ✅ Noise Injection | ✅ Ensemble PPO | ✅ Sharpe Ratio")
     print(f"   ✅ Fallback Mechanism: {'Active' if FALLBACK_CONFIG['enabled'] else 'Inactive'}")
+    print(f"   ✅ Mistake Learning: {'Active' if MISTAKE_LEARNING_CONFIG['enabled'] else 'Inactive'}")
     print("="*70)
 
     return trained_symbols, shared_model if 'shared_model' in locals() else None
