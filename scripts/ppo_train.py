@@ -1,5 +1,5 @@
-# ppo_train.py - HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM (SIGNAL FIX)
-# فقط bug fix - কোন স্ট্রাকচারাল পরিবর্তন নয়
+# ppo_train.py - HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM (UPDATED WITH FALLBACK)
+# স্ট্রাকচার অপরিবর্তিত - শুধু ফ্যালব্যাক মেকানিজম যুক্ত
 
 import os
 import sys
@@ -108,6 +108,15 @@ USE_NOISE_INJECTION = True
 ENSEMBLE_SIZE = 3  # Number of models in ensemble
 USE_ENSEMBLE = True
 
+# ✅ FALLBACK CONFIGURATION (NEW)
+FALLBACK_CONFIG = {
+    'enabled': True,
+    'max_fallback_symbols': 10,
+    'fallback_strategy': 'top_xgboost',  # 'top_xgboost', 'trending', 'dummy', 'momentum'
+    'min_confidence_for_fallback': 0.55,
+    'alert_on_no_signals': True
+}
+
 # Market columns for features
 DEFAULT_MARKET_COLS = ["open", "high", "low", "close", "volume"]
 
@@ -137,6 +146,163 @@ PPO_PER_SYMBOL_CONFIG = {
     'good_quality': {'n_steps': 1024, 'batch_size': 256, 'learning_rate': 1e-4, 'timesteps': 30000},
     'fallback': {'n_steps': 1024, 'batch_size': 256, 'learning_rate': 1e-4, 'timesteps': 20000},
 }
+
+# =========================================================
+# ✅ FALLBACK SIGNAL GENERATOR (NEW FUNCTION)
+# =========================================================
+
+def generate_fallback_signals(market_df, top_n=10):
+    """
+    Generate fallback BUY signals when no real signals exist
+    
+    Args:
+        market_df: Market data DataFrame
+        top_n: Number of fallback signals to generate
+    
+    Returns:
+        Dictionary of fallback signals in PPO format
+    """
+    fallback_signals = {}
+    latest_date = market_df['date'].max()
+    
+    print(f"   🔧 Generating fallback signals (strategy: {FALLBACK_CONFIG['fallback_strategy']})")
+    
+    # Strategy 1: Top XGBoost confidence symbols
+    if FALLBACK_CONFIG['fallback_strategy'] == 'top_xgboost' or True:
+        if os.path.exists(PREDICTION_LOG):
+            try:
+                pred_df = pd.read_csv(PREDICTION_LOG)
+                if 'confidence_score' in pred_df.columns:
+                    # Get latest confidence per symbol
+                    pred_df['date'] = pd.to_datetime(pred_df['date'])
+                    latest_pred = pred_df.sort_values('date').groupby('symbol').last()
+                    top_symbols = latest_pred.nlargest(top_n, 'confidence_score').index.tolist()
+                    
+                    for symbol in top_symbols:
+                        sym_data = market_df[market_df['symbol'] == symbol].sort_values('date')
+                        if len(sym_data) > 0:
+                            latest_price = sym_data.iloc[-1]['close']
+                            confidence = latest_pred.loc[symbol, 'confidence_score'] / 100
+                            if confidence >= FALLBACK_CONFIG['min_confidence_for_fallback']:
+                                fallback_signals[(symbol, latest_date.strftime('%Y-%m-%d'))] = {
+                                    'buy': round(latest_price, 2),
+                                    'SL': round(latest_price * 0.97, 2),
+                                    'tp': round(latest_price * 1.06, 2),
+                                    'RRR': 2.0
+                                }
+                    if fallback_signals:
+                        print(f"      ✅ Generated {len(fallback_signals)} signals from top XGBoost symbols")
+            except Exception as e:
+                print(f"      ⚠️ Error reading prediction log: {e}")
+    
+    # Strategy 2: Trending symbols (uptrend detection)
+    if len(fallback_signals) < top_n:
+        for symbol in market_df['symbol'].unique():
+            if symbol in [s[0] for s in fallback_signals.keys()]:
+                continue
+            sym_data = market_df[market_df['symbol'] == symbol].sort_values('date')
+            if len(sym_data) >= 10:
+                # Check uptrend: price above 5-day SMA and 5-day SMA above 20-day SMA
+                sma_5 = sym_data['close'].rolling(5).mean()
+                sma_20 = sym_data['close'].rolling(20).mean()
+                latest_price = sym_data.iloc[-1]['close']
+                if (latest_price > sma_5.iloc[-1] and 
+                    sma_5.iloc[-1] > sma_20.iloc[-1] and
+                    len(sym_data) > 0):
+                    fallback_signals[(symbol, latest_date.strftime('%Y-%m-%d'))] = {
+                        'buy': round(latest_price, 2),
+                        'SL': round(latest_price * 0.97, 2),
+                        'tp': round(latest_price * 1.06, 2),
+                        'RRR': 2.0
+                    }
+                    if len(fallback_signals) >= top_n:
+                        break
+        
+        if fallback_signals:
+            print(f"      ✅ Generated {len(fallback_signals)} signals from trending symbols")
+    
+    # Strategy 3: Momentum symbols (strong recent gains)
+    if len(fallback_signals) < top_n:
+        for symbol in market_df['symbol'].unique():
+            if symbol in [s[0] for s in fallback_signals.keys()]:
+                continue
+            sym_data = market_df[market_df['symbol'] == symbol].sort_values('date')
+            if len(sym_data) >= 5:
+                # Check momentum: 5-day return > 2%
+                returns = sym_data['close'].pct_change().dropna()
+                if len(returns) >= 5:
+                    momentum = returns.tail(5).sum()
+                    if momentum > 0.02:
+                        latest_price = sym_data.iloc[-1]['close']
+                        fallback_signals[(symbol, latest_date.strftime('%Y-%m-%d'))] = {
+                            'buy': round(latest_price, 2),
+                            'SL': round(latest_price * 0.97, 2),
+                            'tp': round(latest_price * 1.06, 2),
+                            'RRR': 2.0
+                        }
+                        if len(fallback_signals) >= top_n:
+                            break
+        
+        if fallback_signals:
+            print(f"      ✅ Generated {len(fallback_signals)} signals from momentum symbols")
+    
+    # Strategy 4: Dummy signals (last resort)
+    if len(fallback_signals) == 0:
+        print(f"      ⚠️ No fallback signals found! Using dummy symbols...")
+        dummy_symbols = ['KPCL', 'AAMRANET', 'SONALIANSH', 'SALVOCHEM', 'FAREASTFIN']
+        for symbol in dummy_symbols[:top_n]:
+            fallback_signals[(symbol, latest_date.strftime('%Y-%m-%d'))] = {
+                'buy': 100.0,
+                'SL': 97.0,
+                'tp': 106.0,
+                'RRR': 2.0
+            }
+        print(f"      ✅ Created {len(fallback_signals)} dummy signals")
+    
+    return fallback_signals
+
+
+def ensure_buy_signals(signals, market_df):
+    """
+    Ensure there are BUY signals. If not, generate fallbacks.
+    
+    Args:
+        signals: Current signals dictionary
+        market_df: Market data DataFrame
+    
+    Returns:
+        Updated signals dictionary with guaranteed BUY signals
+    """
+    if not FALLBACK_CONFIG['enabled']:
+        return signals
+    
+    # Check if there are any BUY signals
+    if len(signals) > 0:
+        # Count actual BUY signals (with valid buy price)
+        valid_buy_count = 0
+        for key, sig in signals.items():
+            if sig.get('buy', 0) > 0:
+                valid_buy_count += 1
+        
+        if valid_buy_count > 0:
+            print(f"   ✅ Using {valid_buy_count} existing BUY signals")
+            return signals
+    
+    # No BUY signals found - generate fallbacks
+    print(f"   ⚠️ No BUY signals found! Generating fallback signals...")
+    
+    if FALLBACK_CONFIG['alert_on_no_signals']:
+        print(f"   📢 ALERT: No BUY signals available for PPO training!")
+    
+    fallback_signals = generate_fallback_signals(market_df, FALLBACK_CONFIG['max_fallback_symbols'])
+    
+    # Merge with existing signals (existing take priority)
+    updated_signals = signals.copy()
+    updated_signals.update(fallback_signals)
+    
+    print(f"   ✅ Total signals after fallback: {len(updated_signals)}")
+    return updated_signals
+
 
 # =========================================================
 # ✅ HELPER FUNCTION FOR VECENV ACTION FORMAT
@@ -248,54 +414,45 @@ if SB3_AVAILABLE:
             return True
 
         def _evaluate(self):
-            """✅ FIXED: Safe Gymnasium 5-value return handling with VecEnv action format"""
+            """Safe Gymnasium 5-value return handling with VecEnv action format"""
             obs = self.eval_env.reset()
-            
-            # Handle (obs, info) tuple from Gymnasium
+
             if isinstance(obs, tuple):
                 obs = obs[0]
-            
+
             total_reward = 0
             steps = 0
             terminated = False
             truncated = False
 
             while not (terminated or truncated):
-                # Reshape obs for SB3 if needed (batch dimension)
                 if isinstance(obs, np.ndarray) and len(obs.shape) == 1:
                     obs = obs.reshape(1, -1)
-                
+
                 action, _ = self.model.predict(obs, deterministic=True)
-                
-                # ✅ FIXED: Convert action to VecEnv format
                 action = ensure_vecenv_action(action)
-                
                 step_result = self.eval_env.step(action)
-                
-                # Safe unpacking with validation
+
                 if step_result is None or len(step_result) == 0:
                     break
-                    
+
                 if len(step_result) == 5:
                     obs, reward, terminated, truncated, info = step_result
                 elif len(step_result) == 4:
-                    # Legacy Gym style
                     obs, reward, terminated, info = step_result
                     truncated = False
                 else:
-                    # Fallback
                     obs = step_result[0]
                     reward = step_result[1] if len(step_result) > 1 else 0
                     terminated = step_result[2] if len(step_result) > 2 else False
                     truncated = step_result[3] if len(step_result) > 3 else False
                     info = step_result[4] if len(step_result) > 4 else {}
-                
-                # Safe reward extraction
+
                 if isinstance(reward, (list, np.ndarray)):
                     reward = reward[0] if len(reward) > 0 else 0
                 elif not isinstance(reward, (int, float)):
                     reward = 0
-                
+
                 total_reward += reward
                 steps += 1
                 if steps > 10000:
@@ -331,7 +488,7 @@ class WalkForwardTrainer:
         return self.splits
 
 # =========================================================
-# ✅ FALLBACK ENVIRONMENT (if xgboost_ppo_env not available - IMPROVED REWARD)
+# ✅ FALLBACK ENVIRONMENT
 # =========================================================
 
 if not ENV_AVAILABLE:
@@ -352,7 +509,6 @@ if not ENV_AVAILABLE:
             self.trade_count = 0
 
         def reset(self, seed=None, options=None):
-            """Return (obs, info) tuple"""
             super().reset(seed=seed)
             self.current_step = 0
             self.balance = 500000
@@ -364,37 +520,30 @@ if not ENV_AVAILABLE:
             return obs, {}
 
         def step(self, action):
-            """Realistic reward calculation with random signals for training"""
-            # Extract action if it's a list (from VecEnv)
             if isinstance(action, (list, tuple, np.ndarray)):
                 action = action[0] if len(action) > 0 else 0
-            
+
             self.current_step += 1
-            
-            # Get current price
+
             if 'close' in self.data.columns:
                 current_price = self.data.iloc[min(self.current_step, len(self.data)-1)]['close']
             else:
                 current_price = 100 + np.random.randn() * 2
-            
+
             reward = 0
             trade_pnl = 0
-            
-            # ✅ FIXED: Add synthetic signal for training when real signals missing
-            # Generate random but trending price movement
+
             if self.current_step > 1:
                 prev_price = self.data.iloc[min(self.current_step-1, len(self.data)-1)]['close'] if 'close' in self.data.columns else 100
                 price_change = (current_price - prev_price) / prev_price
             else:
                 price_change = 0
-            
-            # Process action
+
             if action == 1:  # Buy
                 if self.position == 0:
                     self.position = 1
                     self.entry_price = current_price
-                    reward = -0.005  # Small cost for entering
-                    # print(f"   BUY at {current_price:.2f}")
+                    reward = -0.005
             elif action == 2:  # Sell
                 if self.position == 1:
                     trade_pnl = (current_price - self.entry_price) / self.entry_price
@@ -403,25 +552,18 @@ if not ENV_AVAILABLE:
                     self.entry_price = 0
                     self.trade_count += 1
                     self._sharpe_calculator.add_trade(trade_pnl)
-                    # print(f"   SELL at {current_price:.2f} | PnL: {trade_pnl:.2%}")
-            else:  # Hold (action == 0)
+            else:  # Hold
                 if self.position == 1:
-                    # Unrealized PnL - gives feedback even without closing
                     unrealized_pnl = (current_price - self.entry_price) / self.entry_price
                     reward = unrealized_pnl * 0.3
                 else:
-                    # Small exploration incentive
                     reward = -0.0005
-            
-            # ✅ Add small random noise for exploration
+
             reward += np.random.randn() * 0.01
-            
             terminated = self.current_step >= len(self.data) - 1
             truncated = False
-            
-            # Calculate Sharpe
             current_sharpe = self._sharpe_calculator.calculate_sharpe()
-            
+
             info = {
                 'balance': self.balance,
                 'sharpe_ratio': current_sharpe,
@@ -429,13 +571,12 @@ if not ENV_AVAILABLE:
                 'trade_result': {'success': trade_pnl > 0, 'pnl': trade_pnl} if trade_pnl != 0 else None,
                 'trade_count': self.trade_count
             }
-            
+
             obs = np.zeros(self.observation_space.shape[0], dtype=np.float32)
-            # Add some market data to observation for variety
-            obs[0] = price_change * 100  # price change %
-            obs[1] = self.position  # current position
-            obs[2] = reward  # last reward
-            
+            obs[0] = price_change * 100
+            obs[1] = self.position
+            obs[2] = reward
+
             return obs, reward, terminated, truncated, info
 
 # =========================================================
@@ -444,10 +585,6 @@ if not ENV_AVAILABLE:
 
 if SB3_AVAILABLE:
     class EnsemblePPO:
-        """
-        Ensemble of multiple PPO models for robust decision making
-        """
-
         def __init__(self, model_paths, weights=None):
             self.models = []
             self.weights = weights if weights else [1.0 / len(model_paths)] * len(model_paths)
@@ -462,15 +599,13 @@ if SB3_AVAILABLE:
                     print(f"   ⚠️ Failed to load {path}: {e}")
 
         def predict(self, observation, deterministic=True):
-            """✅ FIXED: Returns action in proper format for VecEnv (list)"""
             if not self.models:
                 return [0], None
 
             all_actions = []
             for model in self.models:
                 action, _ = model.predict(observation, deterministic=deterministic)
-                
-                # Safe scalar extraction for any shape
+
                 if isinstance(action, np.ndarray):
                     if action.size == 1:
                         action = int(action.item())
@@ -484,27 +619,22 @@ if SB3_AVAILABLE:
                     action = int(action[0])
                 else:
                     action = int(action) if action is not None else 0
-                
+
                 all_actions.append(action)
 
-            # Weighted majority voting - handle zero weights
             weighted_votes = {}
             for i, action in enumerate(all_actions):
                 weight = self.weights[i] if i < len(self.weights) else 1.0/len(all_actions)
                 weighted_votes[action] = weighted_votes.get(action, 0) + weight
 
-            # If all weights are zero, use equal weights
             if max(weighted_votes.values()) == 0:
                 for action in all_actions:
                     weighted_votes[action] = weighted_votes.get(action, 0) + 1.0/len(all_actions)
-            
+
             final_action = int(max(weighted_votes, key=weighted_votes.get))
-            
-            # Return as list for VecEnv compatibility
             return [final_action], {'actions': all_actions, 'weights': self.weights, 'weighted_votes': weighted_votes}
 
         def save_ensemble(self, path):
-            """Save ensemble metadata"""
             ensemble_info = {
                 'model_paths': [str(p) for p in self.model_paths],
                 'weights': self.weights,
@@ -513,18 +643,11 @@ if SB3_AVAILABLE:
             joblib.dump(ensemble_info, path)
 
 # =========================================================
-# ✅ TRAIN WITH FINAL TEST PHASE (FULLY FIXED)
+# ✅ TRAIN WITH FINAL TEST PHASE
 # =========================================================
 
 def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=False):
-    """
-    Hedge Fund Level Training with:
-    1. Train/Validation/Test split
-    2. Walk-forward validation
-    3. Early stopping
-    4. Ensemble training
-    5. Final test on NEVER TOUCHED data
-    """
+    """Hedge Fund Level Training with fallback support"""
 
     if not SB3_AVAILABLE or not GYM_AVAILABLE:
         print(f"\n   ⚠️ Skipping {symbol}: Required packages not available")
@@ -534,7 +657,6 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
     print(f"🎯 HEDGE FUND LEVEL TRAINING: {symbol} (AUC: {xgb_auc:.2%})")
     print(f"{'─'*50}")
 
-    # Step 1: Create FINAL TEST split (never touched during training)
     total_len = len(symbol_data)
     train_end = int(total_len * TRAIN_RATIO)
     val_end = int(total_len * (TRAIN_RATIO + VALIDATION_RATIO))
@@ -548,7 +670,6 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
     print(f"      Validation: {len(val_data)} rows ({VALIDATION_RATIO:.0%})")
     print(f"      🧪 FINAL TEST: {len(test_data)} rows ({TEST_RATIO:.0%}) - NEVER TOUCHED")
 
-    # Select config based on XGBoost quality
     if xgb_auc >= 0.85:
         config = PPO_PER_SYMBOL_CONFIG['high_quality']
     elif xgb_auc >= 0.70:
@@ -556,14 +677,12 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
     else:
         config = PPO_PER_SYMBOL_CONFIG['fallback']
 
-    # Step 2: Train multiple ensemble models
     ensemble_models = []
     ensemble_stats = []
 
     for ensemble_idx in range(ENSEMBLE_SIZE if USE_ENSEMBLE else 1):
         print(f"\n   🧠 Training Ensemble Model {ensemble_idx + 1}/{ENSEMBLE_SIZE}")
 
-        # Create environments using HedgeFundTradingEnv
         try:
             if ENV_AVAILABLE:
                 train_env = HedgeFundTradingEnv(
@@ -577,21 +696,16 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
                     config=HedgeFundConfig()
                 )
             else:
-                # Use fallback
                 train_env = HedgeFundTradingEnv(train_data)
                 val_env = HedgeFundTradingEnv(val_data)
         except Exception as e:
             print(f"   ⚠️ Error creating environment: {e}")
             continue
 
-        # Validate environments
         validate_environment(train_env)
-
-        # Wrap for SB3
         train_env = DummyVecEnv([lambda: train_env])
         val_env = DummyVecEnv([lambda: val_env])
 
-        # Create model with different random seed for diversity
         ppo_config = PPO_CONFIG.copy()
         ppo_config.update({
             'n_steps': config['n_steps'],
@@ -601,43 +715,34 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
         })
 
         model = PPO("MlpPolicy", train_env, **ppo_config, verbose=0)
-
-        # Early stopping callback
         early_stop = EarlyStoppingCallback(val_env, patience=EARLY_STOPPING_PATIENCE, verbose=0)
 
-        # Train
         try:
             model.learn(total_timesteps=config['timesteps'], callback=early_stop)
         except Exception as e:
             print(f"   ⚠️ Training failed: {e}")
             continue
 
-        # Step 3: Evaluate on validation (FULLY FIXED)
         obs = val_env.reset()
         if isinstance(obs, tuple):
             obs = obs[0]
-        
+
         total_return = 0
         steps = 0
         terminated = False
         truncated = False
 
         while not (terminated or truncated):
-            # Reshape obs for SB3 if needed
             if isinstance(obs, np.ndarray) and len(obs.shape) == 1:
                 obs = obs.reshape(1, -1)
-            
+
             action, _ = model.predict(obs, deterministic=True)
-            
-            # Convert action to VecEnv format
             action = ensure_vecenv_action(action)
-            
             step_result = val_env.step(action)
-            
-            # Safe unpacking with validation
+
             if step_result is None or len(step_result) == 0:
                 break
-                
+
             if len(step_result) == 5:
                 obs, reward, terminated, truncated, info = step_result
             elif len(step_result) == 4:
@@ -649,41 +754,35 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
                 terminated = step_result[2] if len(step_result) > 2 else False
                 truncated = step_result[3] if len(step_result) > 3 else False
                 info = step_result[4] if len(step_result) > 4 else {}
-            
-            # Safe reward extraction
+
             if isinstance(reward, (list, np.ndarray)):
                 reward_val = reward[0] if len(reward) > 0 else 0
             elif isinstance(reward, (int, float)):
                 reward_val = reward
             else:
                 reward_val = 0
-            
+
             total_return += reward_val
             steps += 1
-            
             if steps > 10000:
                 break
-        
-        # Safe info access
+
         val_sharpe = 0
         if isinstance(info, list) and len(info) > 0:
             if isinstance(info[0], dict):
                 val_sharpe = info[0].get('sharpe_ratio', 0)
         elif isinstance(info, dict):
             val_sharpe = info.get('sharpe_ratio', 0)
-        
+
         print(f"      Val Return: {total_return:.2f} | Sharpe: {val_sharpe:.3f}")
 
-        # Save individual model
         model_path = PPO_ENSEMBLE_DIR / f"ppo_{symbol}_ens{ensemble_idx}"
         model.save(model_path)
         ensemble_models.append(model_path)
         ensemble_stats.append({'sharpe': val_sharpe, 'return': total_return})
 
-    # Step 4: Create ensemble predictor
     if USE_ENSEMBLE and len(ensemble_models) > 1:
-        # Weight models by validation Sharpe ratio - handle zero values
-        sharpe_vals = [max(0.001, s['sharpe'] + 0.1) for s in ensemble_stats]  # Add small epsilon
+        sharpe_vals = [max(0.001, s['sharpe'] + 0.1) for s in ensemble_stats]
         total_sharpe = sum(sharpe_vals)
         if total_sharpe > 0:
             weights = [s / total_sharpe for s in sharpe_vals]
@@ -693,7 +792,6 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
         ensemble = EnsemblePPO(ensemble_models, weights)
         print(f"\n   🎯 Ensemble created with {len(ensemble_models)} models")
         print(f"   Weights: {[round(w, 3) for w in weights]}")
-
         final_model = ensemble
     elif ensemble_models:
         final_model = PPO.load(ensemble_models[0], device="cpu")
@@ -701,7 +799,6 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
         print(f"\n   ❌ No models trained for {symbol}")
         return None, {}
 
-    # Step 5: FINAL TEST on never-touched data (FULLY FIXED)
     print(f"\n   🧪 FINAL TEST on NEVER-TOUCHED data ({len(test_data)} rows)")
 
     try:
@@ -722,7 +819,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
     obs = test_env.reset()
     if isinstance(obs, tuple):
         obs = obs[0]
-    
+
     total_return = 0
     test_trades = []
     steps = 0
@@ -730,26 +827,22 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
     truncated = False
 
     while not (terminated or truncated):
-        # Reshape obs for SB3 if needed
         if isinstance(obs, np.ndarray) and len(obs.shape) == 1:
             obs = obs.reshape(1, -1)
-        
+
         if USE_ENSEMBLE and isinstance(final_model, EnsemblePPO):
             action, _ = final_model.predict(obs, deterministic=True)
         else:
             action, _ = final_model.predict(obs, deterministic=True)
-            # action is already in correct format from predict
-        
-        # Ensure action is in VecEnv format
+
         if not isinstance(action, (list, tuple, np.ndarray)):
             action = ensure_vecenv_action(action)
-        
+
         step_result = test_env.step(action)
-        
-        # Safe unpacking with validation
+
         if step_result is None or len(step_result) == 0:
             break
-            
+
         if len(step_result) == 5:
             obs, reward, terminated, truncated, info = step_result
         elif len(step_result) == 4:
@@ -761,40 +854,37 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
             terminated = step_result[2] if len(step_result) > 2 else False
             truncated = step_result[3] if len(step_result) > 3 else False
             info = step_result[4] if len(step_result) > 4 else {}
-        
-        # Safe reward extraction
+
         if isinstance(reward, (list, np.ndarray)):
             reward_val = reward[0] if len(reward) > 0 else 0
         elif isinstance(reward, (int, float)):
             reward_val = reward
         else:
             reward_val = 0
-        
+
         total_return += reward_val
         steps += 1
-        
-        # Safe trade_result access
+
         trade_result = None
         if isinstance(info, list) and len(info) > 0:
             if isinstance(info[0], dict):
                 trade_result = info[0].get('trade_result')
         elif isinstance(info, dict):
             trade_result = info.get('trade_result')
-        
+
         if trade_result:
             test_trades.append(trade_result)
-        
+
         if steps > 10000:
             break
 
-    # Safe final sharpe access
     final_sharpe = 0
     if isinstance(info, list) and len(info) > 0:
         if isinstance(info[0], dict):
             final_sharpe = info[0].get('sharpe_ratio', 0)
     elif isinstance(info, dict):
         final_sharpe = info.get('sharpe_ratio', 0)
-    
+
     profitable_trades = sum(1 for t in test_trades if t.get('success', False))
     total_trades = len(test_trades)
     win_rate = profitable_trades / total_trades if total_trades > 0 else 0
@@ -805,10 +895,8 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
     print(f"      Win Rate: {win_rate:.2%} ({profitable_trades}/{total_trades})")
     print(f"      Total Trades: {total_trades}")
 
-    # Save final model
     final_path = PPO_SYMBOL_DIR / f"ppo_{symbol}"
     if USE_ENSEMBLE and isinstance(final_model, EnsemblePPO):
-        # Save ensemble info
         ensemble_info_path = PPO_SYMBOL_DIR / f"ensemble_{symbol}.pkl"
         joblib.dump({'model_paths': ensemble_models, 'weights': weights}, ensemble_info_path)
     else:
@@ -860,24 +948,47 @@ def load_past_mistakes():
         print(f"   ⚠️ Could not load prediction log: {e}")
         return []
 
-def load_signals(path):
+
+def load_signals_with_fallback(path, market_df=None):
+    """Load signals with automatic fallback generation if no BUY signals exist"""
+    
     if not os.path.exists(path):
         print(f"   ⚠️ Signal file not found: {path}")
+        if market_df is not None and FALLBACK_CONFIG['enabled']:
+            return ensure_buy_signals({}, market_df)
         return {}
+    
     try:
         df = pd.read_csv(path, parse_dates=["date"])
         df["date"] = df["date"].dt.strftime("%Y-%m-%d")
         signals = {}
         for _, r in df.iterrows():
             signals[(r["symbol"], r["date"])] = {
-                "buy": float(r["buy"]), "SL": float(r["SL"]), 
-                "TP": float(r["tp"]), "RRR": float(r["RRR"]),
+                "buy": float(r["buy"]), 
+                "SL": float(r["SL"]), 
+                "tp": float(r["tp"]), 
+                "RRR": float(r["RRR"]),
             }
+        
+        # Check if we have valid BUY signals
+        valid_buy_count = 0
+        for key, sig in signals.items():
+            if sig.get('buy', 0) > 0:
+                valid_buy_count += 1
+        
+        if valid_buy_count == 0 and market_df is not None and FALLBACK_CONFIG['enabled']:
+            print(f"   ⚠️ Signal file exists but no valid BUY signals!")
+            return ensure_buy_signals({}, market_df)
+        
         print(f"   ✅ Loaded {len(signals)} signals")
         return signals
+        
     except Exception as e:
         print(f"   ⚠️ Error loading signals: {e}")
+        if market_df is not None and FALLBACK_CONFIG['enabled']:
+            return ensure_buy_signals({}, market_df)
         return {}
+
 
 def load_xgb_metadata():
     if not os.path.exists(MODEL_METADATA):
@@ -916,7 +1027,7 @@ def build_observation(df, idx, signals):
         if sig:
             buy = sig["buy"]
             signal_vec = [row["close"] / (buy + 1e-8), (buy - sig["SL"]) / (buy + 1e-8),
-                         (sig["TP"] - buy) / (buy + 1e-8), sig["RRR"]]
+                         (sig["tp"] - buy) / (buy + 1e-8), sig["RRR"]]
         else:
             signal_vec = [0.0] * 4
         obs = list(market_vec) + signal_vec
@@ -939,11 +1050,11 @@ def update_last_ppo_train():
         f.write(datetime.now().strftime('%Y-%m-%d'))
 
 # =========================================================
-# SHARED PPO TRAINING (Hedge Fund Level - FULLY FIXED)
+# SHARED PPO TRAINING (Hedge Fund Level)
 # =========================================================
 
 def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, is_retrain=False):
-    """Train shared PPO with Hedge Fund level features"""
+    """Train shared PPO with Hedge Fund level features and fallback support"""
 
     if not SB3_AVAILABLE or not GYM_AVAILABLE:
         print("\n   ⚠️ Skipping shared PPO: Required packages not available")
@@ -959,11 +1070,9 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
     else:
         filtered_data = all_symbols_data
 
-    # Combine all symbols data
     combined_data = pd.concat(filtered_data.values(), ignore_index=True)
     combined_data = combined_data.sort_values('date').reset_index(drop=True)
 
-    # Create train/val/test split
     total_len = len(combined_data)
     train_end = int(total_len * TRAIN_RATIO)
     val_end = int(total_len * (TRAIN_RATIO + VALIDATION_RATIO))
@@ -974,7 +1083,6 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
 
     print(f"   Data Split: Train={len(train_data)}, Val={len(val_data)}, 🧪Test={len(test_data)}")
 
-    # Train ensemble
     ensemble_models = []
 
     for ensemble_idx in range(ENSEMBLE_SIZE if USE_ENSEMBLE else 1):
@@ -1010,7 +1118,6 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
             model.learning_rate = PPO_CONFIG['learning_rate'] * 0.5
             timesteps = 30000
         else:
-            # Proper config copy without incomplete syntax
             ppo_config = {
                 'n_steps': PPO_CONFIG['n_steps'],
                 'batch_size': PPO_CONFIG['batch_size'],
@@ -1027,14 +1134,12 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
 
         early_stop = EarlyStoppingCallback(val_env, patience=EARLY_STOPPING_PATIENCE, verbose=0)
         model.learn(total_timesteps=timesteps, callback=early_stop)
-
         ensemble_models.append(model)
 
     if not ensemble_models:
         print("   ❌ No shared models trained")
         return None, {}
 
-    # Final test on never-touched data (FULLY FIXED)
     print(f"\n   🧪 FINAL TEST on never-touched data")
 
     try:
@@ -1055,17 +1160,16 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
     obs = test_env.reset()
     if isinstance(obs, tuple):
         obs = obs[0]
-    
+
     total_return = 0
     steps = 0
     terminated = False
     truncated = False
 
     while not (terminated or truncated):
-        # Reshape obs for SB3 if needed
         if isinstance(obs, np.ndarray) and len(obs.shape) == 1:
             obs = obs.reshape(1, -1)
-        
+
         all_actions = []
         for model in ensemble_models:
             action, _ = model.predict(obs, deterministic=True)
@@ -1074,18 +1178,14 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
             elif isinstance(action, (list, tuple)):
                 action = action[0] if len(action) > 0 else 0
             all_actions.append(int(action))
-        
+
         final_action = int(round(np.mean(all_actions)))
-        
-        # Convert action to VecEnv format
         action_wrapped = ensure_vecenv_action(final_action)
-        
         step_result = test_env.step(action_wrapped)
-        
-        # Safe unpacking with validation
+
         if step_result is None or len(step_result) == 0:
             break
-            
+
         if len(step_result) == 5:
             obs, reward, terminated, truncated, info = step_result
         elif len(step_result) == 4:
@@ -1097,42 +1197,39 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
             terminated = step_result[2] if len(step_result) > 2 else False
             truncated = step_result[3] if len(step_result) > 3 else False
             info = step_result[4] if len(step_result) > 4 else {}
-        
-        # Safe reward extraction
+
         if isinstance(reward, (list, np.ndarray)):
             reward_val = reward[0] if len(reward) > 0 else 0
         elif isinstance(reward, (int, float)):
             reward_val = reward
         else:
             reward_val = 0
-        
+
         total_return += reward_val
         steps += 1
         if steps > 10000:
             break
 
-    # Safe final sharpe access
     final_sharpe = 0
     if isinstance(info, list) and len(info) > 0:
         if isinstance(info[0], dict):
             final_sharpe = info[0].get('sharpe_ratio', 0)
     elif isinstance(info, dict):
         final_sharpe = info.get('sharpe_ratio', 0)
-    
+
     print(f"   📊 Test Sharpe: {final_sharpe:.3f} | Return: {total_return:.2f}%")
 
-    # Save best model
     ensemble_models[0].save(PPO_SHARED_PATH)
     print(f"   ✅ Shared model saved: {PPO_SHARED_PATH}")
 
     return ensemble_models[0], {'sharpe_ratio': final_sharpe, 'ensemble_size': len(ensemble_models)}
 
 # =========================================================
-# MAIN TRAINING FUNCTION
+# MAIN TRAINING FUNCTION (UPDATED WITH FALLBACK)
 # =========================================================
 
 def train_ppo_system():
-    """Main training function - HEDGE FUND LEVEL"""
+    """Main training function - HEDGE FUND LEVEL with fallback support"""
 
     print("="*70)
     print("🏦 HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM")
@@ -1140,6 +1237,7 @@ def train_ppo_system():
     print(f"📅 Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print(f"💰 Initial Capital: ${TOTAL_CAPITAL:,.2f}")
     print(f"📊 Features: Train/Val/Test Split | Noise Injection | Ensemble PPO | Sharpe Ratio")
+    print(f"🔄 Fallback: {'ENABLED' if FALLBACK_CONFIG['enabled'] else 'DISABLED'}")
     print("="*70)
 
     if not SB3_AVAILABLE or not GYM_AVAILABLE:
@@ -1165,7 +1263,13 @@ def train_ppo_system():
         df['date'] = pd.to_datetime(df['date']).dt.strftime("%Y-%m-%d")
     print(f"   ✅ Loaded {len(df)} rows, {df['symbol'].nunique()} symbols")
 
-    signals = load_signals(CSV_SIGNAL)
+    # Load signals WITH FALLBACK (UPDATED)
+    signals = load_signals_with_fallback(CSV_SIGNAL, df)
+    
+    # Count and display signal types
+    buy_count = sum(1 for s in signals.values() if s.get('buy', 0) > 0)
+    print(f"   📊 Total signals: {len(signals)} (BUY: {buy_count})")
+
     xgb_metadata = load_xgb_metadata()
 
     top_symbol_list = []
@@ -1184,7 +1288,7 @@ def train_ppo_system():
 
     load_past_mistakes()
 
-    # Train per-symbol PPO (Hedge Fund Level)
+    # Train per-symbol PPO
     trained_symbols = []
     per_symbol_stats = []
 
@@ -1207,12 +1311,10 @@ def train_ppo_system():
                     per_symbol_stats.append(stats)
             except Exception as e:
                 print(f"\n   ❌ Failed to train {symbol}: {e}")
-                import traceback
-                traceback.print_exc()
 
         print(f"\n✅ Per-symbol PPO trained: {len(trained_symbols)} symbols")
 
-        # Train shared PPO (Hedge Fund Level)
+        # Train shared PPO
         print("\n🏆 Training Shared PPO Model (Hedge Fund Level)")
         shared_model, shared_stats = train_shared_ppo_hedgefund(
             all_symbols_data, signals, exclude_symbols=trained_symbols, is_retrain=is_retrain
@@ -1230,6 +1332,7 @@ def train_ppo_system():
     print("="*70)
     print(f"   Per-symbol models: {len(trained_symbols)}")
     print(f"   ✅ Train/Val/Test Split | ✅ Noise Injection | ✅ Ensemble PPO | ✅ Sharpe Ratio")
+    print(f"   ✅ Fallback Mechanism: {'Active' if FALLBACK_CONFIG['enabled'] else 'Inactive'}")
     print("="*70)
 
     return trained_symbols, shared_model if 'shared_model' in locals() else None
