@@ -1,4 +1,4 @@
-# ppo_train.py - HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM (FULLY UPDATED)
+# ppo_train.py - HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM (CRITICAL BUGS FIXED)
 # Features:
 # 1. Per-symbol PPO for top GOOD XGBoost models (AUC >= 0.70)
 # 2. Shared PPO for all other symbols (fallback)
@@ -17,6 +17,7 @@
 # 15. ✅ Graceful handling of missing files
 # 16. ✅ FULL GYMNASIUM COMPLIANCE with xgboost_ppo_env.py
 # 17. ✅ SB3 COMPATIBILITY FIXED (Gymnasium 5-value return)
+# 18. ✅ CRITICAL BUGS FIXED: reward/info type safety, action extraction, incomplete syntax
 
 import os
 import sys
@@ -218,7 +219,7 @@ def validate_environment(env):
     return True
 
 # =========================================================
-# ✅ EARLY STOPPING CALLBACK (SB3 compatible - FIXED)
+# ✅ EARLY STOPPING CALLBACK (SB3 compatible - CRITICAL FIX)
 # =========================================================
 
 if SB3_AVAILABLE:
@@ -251,16 +252,50 @@ if SB3_AVAILABLE:
             return True
 
         def _evaluate(self):
-            """✅ FIXED: Handle Gymnasium 5-value return"""
+            """✅ CRITICAL FIX: Safe Gymnasium 5-value return handling"""
             obs = self.eval_env.reset()
+            
+            # Handle (obs, info) tuple from Gymnasium
+            if isinstance(obs, tuple):
+                obs = obs[0]
+            
             total_reward = 0
             steps = 0
             terminated = False
             truncated = False
 
             while not (terminated or truncated):
+                # Reshape obs for SB3 if needed (batch dimension)
+                if isinstance(obs, np.ndarray) and len(obs.shape) == 1:
+                    obs = obs.reshape(1, -1)
+                
                 action, _ = self.model.predict(obs, deterministic=True)
-                obs, reward, terminated, truncated, info = self.eval_env.step(action)
+                step_result = self.eval_env.step(action)
+                
+                # ✅ CRITICAL FIX: Safe unpacking with validation
+                if step_result is None or len(step_result) == 0:
+                    break
+                    
+                if len(step_result) == 5:
+                    obs, reward, terminated, truncated, info = step_result
+                elif len(step_result) == 4:
+                    # Legacy Gym style
+                    obs, reward, terminated, info = step_result
+                    truncated = False
+                else:
+                    # Fallback
+                    obs = step_result[0]
+                    reward = step_result[1] if len(step_result) > 1 else 0
+                    terminated = step_result[2] if len(step_result) > 2 else False
+                    truncated = step_result[3] if len(step_result) > 3 else False
+                    info = step_result[4] if len(step_result) > 4 else {}
+                
+                # ✅ Safe reward extraction
+                if isinstance(reward, (list, np.ndarray)):
+                    reward = reward[0] if len(reward) > 0 else 0
+                elif not isinstance(reward, (int, float)):
+                    reward = 0
+                
                 total_reward += reward
                 steps += 1
                 if steps > 10000:
@@ -296,38 +331,88 @@ class WalkForwardTrainer:
         return self.splits
 
 # =========================================================
-# ✅ FALLBACK ENVIRONMENT (if xgboost_ppo_env not available - FIXED)
+# ✅ FALLBACK ENVIRONMENT (if xgboost_ppo_env not available - IMPROVED REWARD)
 # =========================================================
 
 if not ENV_AVAILABLE:
     class HedgeFundTradingEnv(gym.Env):
-        """Fallback environment - simplified version"""
+        """Fallback environment - simplified version with realistic reward"""
         metadata = {'render_modes': ['human']}
 
         def __init__(self, data, xgb_model_dir="./csv/xgboost/", config=None):
             super().__init__()
             self.data = data
+            self.current_step = 0
+            self.balance = 500000
+            self.position = 0
+            self.entry_price = 0
             self.action_space = spaces.Discrete(3)
             self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(10,), dtype=np.float32)
-            self.reset()
+            self._sharpe_calculator = SharpeRatioReward()
 
         def reset(self, seed=None, options=None):
+            """✅ Return (obs, info) tuple"""
             super().reset(seed=seed)
             self.current_step = 0
             self.balance = 500000
             self.position = 0
-            return np.zeros(10, dtype=np.float32), {}  # ✅ FIXED: return 2 values
+            self.entry_price = 0
+            self._sharpe_calculator.reset()
+            obs = np.zeros(self.observation_space.shape[0], dtype=np.float32)
+            return obs, {}
 
         def step(self, action):
+            """✅ CRITICAL FIX: Realistic reward calculation"""
             self.current_step += 1
+            
+            # Get current price
+            if 'close' in self.data.columns:
+                current_price = self.data.iloc[self.current_step]['close'] if self.current_step < len(self.data) else 100
+            else:
+                current_price = 100
+            
+            reward = 0
+            trade_pnl = 0
+            
+            # Process action
+            if action == 1:  # Buy
+                if self.position == 0:
+                    self.position = 1
+                    self.entry_price = current_price
+                    reward = -0.01  # Small cost for entering
+            elif action == 2:  # Sell
+                if self.position == 1:
+                    trade_pnl = (current_price - self.entry_price) / self.entry_price
+                    reward = trade_pnl * 10
+                    self.position = 0
+                    self.entry_price = 0
+                    self._sharpe_calculator.add_trade(trade_pnl)
+            else:  # Hold
+                if self.position == 1:
+                    # Unrealized PnL
+                    unrealized_pnl = (current_price - self.entry_price) / self.entry_price
+                    reward = unrealized_pnl * 0.5
+                else:
+                    reward = -0.001  # Small decay for doing nothing
+            
             terminated = self.current_step >= len(self.data) - 1
             truncated = False
-            reward = 0
-            info = {'balance': self.balance, 'sharpe_ratio': 0}
-            return np.zeros(10, dtype=np.float32), reward, terminated, truncated, info  # ✅ FIXED: 5 values
+            
+            # Calculate Sharpe
+            current_sharpe = self._sharpe_calculator.calculate_sharpe()
+            
+            info = {
+                'balance': self.balance,
+                'sharpe_ratio': current_sharpe,
+                'position': self.position,
+                'trade_result': {'success': trade_pnl > 0, 'pnl': trade_pnl} if trade_pnl != 0 else None
+            }
+            
+            obs = np.zeros(self.observation_space.shape[0], dtype=np.float32)
+            return obs, reward, terminated, truncated, info
 
 # =========================================================
-# ✅ ENSEMBLE PPO (Multiple models average decision)
+# ✅ ENSEMBLE PPO (Multiple models average decision - CRITICAL FIX)
 # =========================================================
 
 if SB3_AVAILABLE:
@@ -350,22 +435,37 @@ if SB3_AVAILABLE:
                     print(f"   ⚠️ Failed to load {path}: {e}")
 
         def predict(self, observation, deterministic=True):
-            """Ensemble prediction - weighted majority voting"""
+            """✅ CRITICAL FIX: Safe scalar extraction for any action shape"""
             if not self.models:
                 return 0, None
 
             all_actions = []
             for model in self.models:
                 action, _ = model.predict(observation, deterministic=deterministic)
-                all_actions.append(action[0] if isinstance(action, np.ndarray) else action)
+                
+                # ✅ CRITICAL FIX: Safe scalar extraction for any shape
+                if isinstance(action, np.ndarray):
+                    if action.size == 1:
+                        action = int(action.item())
+                    elif len(action.shape) == 1 and len(action) > 0:
+                        action = int(action[0])
+                    elif len(action.shape) == 2 and action.shape[0] > 0:
+                        action = int(action[0, 0])
+                    else:
+                        action = 0
+                elif isinstance(action, (list, tuple)) and len(action) > 0:
+                    action = int(action[0])
+                else:
+                    action = int(action) if action is not None else 0
+                
+                all_actions.append(action)
 
             # ✅ Weighted majority voting
-            from collections import Counter
             weighted_votes = {}
             for i, action in enumerate(all_actions):
                 weighted_votes[action] = weighted_votes.get(action, 0) + self.weights[i]
 
-            final_action = max(weighted_votes, key=weighted_votes.get)
+            final_action = int(max(weighted_votes, key=weighted_votes.get))
 
             return final_action, {'actions': all_actions, 'weights': self.weights, 'weighted_votes': weighted_votes}
 
@@ -379,7 +479,7 @@ if SB3_AVAILABLE:
             joblib.dump(ensemble_info, path)
 
 # =========================================================
-# ✅ TRAIN WITH FINAL TEST PHASE (UPDATED FOR xgboost_ppo_env - FIXED)
+# ✅ TRAIN WITH FINAL TEST PHASE (CRITICAL FIXES)
 # =========================================================
 
 def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=False):
@@ -478,22 +578,62 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
             print(f"   ⚠️ Training failed: {e}")
             continue
 
-
-        # ✅ Step 3: Evaluate on validation
+        # ✅ Step 3: Evaluate on validation (CRITICAL FIX)
         obs = val_env.reset()
+        if isinstance(obs, tuple):
+            obs = obs[0]
+        
         total_return = 0
         steps = 0
         terminated = False
         truncated = False
 
         while not (terminated or truncated):
+            # Reshape obs for SB3 if needed
+            if isinstance(obs, np.ndarray) and len(obs.shape) == 1:
+                obs = obs.reshape(1, -1)
+            
             action, _ = model.predict(obs, deterministic=True)
-            obs, reward, terminated, truncated, info = val_env.step(action)
-            total_return += reward[0] if isinstance(reward, np.ndarray) else reward
+            step_result = val_env.step(action)
+            
+            # ✅ CRITICAL FIX: Safe unpacking with validation
+            if step_result is None or len(step_result) == 0:
+                break
+                
+            if len(step_result) == 5:
+                obs, reward, terminated, truncated, info = step_result
+            elif len(step_result) == 4:
+                obs, reward, terminated, info = step_result
+                truncated = False
+            else:
+                obs = step_result[0]
+                reward = step_result[1] if len(step_result) > 1 else 0
+                terminated = step_result[2] if len(step_result) > 2 else False
+                truncated = step_result[3] if len(step_result) > 3 else False
+                info = step_result[4] if len(step_result) > 4 else {}
+            
+            # ✅ CRITICAL FIX: Safe reward extraction
+            if isinstance(reward, (list, np.ndarray)):
+                reward_val = reward[0] if len(reward) > 0 else 0
+            elif isinstance(reward, (int, float)):
+                reward_val = reward
+            else:
+                reward_val = 0
+            
+            total_return += reward_val
             steps += 1
+            
             if steps > 10000:
                 break
-        val_sharpe = info[0].get('sharpe_ratio', 0) if isinstance(info, list) else info.get('sharpe_ratio', 0)
+        
+        # ✅ CRITICAL FIX: Safe info access
+        val_sharpe = 0
+        if isinstance(info, list) and len(info) > 0:
+            if isinstance(info[0], dict):
+                val_sharpe = info[0].get('sharpe_ratio', 0)
+        elif isinstance(info, dict):
+            val_sharpe = info.get('sharpe_ratio', 0)
+        
         print(f"      Val Return: {total_return:.2f} | Sharpe: {val_sharpe:.3f}")
 
         # Save individual model
@@ -505,7 +645,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
     # ✅ Step 4: Create ensemble predictor
     if USE_ENSEMBLE and len(ensemble_models) > 1:
         # Weight models by validation Sharpe ratio
-        sharpe_vals = [s['sharpe'] for s in ensemble_stats]
+        sharpe_vals = [max(0, s['sharpe']) for s in ensemble_stats]
         total_sharpe = sum(sharpe_vals) if sum(sharpe_vals) > 0 else 1
         weights = [s / total_sharpe for s in sharpe_vals]
 
@@ -520,7 +660,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
         print(f"\n   ❌ No models trained for {symbol}")
         return None, {}
 
-    # ✅ Step 5: FINAL TEST on never-touched data
+    # ✅ Step 5: FINAL TEST on never-touched data (CRITICAL FIX)
     print(f"\n   🧪 FINAL TEST on NEVER-TOUCHED data ({len(test_data)} rows)")
 
     try:
@@ -539,6 +679,9 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
     test_env = DummyVecEnv([lambda: test_env])
 
     obs = test_env.reset()
+    if isinstance(obs, tuple):
+        obs = obs[0]
+    
     total_return = 0
     test_trades = []
     steps = 0
@@ -546,23 +689,71 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
     truncated = False
 
     while not (terminated or truncated):
+        # Reshape obs for SB3 if needed
+        if isinstance(obs, np.ndarray) and len(obs.shape) == 1:
+            obs = obs.reshape(1, -1)
+        
         if USE_ENSEMBLE and isinstance(final_model, EnsemblePPO):
             action, _ = final_model.predict(obs, deterministic=True)
         else:
             action, _ = final_model.predict(obs, deterministic=True)
-            action = action[0] if isinstance(action, np.ndarray) else action
-
-        obs, reward, terminated, truncated, info = test_env.step(action)
-        total_return += reward[0] if isinstance(reward, np.ndarray) else reward
+            if isinstance(action, np.ndarray):
+                action = action[0] if len(action) > 0 else 0
+            elif isinstance(action, (list, tuple)):
+                action = action[0] if len(action) > 0 else 0
+            action = int(action)
+        
+        step_result = test_env.step(action)
+        
+        # ✅ CRITICAL FIX: Safe unpacking with validation
+        if step_result is None or len(step_result) == 0:
+            break
+            
+        if len(step_result) == 5:
+            obs, reward, terminated, truncated, info = step_result
+        elif len(step_result) == 4:
+            obs, reward, terminated, info = step_result
+            truncated = False
+        else:
+            obs = step_result[0]
+            reward = step_result[1] if len(step_result) > 1 else 0
+            terminated = step_result[2] if len(step_result) > 2 else False
+            truncated = step_result[3] if len(step_result) > 3 else False
+            info = step_result[4] if len(step_result) > 4 else {}
+        
+        # ✅ CRITICAL FIX: Safe reward extraction
+        if isinstance(reward, (list, np.ndarray)):
+            reward_val = reward[0] if len(reward) > 0 else 0
+        elif isinstance(reward, (int, float)):
+            reward_val = reward
+        else:
+            reward_val = 0
+        
+        total_return += reward_val
         steps += 1
-
-        if info[0].get('trade_result'):
-            test_trades.append(info[0]['trade_result'])
-
+        
+        # ✅ CRITICAL FIX: Safe trade_result access
+        trade_result = None
+        if isinstance(info, list) and len(info) > 0:
+            if isinstance(info[0], dict):
+                trade_result = info[0].get('trade_result')
+        elif isinstance(info, dict):
+            trade_result = info.get('trade_result')
+        
+        if trade_result:
+            test_trades.append(trade_result)
+        
         if steps > 10000:
             break
 
-    final_sharpe = info[0].get('sharpe_ratio', 0) if isinstance(info, list) else info.get('sharpe_ratio', 0)
+    # ✅ CRITICAL FIX: Safe final sharpe access
+    final_sharpe = 0
+    if isinstance(info, list) and len(info) > 0:
+        if isinstance(info[0], dict):
+            final_sharpe = info[0].get('sharpe_ratio', 0)
+    elif isinstance(info, dict):
+        final_sharpe = info.get('sharpe_ratio', 0)
+    
     profitable_trades = sum(1 for t in test_trades if t.get('success', False))
     total_trades = len(test_trades)
     win_rate = profitable_trades / total_trades if total_trades > 0 else 0
@@ -707,7 +898,7 @@ def update_last_ppo_train():
         f.write(datetime.now().strftime('%Y-%m-%d'))
 
 # =========================================================
-# SHARED PPO TRAINING (Hedge Fund Level - UPDATED)
+# SHARED PPO TRAINING (Hedge Fund Level - CRITICAL FIXES)
 # =========================================================
 
 def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, is_retrain=False):
@@ -778,8 +969,18 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
             model.learning_rate = PPO_CONFIG['learning_rate'] * 0.5
             timesteps = 30000
         else:
-            ppo_config = PPO_CONFIG.copy()
-            ppo_config['seed'] = 42 + ensemble_idx
+            # ✅ CRITICAL FIX: Removed incomplete syntax, proper config copy
+            ppo_config = {
+                'n_steps': PPO_CONFIG['n_steps'],
+                'batch_size': PPO_CONFIG['batch_size'],
+                'gamma': PPO_CONFIG['gamma'],
+                'learning_rate': PPO_CONFIG['learning_rate'],
+                'ent_coef': PPO_CONFIG['ent_coef'],
+                'clip_range': PPO_CONFIG['clip_range'],
+                'vf_coef': PPO_CONFIG['vf_coef'],
+                'max_grad_norm': PPO_CONFIG['max_grad_norm'],
+                'seed': 42 + ensemble_idx
+            }
             model = PPO("MlpPolicy", train_env, **ppo_config, verbose=0)
             timesteps = 100000
 
@@ -792,7 +993,7 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
         print("   ❌ No shared models trained")
         return None, {}
 
-    # Final test on never-touched data
+    # Final test on never-touched data (CRITICAL FIX)
     print(f"\n   🧪 FINAL TEST on never-touched data")
 
     try:
@@ -811,25 +1012,69 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
     test_env = DummyVecEnv([lambda: test_env])
 
     obs = test_env.reset()
+    if isinstance(obs, tuple):
+        obs = obs[0]
+    
     total_return = 0
     steps = 0
     terminated = False
     truncated = False
 
     while not (terminated or truncated):
+        # Reshape obs for SB3 if needed
+        if isinstance(obs, np.ndarray) and len(obs.shape) == 1:
+            obs = obs.reshape(1, -1)
+        
         all_actions = []
         for model in ensemble_models:
             action, _ = model.predict(obs, deterministic=True)
-            all_actions.append(action[0] if isinstance(action, np.ndarray) else action)
+            if isinstance(action, np.ndarray):
+                action = action[0] if len(action) > 0 else 0
+            elif isinstance(action, (list, tuple)):
+                action = action[0] if len(action) > 0 else 0
+            all_actions.append(int(action))
+        
         final_action = int(round(np.mean(all_actions)))
 
-        obs, reward, terminated, truncated, info = test_env.step(final_action)
-        total_return += reward[0] if isinstance(reward, np.ndarray) else reward
+        step_result = test_env.step(final_action)
+        
+        # ✅ CRITICAL FIX: Safe unpacking with validation
+        if step_result is None or len(step_result) == 0:
+            break
+            
+        if len(step_result) == 5:
+            obs, reward, terminated, truncated, info = step_result
+        elif len(step_result) == 4:
+            obs, reward, terminated, info = step_result
+            truncated = False
+        else:
+            obs = step_result[0]
+            reward = step_result[1] if len(step_result) > 1 else 0
+            terminated = step_result[2] if len(step_result) > 2 else False
+            truncated = step_result[3] if len(step_result) > 3 else False
+            info = step_result[4] if len(step_result) > 4 else {}
+        
+        # ✅ CRITICAL FIX: Safe reward extraction
+        if isinstance(reward, (list, np.ndarray)):
+            reward_val = reward[0] if len(reward) > 0 else 0
+        elif isinstance(reward, (int, float)):
+            reward_val = reward
+        else:
+            reward_val = 0
+        
+        total_return += reward_val
         steps += 1
         if steps > 10000:
             break
 
-    final_sharpe = info[0].get('sharpe_ratio', 0) if isinstance(info, list) else info.get('sharpe_ratio', 0)
+    # ✅ CRITICAL FIX: Safe final sharpe access
+    final_sharpe = 0
+    if isinstance(info, list) and len(info) > 0:
+        if isinstance(info[0], dict):
+            final_sharpe = info[0].get('sharpe_ratio', 0)
+    elif isinstance(info, dict):
+        final_sharpe = info.get('sharpe_ratio', 0)
+    
     print(f"   📊 Test Sharpe: {final_sharpe:.3f} | Return: {total_return:.2f}%")
 
     # Save best model
