@@ -324,21 +324,21 @@ class HedgeFundTradingEnv(gym.Env):
         # - 6 pattern features (Hammer, BullishEngulfing, MorningStar, Doji, PiercingLine, ThreeWhiteSoldiers)
         # - 1 zigzag_signal feature
         # Total = 5+1+1+3+2+1+6+1 = 20
-        
+
         base_count = 20
-        
+
         # MTF features: 4 features per period × 4 periods = 16
         mtf_count = len(self.config.MTF_PERIODS) * 4
-        
+
         # XGBoost features: confidence, prediction = 2
         xgb_count = 2
-        
+
         # Position features: balance_ratio, position_ratio, drawdown, sharpe, volatility = 5
         position_count = 5
-        
+
         # Total: 20 + 16 + 2 + 5 = 43
         obs_dim = base_count + mtf_count + xgb_count + position_count
-        
+
         return obs_dim
 
     def _calculate_mtf_features(self, df, current_idx):
@@ -416,44 +416,44 @@ class HedgeFundTradingEnv(gym.Env):
         Returns: List of 20 normalized features
         """
         normalized = []
-        
+
         # 1. Price features (5 items)
         for col in ['open', 'high', 'low', 'close', 'ema_200']:
             val = obs_dict.get(col, 0)
             if pd.isna(val):
                 val = 0
             normalized.append(val / 1000 if val != 0 else 0)
-        
+
         # 2. Volume (1 item)
         vol = obs_dict.get('volume', 0)
         normalized.append(vol / 1e6 if vol != 0 else 0)
-        
+
         # 3. RSI (1 item)
         rsi = obs_dict.get('rsi', 50)
         normalized.append(rsi / 100 if rsi != 0 else 0.5)
-        
+
         # 4. MACD features (3 items)
         normalized.append(obs_dict.get('macd', 0) / 10)
         normalized.append(obs_dict.get('macd_signal', 0) / 10)
         normalized.append(obs_dict.get('macd_hist', 0) / 10)
-        
+
         # 5. Bollinger features (2 items)
         normalized.append(obs_dict.get('bb_width', 0))
         normalized.append(obs_dict.get('bb_position', 0.5))
-        
+
         # 6. ATR feature (1 item)
         normalized.append(obs_dict.get('atr_ratio', 0))
-        
+
         # 7. Pattern features (6 items)
         pattern_cols = ['Hammer', 'BullishEngulfing', 'MorningStar', 'Doji', 'PiercingLine', 'ThreeWhiteSoldiers']
         for col in pattern_cols:
             val = obs_dict.get(col, 0)
             normalized.append(float(val) if not pd.isna(val) else 0)
-        
+
         # 8. Zigzag signal (1 item)
         zigzag = obs_dict.get('zigzag_signal', 0)
         normalized.append(float(zigzag) if not pd.isna(zigzag) else 0)
-        
+
         # Total: 5+1+1+3+2+1+6+1 = 20 features
         return normalized
 
