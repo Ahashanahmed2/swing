@@ -24,16 +24,7 @@ if os.path.exists('./csv/mongodb.csv'):
 else:
     print("   ❌ mongodb.csv not found! Run mongodb.py first")
     sys.exit(1)
-
-# =========================================================
-# STEP 2: Run support_resistance.py
-# =========================================================
-print("\n📊 STEP 2: Detecting support/resistance levels...")
-
-# সরাসরি support_resistance ফাংশন কল করা যাক
-exec(open('./scripts/support_resistance.py').read())
-
-# =========================================================
+ =========================================================
 # STEP 3: Generate trading signals with FIXED logic
 # =========================================================
 print("\n📊 STEP 3: Generating trading signals...")
