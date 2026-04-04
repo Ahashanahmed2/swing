@@ -7,6 +7,8 @@
 # ✅ 5. Fixed equity curve double append bug
 # ✅ 6. Episode randomization for better generalization
 # ✅ 7. FIXED: Observation space dimension (43 instead of 44)
+# ✅ 8. FIXED: step() method undefined variables (current_date, current_price)
+# ✅ 9. FIXED: Complete step() method with proper returns
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -167,53 +169,52 @@ class HedgeFundTradingEnv(gym.Env):
             key = (symbol, date)
             if key in self.signals:
                 return self.signals[key]
-    
+
         # ✅ FALLBACK: Generate synthetic signal based on price movement
         try:
             # Get current price and previous price
-            current_idx = self.data[self.data['date'] == date].index
-            if len(current_idx) > 0:
-                idx = current_idx[0]
-                if idx > 0:
-                    current_price = self.data.iloc[idx]['close']
-                    prev_price = self.data.iloc[idx-1]['close']
-                    price_change = (current_price - prev_price) / prev_price
-                
-                    # Generate signal based on recent price movement
-                    if price_change > 0.005:  # Up 0.5%
-                        buy_signal = current_price * 0.99
-                        sl = buy_signal * 0.98
-                        tp = buy_signal * 1.04
-                        return {'buy': buy_signal, 'SL': sl, 'tp': tp, 'RRR': 2.0}
-                    elif price_change < -0.005:  # Down 0.5%
-                        buy_signal = current_price * 0.98
-                        sl = buy_signal * 0.97
-                        tp = buy_signal * 1.03
-                        return {'buy': buy_signal, 'SL': sl, 'tp': tp, 'RRR': 1.5}
-                    else:
-                        buy_signal = current_price * 0.995
-                        sl = buy_signal * 0.99
-                        tp = buy_signal * 1.02
-                        return {'buy': buy_signal, 'SL': sl, 'tp': tp, 'RRR': 2.0}
+            if hasattr(self, 'symbol_data') and self.symbol_data is not None:
+                current_idx = self.symbol_data[self.symbol_data['date'] == date].index
+                if len(current_idx) > 0:
+                    idx = current_idx[0]
+                    if idx > 0:
+                        current_price = self.symbol_data.iloc[idx]['close']
+                        prev_price = self.symbol_data.iloc[idx-1]['close']
+                        price_change = (current_price - prev_price) / prev_price
+
+                        # Generate signal based on recent price movement
+                        if price_change > 0.005:  # Up 0.5%
+                            buy_signal = current_price * 0.99
+                            sl = buy_signal * 0.98
+                            tp = buy_signal * 1.04
+                            return {'buy': buy_signal, 'SL': sl, 'tp': tp, 'RRR': 2.0}
+                        elif price_change < -0.005:  # Down 0.5%
+                            buy_signal = current_price * 0.98
+                            sl = buy_signal * 0.97
+                            tp = buy_signal * 1.03
+                            return {'buy': buy_signal, 'SL': sl, 'tp': tp, 'RRR': 1.5}
+                        else:
+                            buy_signal = current_price * 0.995
+                            sl = buy_signal * 0.99
+                            tp = buy_signal * 1.02
+                            return {'buy': buy_signal, 'SL': sl, 'tp': tp, 'RRR': 2.0}
         except:
             pass
-    
+
         # Default signal if everything fails
         return {'buy': 100, 'SL': 98, 'tp': 104, 'RRR': 2.0}
-    
-
 
     def _get_trade_signal(self, symbol, current_date, current_price):
         """
         ✅ FIXED: Ensure trade signal is always available
         """
         signal = self.get_signal(symbol, current_date)
-    
+
         if signal is None:
-            if hasattr(self, 'price_history') and len(self.price_history) > 5:
+            if hasattr(self, 'price_history') and self.price_history and len(self.price_history) > 5:
                 recent_returns = np.diff(self.price_history[-5:]) / self.price_history[-5:-1]
                 avg_return = np.mean(recent_returns)
-            
+
                 if avg_return > 0.002:
                     return {
                         'action': 'BUY',
@@ -230,7 +231,7 @@ class HedgeFundTradingEnv(gym.Env):
                         'tp': current_price * 0.96,
                         'confidence': 0.6
                     }
-        
+
             return {
                 'action': 'HOLD',
                 'entry': current_price,
@@ -238,7 +239,7 @@ class HedgeFundTradingEnv(gym.Env):
                 'tp': current_price * 1.01,
                 'confidence': 0.5
             }
-    
+
         # Convert signal format if needed
         if isinstance(signal, dict) and 'buy' in signal:
             return {
@@ -248,11 +249,8 @@ class HedgeFundTradingEnv(gym.Env):
                 'tp': signal['tp'],
                 'confidence': signal.get('RRR', 1.0) / 3.0
             }
-    
+
         return signal
-
-
-    
 
     def _preprocess_all_symbols(self):
         """Pre-calculate features for all symbols (avoid recomputation)"""
@@ -293,6 +291,8 @@ class HedgeFundTradingEnv(gym.Env):
 
         # MACD
         df['macd'] = self._calculate_macd(df['close'])
+        df['macd_signal'] = df['macd'].ewm(span=9).mean()
+        df['macd_hist'] = df['macd'] - df['macd_signal']
 
         # Bollinger Bands
         df['bb_upper'], df['bb_middle'], df['bb_lower'] = self._calculate_bollinger(df['close'])
@@ -303,11 +303,20 @@ class HedgeFundTradingEnv(gym.Env):
         df['atr'] = self._calculate_atr(df)
         df['atr_ratio'] = df['atr'] / df['close'].replace(0, 1)
 
+        # EMA 200
+        df['ema_200'] = df['close'].ewm(span=200, adjust=False).mean()
+
         # ZigZag signal
         if 'zigzag' in df.columns:
             df['zigzag_signal'] = (~df['zigzag'].isna()).astype(int)
         else:
             df['zigzag_signal'] = 0
+
+        # Pattern columns
+        pattern_cols = ['Hammer', 'BullishEngulfing', 'MorningStar', 'Doji', 'PiercingLine', 'ThreeWhiteSoldiers']
+        for col in pattern_cols:
+            if col not in df.columns:
+                df[col] = 0
 
         # Fill NaN values
         df = df.fillna(0)
@@ -579,6 +588,7 @@ class HedgeFundTradingEnv(gym.Env):
         self.highest_price = 0
         self.total_reward = 0
         self.trades = []
+        self.price_history = []
 
         # Single equity curve (only updated here and on trade)
         self.equity_curve = [self.balance]
@@ -592,6 +602,11 @@ class HedgeFundTradingEnv(gym.Env):
             return np.zeros(self.obs_dim, dtype=np.float32)
 
         row = self.symbol_data.iloc[self.current_step]
+
+        # Update price history
+        self.price_history.append(row['close'])
+        if len(self.price_history) > 100:
+            self.price_history = self.price_history[-100:]
 
         # Get dynamic XGBoost signal for current step only
         current_features = row.to_dict()
@@ -630,7 +645,7 @@ class HedgeFundTradingEnv(gym.Env):
         return obs
 
     def step(self, action):
-        """Execute action with proper reward scaling"""
+        """Execute action with proper reward scaling - FULLY FIXED"""
         if self.current_step >= len(self.symbol_data) - 1:
             return self._get_obs(), 0, True, False, {}
 
@@ -642,6 +657,10 @@ class HedgeFundTradingEnv(gym.Env):
         next_price = self._add_noise(next_row['close'])
         high_price = self._add_noise(row['high'])
 
+        # ✅ FIXED: Define current_date and current_price before using them
+        current_date = row['date'] if 'date' in row.index else datetime.now().strftime('%Y-%m-%d')
+        current_price = price
+
         # Get dynamic XGBoost signal for this step
         current_features = row.to_dict()
         xgb_conf, xgb_pred = self._get_xgb_signal_dynamic(self.current_symbol, current_features)
@@ -651,14 +670,12 @@ class HedgeFundTradingEnv(gym.Env):
         terminated = False
         trade_result = None
 
-            # সিগন্যাল পাওয়ার চেষ্টা করুন
+        # ✅ FIXED: Get trade signal with proper variables
         signal = self._get_trade_signal(self.current_symbol, current_date, current_price)
-    
-        # যদি signal None হয়, তবুও ট্রেড করার চেষ্টা করুন
+
+        # If signal is None, still try to trade with default
         if signal is None:
             signal = {'action': 'HOLD', 'entry': current_price, 'sl': current_price*0.99, 'tp': current_price*1.01, 'confidence': 0.5}
-    
-    # ... rest of step method ...
 
         # Check stop loss
         if self.position > 0 and self._check_stop_loss(price, self.entry_price, high_price):
@@ -761,6 +778,7 @@ class HedgeFundTradingEnv(gym.Env):
         # Final reward clipping
         reward = np.clip(reward, self.config.REWARD_CLIP_MIN, self.config.REWARD_CLIP_MAX)
 
+        # ✅ FIXED: Return proper values (5 values for Gymnasium)
         return self._get_obs(), reward, terminated, False, {
             'balance': self.balance,
             'symbol': self.current_symbol,
