@@ -63,10 +63,10 @@ xgb_df = pd.merge(pred_df, conf_df, on=['symbol', 'date'], how='left')
 # =========================================================
 if 'prob_up' not in xgb_df.columns:
     print("\n   🔧 Creating 'prob_up' column from available data...")
-    
+
     # Check what columns we have
     print(f"   Available columns: {xgb_df.columns.tolist()}")
-    
+
     # Option 1: If 'prediction' column exists (0=down, 1=up)
     if 'prediction' in xgb_df.columns:
         xgb_df['prob_up'] = xgb_df.apply(
@@ -75,12 +75,12 @@ if 'prob_up' not in xgb_df.columns:
             axis=1
         )
         print("   ✅ Created prob_up from 'prediction' + 'confidence_score'")
-    
+
     # Option 2: If only 'confidence_score' exists
     elif 'confidence_score' in xgb_df.columns:
         xgb_df['prob_up'] = xgb_df['confidence_score'] / 100
         print("   ✅ Created prob_up from 'confidence_score' only")
-    
+
     # Option 3: Default
     else:
         xgb_df['prob_up'] = 0.5
@@ -132,12 +132,12 @@ for _, row in sr_df.iterrows():
     if len(date_diff) == 0:
         skipped += 1
         continue
-    
+
     min_diff = date_diff.min()
     if min_diff.days > 5:
         skipped += 1
         continue
-    
+
     match_idx = date_diff.idxmin()
 
     if match_idx + 1 >= len(df_symbol):
@@ -160,7 +160,7 @@ for _, row in sr_df.iterrows():
 
         prob = xgb_match.iloc[0]['prob_up']
         confidence = xgb_match.iloc[0].get('confidence_score', 50)
-        
+
         # Handle NaN
         if pd.isna(prob):
             prob = 0.5
@@ -219,53 +219,11 @@ if not output_df.empty:
         by=['buy_score', 'confidence', 'gap_days'],
         ascending=[False, False, True]
     )
-    
+
     # Save
     output_df.to_csv(output_path, index=False)
     
-    # Also save as trade_stock.csv for PPO
-    ppo_signals = output_df[output_df['signal'].isin(['STRONG BUY', 'BUY'])].copy()
-    
-    if len(ppo_signals) > 0:
-        # Need market data for entry prices
-        ppo_list = []
-        for _, row in ppo_signals.iterrows():
-            symbol = row['symbol']
-            level_date = pd.to_datetime(row['level_date'])
-            
-            sym_market = mongo_df[mongo_df['symbol'] == symbol].sort_values('date')
-            date_diff = (sym_market['date'] - level_date).abs()
-            if len(date_diff) > 0:
-                match_idx = date_diff.idxmin()
-                if match_idx + 1 < len(sym_market):
-                    entry = sym_market.iloc[match_idx + 1]['close']
-                    ppo_list.append({
-                        'symbol': symbol,
-                        'buy': round(entry, 2),
-                        'SL': round(entry * 0.97, 2),
-                        'tp': round(entry * 1.05, 2),
-                        'confidence': row['buy_score'],
-                        'date': datetime.now().strftime('%Y-%m-%d'),
-                        'RRR': round(1.67, 2)
-                    })
-        
-        if ppo_list:
-            ppo_df = pd.DataFrame(ppo_list)
-            ppo_df.to_csv('./csv/trade_stock.csv', index=False)
-            print(f"\n   ✅ PPO signals saved: {len(ppo_df)}")
-    else:
-        # Dummy signals
-        dummy = pd.DataFrame({
-            'symbol': good_symbols[:5] if len(good_symbols) > 0 else ['KPCL'],
-            'buy': [100, 150, 200, 50, 75][:len(good_symbols[:5])],
-            'SL': [95, 142.5, 190, 47.5, 71.25][:len(good_symbols[:5])],
-            'tp': [110, 165, 220, 55, 82.5][:len(good_symbols[:5])],
-            'confidence': [0.7, 0.65, 0.6, 0.55, 0.5][:len(good_symbols[:5])],
-            'date': [datetime.now().strftime('%Y-%m-%d')] * len(good_symbols[:5]),
-            'RRR': [2.0] * len(good_symbols[:5])
-        })
-        dummy.to_csv('./csv/trade_stock.csv', index=False)
-        print("\n   ⚠️ Created dummy signals for PPO")
+    # ❌ trade_stock.csv বাদ দেওয়া হয়েছে - PPO signals save করা হচ্ছে না
 
 # -----------------------------
 # Print summary
