@@ -24,7 +24,6 @@ if os.path.exists('./csv/mongodb.csv'):
 else:
     print("   ❌ mongodb.csv not found! Run mongodb.py first")
     sys.exit(1)
- =========================================================
 # STEP 3: Generate trading signals with FIXED logic
 # =========================================================
 print("\n📊 STEP 3: Generating trading signals...")
