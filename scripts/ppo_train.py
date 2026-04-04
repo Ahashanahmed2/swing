@@ -1,4 +1,4 @@
-# ppo_train.py - HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM (CRITICAL BUGS FIXED)
+# ppo_train.py - HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM (ALL BUGS FIXED)
 # Features:
 # 1. Per-symbol PPO for top GOOD XGBoost models (AUC >= 0.70)
 # 2. Shared PPO for all other symbols (fallback)
@@ -17,7 +17,7 @@
 # 15. ✅ Graceful handling of missing files
 # 16. ✅ FULL GYMNASIUM COMPLIANCE with xgboost_ppo_env.py
 # 17. ✅ SB3 COMPATIBILITY FIXED (Gymnasium 5-value return)
-# 18. ✅ CRITICAL BUGS FIXED: reward/info type safety, action extraction, incomplete syntax
+# 18. ✅ VecEnv action format fixed (int to list conversion)
 
 import os
 import sys
@@ -157,6 +157,20 @@ PPO_PER_SYMBOL_CONFIG = {
 }
 
 # =========================================================
+# ✅ HELPER FUNCTION FOR VECENV ACTION FORMAT
+# =========================================================
+
+def ensure_vecenv_action(action):
+    """Convert action to format expected by VecEnv"""
+    if isinstance(action, (int, float, np.integer, np.floating)):
+        return [int(action)]
+    elif isinstance(action, np.ndarray) and action.ndim == 0:
+        return [int(action.item())]
+    elif isinstance(action, (list, tuple)):
+        return list(action)
+    return action
+
+# =========================================================
 # ✅ SHARPE RATIO REWARD FUNCTION
 # =========================================================
 
@@ -219,7 +233,7 @@ def validate_environment(env):
     return True
 
 # =========================================================
-# ✅ EARLY STOPPING CALLBACK (SB3 compatible - CRITICAL FIX)
+# ✅ EARLY STOPPING CALLBACK (SB3 compatible - FULLY FIXED)
 # =========================================================
 
 if SB3_AVAILABLE:
@@ -252,7 +266,7 @@ if SB3_AVAILABLE:
             return True
 
         def _evaluate(self):
-            """✅ CRITICAL FIX: Safe Gymnasium 5-value return handling"""
+            """✅ FIXED: Safe Gymnasium 5-value return handling with VecEnv action format"""
             obs = self.eval_env.reset()
             
             # Handle (obs, info) tuple from Gymnasium
@@ -270,9 +284,13 @@ if SB3_AVAILABLE:
                     obs = obs.reshape(1, -1)
                 
                 action, _ = self.model.predict(obs, deterministic=True)
+                
+                # ✅ FIXED: Convert action to VecEnv format
+                action = ensure_vecenv_action(action)
+                
                 step_result = self.eval_env.step(action)
                 
-                # ✅ CRITICAL FIX: Safe unpacking with validation
+                # Safe unpacking with validation
                 if step_result is None or len(step_result) == 0:
                     break
                     
@@ -290,7 +308,7 @@ if SB3_AVAILABLE:
                     truncated = step_result[3] if len(step_result) > 3 else False
                     info = step_result[4] if len(step_result) > 4 else {}
                 
-                # ✅ Safe reward extraction
+                # Safe reward extraction
                 if isinstance(reward, (list, np.ndarray)):
                     reward = reward[0] if len(reward) > 0 else 0
                 elif not isinstance(reward, (int, float)):
@@ -351,7 +369,7 @@ if not ENV_AVAILABLE:
             self._sharpe_calculator = SharpeRatioReward()
 
         def reset(self, seed=None, options=None):
-            """✅ Return (obs, info) tuple"""
+            """Return (obs, info) tuple"""
             super().reset(seed=seed)
             self.current_step = 0
             self.balance = 500000
@@ -362,7 +380,11 @@ if not ENV_AVAILABLE:
             return obs, {}
 
         def step(self, action):
-            """✅ CRITICAL FIX: Realistic reward calculation"""
+            """Realistic reward calculation"""
+            # Extract action if it's a list (from VecEnv)
+            if isinstance(action, (list, tuple, np.ndarray)):
+                action = action[0] if len(action) > 0 else 0
+            
             self.current_step += 1
             
             # Get current price
@@ -412,7 +434,7 @@ if not ENV_AVAILABLE:
             return obs, reward, terminated, truncated, info
 
 # =========================================================
-# ✅ ENSEMBLE PPO (Multiple models average decision - CRITICAL FIX)
+# ✅ ENSEMBLE PPO (Multiple models average decision - FULLY FIXED)
 # =========================================================
 
 if SB3_AVAILABLE:
@@ -435,15 +457,15 @@ if SB3_AVAILABLE:
                     print(f"   ⚠️ Failed to load {path}: {e}")
 
         def predict(self, observation, deterministic=True):
-            """✅ CRITICAL FIX: Safe scalar extraction for any action shape"""
+            """✅ FIXED: Returns action in proper format for VecEnv (list)"""
             if not self.models:
-                return 0, None
+                return [0], None
 
             all_actions = []
             for model in self.models:
                 action, _ = model.predict(observation, deterministic=deterministic)
                 
-                # ✅ CRITICAL FIX: Safe scalar extraction for any shape
+                # Safe scalar extraction for any shape
                 if isinstance(action, np.ndarray):
                     if action.size == 1:
                         action = int(action.item())
@@ -460,14 +482,15 @@ if SB3_AVAILABLE:
                 
                 all_actions.append(action)
 
-            # ✅ Weighted majority voting
+            # Weighted majority voting
             weighted_votes = {}
             for i, action in enumerate(all_actions):
                 weighted_votes[action] = weighted_votes.get(action, 0) + self.weights[i]
 
             final_action = int(max(weighted_votes, key=weighted_votes.get))
-
-            return final_action, {'actions': all_actions, 'weights': self.weights, 'weighted_votes': weighted_votes}
+            
+            # ✅ Return as list for VecEnv compatibility
+            return [final_action], {'actions': all_actions, 'weights': self.weights, 'weighted_votes': weighted_votes}
 
         def save_ensemble(self, path):
             """Save ensemble metadata"""
@@ -479,7 +502,7 @@ if SB3_AVAILABLE:
             joblib.dump(ensemble_info, path)
 
 # =========================================================
-# ✅ TRAIN WITH FINAL TEST PHASE (CRITICAL FIXES)
+# ✅ TRAIN WITH FINAL TEST PHASE (FULLY FIXED)
 # =========================================================
 
 def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=False):
@@ -500,7 +523,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
     print(f"🎯 HEDGE FUND LEVEL TRAINING: {symbol} (AUC: {xgb_auc:.2%})")
     print(f"{'─'*50}")
 
-    # ✅ Step 1: Create FINAL TEST split (never touched during training)
+    # Step 1: Create FINAL TEST split (never touched during training)
     total_len = len(symbol_data)
     train_end = int(total_len * TRAIN_RATIO)
     val_end = int(total_len * (TRAIN_RATIO + VALIDATION_RATIO))
@@ -522,14 +545,14 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
     else:
         config = PPO_PER_SYMBOL_CONFIG['fallback']
 
-    # ✅ Step 2: Train multiple ensemble models
+    # Step 2: Train multiple ensemble models
     ensemble_models = []
     ensemble_stats = []
 
     for ensemble_idx in range(ENSEMBLE_SIZE if USE_ENSEMBLE else 1):
         print(f"\n   🧠 Training Ensemble Model {ensemble_idx + 1}/{ENSEMBLE_SIZE}")
 
-        # ✅ Create environments using HedgeFundTradingEnv
+        # Create environments using HedgeFundTradingEnv
         try:
             if ENV_AVAILABLE:
                 train_env = HedgeFundTradingEnv(
@@ -550,7 +573,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
             print(f"   ⚠️ Error creating environment: {e}")
             continue
 
-        # ✅ Validate environments
+        # Validate environments
         validate_environment(train_env)
 
         # Wrap for SB3
@@ -578,7 +601,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
             print(f"   ⚠️ Training failed: {e}")
             continue
 
-        # ✅ Step 3: Evaluate on validation (CRITICAL FIX)
+        # Step 3: Evaluate on validation (FULLY FIXED)
         obs = val_env.reset()
         if isinstance(obs, tuple):
             obs = obs[0]
@@ -594,9 +617,13 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
                 obs = obs.reshape(1, -1)
             
             action, _ = model.predict(obs, deterministic=True)
+            
+            # ✅ FIXED: Convert action to VecEnv format
+            action = ensure_vecenv_action(action)
+            
             step_result = val_env.step(action)
             
-            # ✅ CRITICAL FIX: Safe unpacking with validation
+            # Safe unpacking with validation
             if step_result is None or len(step_result) == 0:
                 break
                 
@@ -612,7 +639,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
                 truncated = step_result[3] if len(step_result) > 3 else False
                 info = step_result[4] if len(step_result) > 4 else {}
             
-            # ✅ CRITICAL FIX: Safe reward extraction
+            # Safe reward extraction
             if isinstance(reward, (list, np.ndarray)):
                 reward_val = reward[0] if len(reward) > 0 else 0
             elif isinstance(reward, (int, float)):
@@ -626,7 +653,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
             if steps > 10000:
                 break
         
-        # ✅ CRITICAL FIX: Safe info access
+        # Safe info access
         val_sharpe = 0
         if isinstance(info, list) and len(info) > 0:
             if isinstance(info[0], dict):
@@ -642,7 +669,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
         ensemble_models.append(model_path)
         ensemble_stats.append({'sharpe': val_sharpe, 'return': total_return})
 
-    # ✅ Step 4: Create ensemble predictor
+    # Step 4: Create ensemble predictor
     if USE_ENSEMBLE and len(ensemble_models) > 1:
         # Weight models by validation Sharpe ratio
         sharpe_vals = [max(0, s['sharpe']) for s in ensemble_stats]
@@ -660,7 +687,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
         print(f"\n   ❌ No models trained for {symbol}")
         return None, {}
 
-    # ✅ Step 5: FINAL TEST on never-touched data (CRITICAL FIX)
+    # Step 5: FINAL TEST on never-touched data (FULLY FIXED)
     print(f"\n   🧪 FINAL TEST on NEVER-TOUCHED data ({len(test_data)} rows)")
 
     try:
@@ -697,15 +724,15 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
             action, _ = final_model.predict(obs, deterministic=True)
         else:
             action, _ = final_model.predict(obs, deterministic=True)
-            if isinstance(action, np.ndarray):
-                action = action[0] if len(action) > 0 else 0
-            elif isinstance(action, (list, tuple)):
-                action = action[0] if len(action) > 0 else 0
-            action = int(action)
+            # action is already in correct format from predict
+        
+        # ✅ FIXED: Ensure action is in VecEnv format (already done by EnsemblePPO or ensure_vecenv_action)
+        if not isinstance(action, (list, tuple, np.ndarray)):
+            action = ensure_vecenv_action(action)
         
         step_result = test_env.step(action)
         
-        # ✅ CRITICAL FIX: Safe unpacking with validation
+        # Safe unpacking with validation
         if step_result is None or len(step_result) == 0:
             break
             
@@ -721,7 +748,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
             truncated = step_result[3] if len(step_result) > 3 else False
             info = step_result[4] if len(step_result) > 4 else {}
         
-        # ✅ CRITICAL FIX: Safe reward extraction
+        # Safe reward extraction
         if isinstance(reward, (list, np.ndarray)):
             reward_val = reward[0] if len(reward) > 0 else 0
         elif isinstance(reward, (int, float)):
@@ -732,7 +759,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
         total_return += reward_val
         steps += 1
         
-        # ✅ CRITICAL FIX: Safe trade_result access
+        # Safe trade_result access
         trade_result = None
         if isinstance(info, list) and len(info) > 0:
             if isinstance(info[0], dict):
@@ -746,7 +773,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
         if steps > 10000:
             break
 
-    # ✅ CRITICAL FIX: Safe final sharpe access
+    # Safe final sharpe access
     final_sharpe = 0
     if isinstance(info, list) and len(info) > 0:
         if isinstance(info[0], dict):
@@ -898,7 +925,7 @@ def update_last_ppo_train():
         f.write(datetime.now().strftime('%Y-%m-%d'))
 
 # =========================================================
-# SHARED PPO TRAINING (Hedge Fund Level - CRITICAL FIXES)
+# SHARED PPO TRAINING (Hedge Fund Level - FULLY FIXED)
 # =========================================================
 
 def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, is_retrain=False):
@@ -969,7 +996,7 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
             model.learning_rate = PPO_CONFIG['learning_rate'] * 0.5
             timesteps = 30000
         else:
-            # ✅ CRITICAL FIX: Removed incomplete syntax, proper config copy
+            # Proper config copy without incomplete syntax
             ppo_config = {
                 'n_steps': PPO_CONFIG['n_steps'],
                 'batch_size': PPO_CONFIG['batch_size'],
@@ -993,7 +1020,7 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
         print("   ❌ No shared models trained")
         return None, {}
 
-    # Final test on never-touched data (CRITICAL FIX)
+    # Final test on never-touched data (FULLY FIXED)
     print(f"\n   🧪 FINAL TEST on never-touched data")
 
     try:
@@ -1035,10 +1062,13 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
             all_actions.append(int(action))
         
         final_action = int(round(np.mean(all_actions)))
-
-        step_result = test_env.step(final_action)
         
-        # ✅ CRITICAL FIX: Safe unpacking with validation
+        # ✅ FIXED: Convert action to VecEnv format
+        action_wrapped = ensure_vecenv_action(final_action)
+        
+        step_result = test_env.step(action_wrapped)
+        
+        # Safe unpacking with validation
         if step_result is None or len(step_result) == 0:
             break
             
@@ -1054,7 +1084,7 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
             truncated = step_result[3] if len(step_result) > 3 else False
             info = step_result[4] if len(step_result) > 4 else {}
         
-        # ✅ CRITICAL FIX: Safe reward extraction
+        # Safe reward extraction
         if isinstance(reward, (list, np.ndarray)):
             reward_val = reward[0] if len(reward) > 0 else 0
         elif isinstance(reward, (int, float)):
@@ -1067,7 +1097,7 @@ def train_shared_ppo_hedgefund(all_symbols_data, signals, exclude_symbols=None, 
         if steps > 10000:
             break
 
-    # ✅ CRITICAL FIX: Safe final sharpe access
+    # Safe final sharpe access
     final_sharpe = 0
     if isinstance(info, list) and len(info) > 0:
         if isinstance(info[0], dict):
