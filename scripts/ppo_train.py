@@ -531,4 +531,3 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
         return None, {}
 
     print(f"\n{'─'*50}")
-    print(f"🎯
