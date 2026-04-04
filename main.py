@@ -25,7 +25,7 @@ scripts = [
     "scripts/support.py",
     #"scripts/buy_csv.py",
     #"scripts/buy.py",
-    #"scripts/trade_stock_ai.py",
+    "scripts/trade_stock_ai.py",
     #"scripts/swing_buy.py",
     #"scripts/liquidly.py",
     #"scripts/orderblock.py",
