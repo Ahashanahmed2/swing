@@ -431,7 +431,7 @@ def update_actual_results():
         return None
 
     log = pd.read_csv(PREDICTION_LOG)
-    log['date'] = pd.to_datetime(log['date'])
+    
     
     log['date'] = safe_parse_date(log['date'])
     df = load_data()
