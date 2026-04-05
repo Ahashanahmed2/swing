@@ -26,12 +26,12 @@ latest_date_data = []
 file_latest_dates = {}
 
 # প্রতিটি ফাইল প্রসেস করুন এবং সর্বশেষ তারিখ খুঁজে বের করুন
-print("Finding latest dates from all files...")
+#print("Finding latest dates from all files...")
 for file_key, file_path in files_info.items():
     try:
         # ফাইলটি বিদ্যমান কিনা পরীক্ষা করুন
         if not os.path.exists(file_path):
-            print(f"Warning: File '{file_path}' not found. Skipping...")
+            #print(f"Warning: File '{file_path}' not found. Skipping...")
             continue
 
         # CSV ফাইল পড়ুন
@@ -39,7 +39,7 @@ for file_key, file_path in files_info.items():
 
         # ফাইলে কোনো ডাটা আছে কিনা পরীক্ষা করুন
         if df.empty:
-            print(f"Warning: File '{file_key}' is empty. Skipping...")
+            #print(f"Warning: File '{file_key}' is empty. Skipping...")
             continue
 
         # তারিখ কলাম খুঁজুন
@@ -52,7 +52,7 @@ for file_key, file_path in files_info.items():
                 break
 
         if date_column is None:
-            print(f"Warning: No date column found in '{file_key}'. Skipping file...")
+            #print(f"Warning: No date column found in '{file_key}'. Skipping file...")
             continue
         
         # তারিখ কলামকে datetime ফরম্যাটে কনভার্ট করুন
@@ -63,30 +63,30 @@ for file_key, file_path in files_info.items():
             df = df.dropna(subset=[date_column])
             
             if df.empty:
-                print(f"Warning: No valid dates in '{file_key}'. Skipping file...")
+                #print(f"Warning: No valid dates in '{file_key}'. Skipping file...")
                 continue
             else:
                 # সর্বশেষ তারিখ খুঁজুন
                 latest_date = df[date_column].max()
                 file_latest_dates[file_key] = latest_date
-                print(f"Info: '{file_key}' - latest date is {latest_date.date()}")
+                #print(f"Info: '{file_key}' - latest date is {latest_date.date()}")
                 
         except Exception as e:
-            print(f"Warning: Could not parse date column in '{file_key}'. Error: {e}")
+            #print(f"Warning: Could not parse date column in '{file_key}'. Error: {e}")
             continue
 
     except Exception as e:
-        print(f"Error reading file '{file_path}': {str(e)}")
+        #print(f"Error reading file '{file_path}': {str(e)}")
         continue
 
 # যদি কোনো ফাইলে তারিখ পাওয়া যায়
 if file_latest_dates:
     # সব ফাইলের সর্বশেষ তারিখগুলোর মধ্যে থেকে সবচেয়ে সাম্প্রতিক তারিখ খুঁজুন
     overall_latest_date = max(file_latest_dates.values())
-    print(f"\nOverall latest date across all files: {overall_latest_date.date()}")
+    #print(f"\nOverall latest date across all files: {overall_latest_date.date()}")
     
     # এখন শুধুমাত্র overall_latest_date তারিখের ডেটা সংগ্রহ করুন
-    print(f"\nCollecting data only for date: {overall_latest_date.date()}")
+    #print(f"\nCollecting data only for date: {overall_latest_date.date()}")
     
     for file_key, file_path in files_info.items():
         try:
@@ -169,7 +169,7 @@ if file_latest_dates:
                     latest_date_data.append(row_data)
 
         except Exception as e:
-            print(f"Error processing file '{file_path}' for latest date: {str(e)}")
+            #print(f"Error processing file '{file_path}' for latest date: {str(e)}")
             continue
     
     # যদি কোনো ডাটা পাওয়া যায়
@@ -180,13 +180,13 @@ if file_latest_dates:
         # 1. NO নামের সকল কলাম বাতিল করুন
         no_columns = [col for col in result_df.columns if col.upper() == 'NO']
         if no_columns:
-            print(f"\nRemoving 'NO' columns: {no_columns}")
+            #print(f"\nRemoving 'NO' columns: {no_columns}")
             result_df = result_df.drop(columns=no_columns)
         
         # 2. close কলাম থাকলে তার value buy কলামে রাখুন এবং close কলাম বাতিল করুন
         close_columns = [col for col in result_df.columns if col.lower() == 'close']
         if close_columns:
-            print(f"\nProcessing 'close' columns: {close_columns}")
+            #print(f"\nProcessing 'close' columns: {close_columns}")
             
             # প্রতিটি close কলামের জন্য
             for close_col in close_columns:
@@ -201,7 +201,7 @@ if file_latest_dates:
                 
                 # close কলাম বাতিল করুন
                 result_df = result_df.drop(columns=[close_col])
-                print(f"  Moved values from '{close_col}' to 'buy' column and removed '{close_col}'")
+                #print(f"  Moved values from '{close_col}' to 'buy' column and removed '{close_col}'")
 
         # 'symbol' এবং 'file' কলাম নিশ্চিত করুন
         if 'symbol' not in result_df.columns:
@@ -238,13 +238,13 @@ if file_latest_dates:
         print(f"Columns in output file: {list(result_df.columns)}")
 
         # সোর্স ফাইলের সংখ্যা দেখান
-        print("\nSymbols count by source file:")
+        #print("\nSymbols count by source file:")
         file_counts = result_df['file'].value_counts()
         for file_key, count in file_counts.items():
             print(f"{file_key}: {count} symbols")
 
         # প্রথম কিছু সিম্বল দেখান
-        print(f"\nFirst 10 symbols in output (all from {overall_latest_date.date()}):")
+        #print(f"\nFirst 10 symbols in output (all from {overall_latest_date.date()}):")
         for i, (_, row) in enumerate(result_df.head(10).iterrows()):
             buy_price = row.get('buy', 'N/A')
             print(f"  {i+1}. {row['symbol']} ({row['file']}) - Buy: {buy_price}")
@@ -254,7 +254,7 @@ if file_latest_dates:
         with open(symbols_file, 'w') as f:
             for symbol in result_df['symbol'].tolist():
                 f.write(f"{symbol}\n")
-        print(f"\nSymbol list saved to: {symbols_file}")
+        #print(f"\nSymbol list saved to: {symbols_file}")
 
     else:
         print(f"\nNo data found for the latest date {overall_latest_date.date()} in any file.")
