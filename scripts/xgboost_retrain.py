@@ -198,7 +198,29 @@ def load_data():
     df.columns = df.columns.str.replace('ï»¿', '').str.replace('\ufeff', '').str.strip()
     df['date'] = pd.to_datetime(df['date'])
     return df
-
+    
+def safe_parse_date(date_series):
+    """Safely parse dates with multiple formats"""
+    try:
+        # Try standard date format
+        return pd.to_datetime(date_series, format='%Y-%m-%d', errors='coerce')
+    except:
+        pass
+    
+    try:
+        # Try with time
+        return pd.to_datetime(date_series, format='%Y-%m-%d %H:%M:%S', errors='coerce')
+    except:
+        pass
+    
+    try:
+        # Try mixed format (pandas 2.0+)
+        return pd.to_datetime(date_series, format='mixed', errors='coerce')
+    except:
+        pass
+    
+    # Let pandas infer
+    return pd.to_datetime(date_series, errors='coerce')
 def engineer_features(df):
     """Add engineered features including support/resistance, RSI divergence, and EMA 200"""
     if df.empty:
@@ -410,7 +432,8 @@ def update_actual_results():
 
     log = pd.read_csv(PREDICTION_LOG)
     log['date'] = pd.to_datetime(log['date'])
-
+    
+    log['date'] = safe_parse_date(log['date'])
     df = load_data()
     if df.empty:
         return log
