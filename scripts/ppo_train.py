@@ -81,10 +81,10 @@ os.makedirs(TENSORBOARD_LOG, exist_ok=True)
 WINDOW = 10
 TOTAL_CAPITAL = 500_000
 RISK_PERCENT = 0.01
-PPO_RETRAIN_INTERVAL = 30  # Days between retrains
+PPO_RETRAIN_INTERVAL = 7  # Days between retrains
 
 # PPO thresholds
-XGB_AUC_THRESHOLD_FOR_PPO = 0.70
+XGB_AUC_THRESHOLD_FOR_PPO = 0.60
 MAX_PER_SYMBOL_MODELS = 30
 
 # ✅ Train/Test split ratio (FINAL TEST - NEVER TOUCHED)
@@ -97,7 +97,7 @@ WALK_FORWARD_WINDOW = 252  # 1 year of trading days
 WALK_FORWARD_STEP = 21      # 1 month step
 
 # ✅ Early stopping parameters
-EARLY_STOPPING_PATIENCE = 10
+EARLY_STOPPING_PATIENCE = 5
 EVAL_FREQ = 1000
 
 # ✅ Noise Injection parameters
@@ -105,7 +105,7 @@ NOISE_STD = 0.001  # 0.1% noise
 USE_NOISE_INJECTION = True
 
 # ✅ Ensemble parameters
-ENSEMBLE_SIZE = 3  # Number of models in ensemble
+ENSEMBLE_SIZE = 2  # Number of models in ensemble
 USE_ENSEMBLE = True
 
 # Market columns for features
@@ -121,21 +121,21 @@ STATE_DIM = len(MARKET_COLS) * WINDOW + 4
 
 # Base PPO Configuration
 PPO_CONFIG = {
-    'n_steps': 1024,
-    'batch_size': 256,
+    'n_steps': 512,
+    'batch_size': 128,
     'gamma': 0.995,
     'learning_rate': 1e-4,
     'ent_coef': 0.001,
     'clip_range': 0.1,
-    'vf_coef': 0.5,
+    'vf_coef': 0.2,
     'max_grad_norm': 0.5,
 }
 
 # Per-symbol PPO config
 PPO_PER_SYMBOL_CONFIG = {
-    'high_quality': {'n_steps': 2048, 'batch_size': 512, 'learning_rate': 2e-4, 'timesteps': 50000},
-    'good_quality': {'n_steps': 1024, 'batch_size': 256, 'learning_rate': 1e-4, 'timesteps': 30000},
-    'fallback': {'n_steps': 1024, 'batch_size': 256, 'learning_rate': 1e-4, 'timesteps': 20000},
+    'high_quality': {'n_steps': 2048, 'batch_size': 512, 'learning_rate': 2e-4, 'timesteps': 20000},
+    'good_quality': {'n_steps': 1024, 'batch_size': 256, 'learning_rate': 1e-4, 'timesteps': 15000},
+    'fallback': {'n_steps': 1024, 'batch_size': 256, 'learning_rate': 1e-4, 'timesteps': 10000},
 }
 
 # =========================================================
