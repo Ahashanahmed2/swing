@@ -48,7 +48,7 @@ scripts = [
     "scripts/ppo_train.py",
     "scripts/nightly_trader.py",
     "scripts/generate_pdf.py",
-    "scripts/upload_csv.py",
+    #"scripts/upload_csv.py",
     "scripts/dayliMassage.py",
     "scripts/email_reports.py",
     
