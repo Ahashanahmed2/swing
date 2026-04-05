@@ -161,7 +161,7 @@ class RiskAgent(TradingAgent):
 class NewsAgent(TradingAgent):
     """Sentiment analysis from news (placeholder for now)"""
     def __init__(self):
-        super().__init__("News", weight=0.1)
+        super().__init__("News", weight=0.2)
         
     def analyze_sentiment(self, symbol):
         """Analyze news sentiment for symbol"""
@@ -173,7 +173,7 @@ class NewsAgent(TradingAgent):
 class MemoryAgent(TradingAgent):
     """Memory agent - learns from past mistakes"""
     def __init__(self):
-        super().__init__("Memory", weight=0.1)
+        super().__init__("Memory", weight=0.3)
         self.mistake_memory = []
         self.success_memory = []
         
