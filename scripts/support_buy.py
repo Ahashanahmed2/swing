@@ -32,11 +32,10 @@ meta_df = pd.read_csv(meta_df)
 # -----------------------------
 # Date convert
 # -----------------------------
-sr_df['current_date'] = pd.to_datetime(sr_df['current_date'])
-mongo_df['date'] = pd.to_datetime(mongo_df['date'])
-pred_df['date'] = pd.to_datetime(pred_df['date'])
-conf_df['date'] = pd.to_datetime(conf_df['date'])
-
+sr_df['current_date'] = pd.to_datetime(sr_df['current_date'], format='mixed', errors='coerce')
+mongo_df['date'] = pd.to_datetime(mongo_df['date'],format='mixed', errors='coerce')
+pred_df['date'] = pd.to_datetime(pred_df['date'], format='mixed', errors='coerce')
+conf_df['date'] = pd.to_datetime(conf_df['date'], format='mixed', errors='coerce')
 # -----------------------------
 # Filter only support
 # -----------------------------
