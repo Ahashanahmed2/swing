@@ -7,7 +7,7 @@ import os
 # =========================
 INPUT_FILE = './csv/mongodb.csv'
 OUTPUT_DIR = './output/ai_signal'
-OUTPUT_FILE = f'{OUTPUT_DIR}/rsi_diver.csv'
+# OUTPUT_FILE = f'{OUTPUT_DIR}/rsi_diver.csv'  # কমেন্ট করা হয়েছে
 
 # Create output directory
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -43,7 +43,7 @@ divergence_dict = {}
 for symbol, group in df.groupby('symbol'):
     # Sort descending by date (latest first)
     group_sorted = group.sort_values(by='date', ascending=False).reset_index(drop=True)
-    
+
     if len(group_sorted) < 2:
         continue
 
@@ -153,7 +153,7 @@ for symbol, group in df.groupby('symbol'):
 if divergence_dict:
     output_df = pd.DataFrame(divergence_dict.values())
     output_df = output_df.sort_values('symbol')
-    
+
     # Reorder columns
     column_order = [
         'symbol', 'divergence_type', 'strength',
@@ -161,23 +161,23 @@ if divergence_dict:
         'previous_date', 'previous_price', 'previous_rsi'
     ]
     output_df = output_df[column_order]
-    
-    output_df.to_csv(OUTPUT_FILE, index=False)
+
+    # output_df.to_csv(OUTPUT_FILE, index=False)  # কমেন্ট করা হয়েছে
     print(f"✅ Found {len(output_df)} divergences")
-    print(f"📊 Saved to: {OUTPUT_FILE}")
-    
+    # print(f"📊 Saved to: {OUTPUT_FILE}")  # কমেন্ট করা হয়েছে
+
     # Print summary
     print("\n📈 Divergence Summary:")
     print("-" * 50)
     for _, row in output_df.iterrows():
         print(f"{row['symbol']:<12} {row['divergence_type']:<8} {row['strength']:<8} Last: {row['last_date']}")
-    
+
 else:
     print("⚠️ No divergences found")
     # Create empty CSV with headers
     empty_df = pd.DataFrame(columns=['symbol', 'divergence_type', 'strength', 'last_date', 'last_price', 'last_high', 'last_rsi', 'previous_date', 'previous_price', 'previous_rsi'])
-    empty_df.to_csv(OUTPUT_FILE, index=False)
-    print(f"📄 Empty file created: {OUTPUT_FILE}")
+    # empty_df.to_csv(OUTPUT_FILE, index=False)  # কমেন্ট করা হয়েছে
+    # print(f"📄 Empty file created: {OUTPUT_FILE}")  # কমেন্ট করা হয়েছে
 
 # =========================
 # Also save to old location for compatibility
