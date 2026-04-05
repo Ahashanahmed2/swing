@@ -8,11 +8,11 @@ from datetime import datetime
 # -----------------------------
 # Load CSV
 # -----------------------------
-sr_df = pd.read_csv(sr_path)
-mongo_df = pd.read_csv(mongo_path)
-pred_df = pd.read_csv(pred_path)
-conf_df = pd.read_csv(conf_path)
-meta_df = pd.read_csv(meta_path)
+sr_path = './csv/support_resistance.csv'
+mongo_path = './csv/mongodb.csv'
+pred_path = './csv/prediction_log.csv'
+conf_path = './csv/xgb_confidence.csv'
+meta_path = './csv/model_metadata.csv'
 
 print("="*70)
 print("📊 SUPPORT BUY SIGNAL GENERATOR (FIXED)")
