@@ -1,5 +1,5 @@
-# ppo_train.py - HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM (BUG FIXED ONLY)
-# শুধু bug fix - কোন স্ট্রাকচারাল পরিবর্তন নয়
+# ppo_train.py - HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM WITH AGENTIC LOOP
+# স্ট্রাকচার অপরিবর্তিত - শুধু Agentic Loop যোগ করা হয়েছে
 
 import os
 import sys
@@ -51,6 +51,18 @@ except ImportError as e:
     print(f"⚠️ Stable-Baselines3 not available: {e}")
     print("   Install with: pip install stable-baselines3 gymnasium")
     SB3_AVAILABLE = False
+
+# =========================================================
+# ✅ AGENTIC LOOP IMPORT (NEW - OPTIONAL)
+# =========================================================
+
+try:
+    from agentic_loop import AgenticLoop
+    AGENTIC_LOOP_AVAILABLE = True
+    print("✅ Agentic Loop module loaded")
+except ImportError as e:
+    print(f"⚠️ Agentic Loop not available: {e}")
+    AGENTIC_LOOP_AVAILABLE = False
 
 # =========================================================
 # PATHS
@@ -109,6 +121,15 @@ USE_NOISE_INJECTION = True
 ENSEMBLE_SIZE = 2  # Number of models in ensemble
 USE_ENSEMBLE = True
 
+# ✅ Agentic Loop Configuration (NEW)
+AGENTIC_LOOP_CONFIG = {
+    'enabled': True,
+    'auto_learn': True,
+    'min_confidence_for_trade': 0.55,
+    'save_decisions': True,
+    'show_consensus': True
+}
+
 # Market columns for features
 DEFAULT_MARKET_COLS = ["open", "high", "low", "close", "volume"]
 
@@ -140,6 +161,93 @@ PPO_PER_SYMBOL_CONFIG = {
 }
 
 # =========================================================
+# ✅ AGENTIC LOOP WRAPPER (NEW - STRUCTURE UNCHANGED)
+# =========================================================
+
+class AgenticLoopWrapper:
+    """Agentic Loop Wrapper -不影响现有结构"""
+    
+    def __init__(self):
+        self.loop = None
+        self.initialized = False
+        self.decisions = []
+        
+    def init_if_needed(self):
+        if not self.initialized and AGENTIC_LOOP_AVAILABLE and AGENTIC_LOOP_CONFIG['enabled']:
+            try:
+                self.loop = AgenticLoop(xgb_model_dir=str(XGB_MODEL_DIR))
+                self.initialized = True
+                print("   🤖 Agentic Loop initialized successfully")
+            except Exception as e:
+                print(f"   ⚠️ Agentic Loop init failed: {e}")
+        return self.initialized
+    
+    def get_consensus(self, symbol, symbol_data, volatility=0.02, market_regime='NEUTRAL'):
+        """Get agent consensus without changing existing flow"""
+        if not self.init_if_needed():
+            return 'HOLD', 0.5, 0.3, {}
+        
+        if symbol_data is None or symbol_data.empty:
+            return 'HOLD', 0.5, 0.3, {}
+        
+        try:
+            decision, score, confidence, details = self.loop.get_consensus(
+                symbol=symbol,
+                symbol_data=symbol_data,
+                volatility=volatility,
+                market_regime=market_regime
+            )
+            self.decisions.append({
+                'symbol': symbol,
+                'decision': decision,
+                'score': score,
+                'confidence': confidence,
+                'timestamp': datetime.now()
+            })
+            return decision, score, confidence, details
+        except Exception as e:
+            return 'HOLD', 0.5, 0.3, {}
+    
+    def record_trade_feedback(self, trade_result):
+        """Record trade outcome for agent learning"""
+        if not self.init_if_needed():
+            return
+        try:
+            self.loop.after_trade_feedback(trade_result)
+            if AGENTIC_LOOP_CONFIG['save_decisions'] and len(self.decisions) % 10 == 0:
+                self.save_decisions()
+        except Exception as e:
+            pass
+    
+    def save_decisions(self):
+        """Save decision log"""
+        if not self.decisions:
+            return
+        try:
+            df = pd.DataFrame(self.decisions)
+            df.to_csv('./csv/agentic_decisions.csv', index=False)
+        except Exception as e:
+            pass
+    
+    def get_summary(self):
+        if not self.init_if_needed():
+            return pd.DataFrame()
+        try:
+            return self.loop.get_summary()
+        except:
+            return pd.DataFrame()
+
+
+# Global instance
+_agentic_loop = None
+
+def get_agentic_loop():
+    global _agentic_loop
+    if _agentic_loop is None:
+        _agentic_loop = AgenticLoopWrapper()
+    return _agentic_loop
+
+# =========================================================
 # ✅ SAFE TRADE RESULT EXTRACTOR (BUG FIX 1 & 2)
 # =========================================================
 
@@ -150,19 +258,19 @@ def safe_extract_trade_result(info):
     - trade_result-এ entry_price, exit_price নাও থাকতে পারে
     """
     trade_result = None
-    
+
     # Handle list type info
     if isinstance(info, list) and len(info) > 0:
         info = info[0]
-    
+
     # Handle dict type info
     if isinstance(info, dict):
         trade_result = info.get('trade_result')
-    
+
     # If trade_result is None or not a dict, return safe dict
     if not isinstance(trade_result, dict):
         return None
-    
+
     # Create safe copy with fallback values
     safe_result = {
         'success': trade_result.get('success', False),
@@ -171,7 +279,7 @@ def safe_extract_trade_result(info):
         'exit_price': trade_result.get('exit_price', 0.0),
         'exit_reason': trade_result.get('exit_reason', 'unknown')
     }
-    
+
     return safe_result
 
 
@@ -181,11 +289,11 @@ def safe_extract_trade_result(info):
 
 class MistakeLearner:
     """ভুল ট্রেড রেকর্ড করে এবং শেখে - SAFE VERSION"""
-    
+
     def __init__(self, mistakes_file=MISTAKES_FILE):
         self.mistakes_file = mistakes_file
         self.mistakes = self.load_mistakes()
-    
+
     def load_mistakes(self):
         """সেফলি মিস্টেক লোড করুন"""
         if not os.path.exists(self.mistakes_file):
@@ -196,7 +304,7 @@ class MistakeLearner:
         except Exception as e:
             print(f"   ⚠️ Could not load mistakes: {e}")
             return []
-    
+
     def record_mistake(self, symbol, entry_price, exit_price, pnl, reason):
         """সেফলি ভুল ট্রেড রেকর্ড করুন"""
         try:
@@ -205,7 +313,7 @@ class MistakeLearner:
                 loss_percent = 0
             else:
                 loss_percent = abs(pnl) / entry_price * 100
-            
+
             mistake = {
                 'symbol': str(symbol),
                 'entry_price': float(entry_price),
@@ -216,7 +324,7 @@ class MistakeLearner:
                 'date': datetime.now().strftime('%Y-%m-%d')
             }
             self.mistakes.append(mistake)
-            
+
             # ✅ BUG FIX 3: Safe save with error handling
             try:
                 df = pd.DataFrame(self.mistakes)
@@ -225,40 +333,40 @@ class MistakeLearner:
                 df.to_csv(self.mistakes_file, index=False)
             except Exception as e:
                 print(f"   ⚠️ Could not save mistake: {e}")
-            
+
             return mistake
         except Exception as e:
             print(f"   ⚠️ Error recording mistake: {e}")
             return None
-    
+
     def get_penalty(self, symbol, signal_score):
         """ভুলের উপর ভিত্তি করে পেনাল্টি ক্যালকুলেট করুন"""
         try:
             symbol_mistakes = [m for m in self.mistakes if m.get('symbol') == symbol]
-            
+
             if not symbol_mistakes:
                 return signal_score
-            
+
             mistake_count = len(symbol_mistakes)
-            
+
             if mistake_count >= 3:
                 penalty = 0.3
             elif mistake_count >= 2:
                 penalty = 0.15
             else:
                 penalty = 0.05
-            
+
             # ✅ BUG FIX 5: Safe loss percent access
             large_losses = [m for m in symbol_mistakes if m.get('loss_percent', 0) > 5]
             if large_losses:
                 penalty += 0.1
-            
+
             adjusted_score = signal_score * (1 - penalty)
             return max(0.1, adjusted_score)
         except Exception as e:
             print(f"   ⚠️ Error calculating penalty: {e}")
             return signal_score
-    
+
     def get_avoid_list(self):
         """যে সিম্বল এড়িয়ে চলা উচিত"""
         try:
@@ -270,13 +378,13 @@ class MistakeLearner:
             return [s for s, count in avoid.items() if count >= 3]
         except Exception:
             return []
-    
+
     def get_summary(self):
         """মিস্টেক সারাংশ"""
         try:
             if not self.mistakes:
                 return "No mistakes recorded"
-            
+
             df = pd.DataFrame(self.mistakes)
             return {
                 'total_mistakes': len(self.mistakes),
@@ -548,7 +656,6 @@ if not ENV_AVAILABLE:
             truncated = False
             current_sharpe = self._sharpe_calculator.calculate_sharpe()
 
-            # ✅ BUG FIX: trade_result-এ entry_price, exit_price যোগ করা হয়েছে
             info = {
                 'balance': self.balance,
                 'sharpe_ratio': current_sharpe,
@@ -634,7 +741,7 @@ if SB3_AVAILABLE:
             joblib.dump(ensemble_info, path)
 
 # =========================================================
-# ✅ TRAIN WITH FINAL TEST PHASE (WITH BUG FIXES)
+# ✅ TRAIN WITH FINAL TEST PHASE (WITH BUG FIXES & AGENTIC LOOP)
 # =========================================================
 
 def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=False):
@@ -646,6 +753,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
     4. Ensemble training
     5. Final test on NEVER TOUCHED data
     6. Mistake Learning with BUG FIXES
+    7. Agentic Loop consensus (NEW)
     """
 
     if not SB3_AVAILABLE or not GYM_AVAILABLE:
@@ -658,12 +766,44 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
 
     # Mistake Learner initialization
     mistake_learner = MistakeLearner()
-    
+
     # Check if symbol should be avoided
     avoid_list = mistake_learner.get_avoid_list()
     if symbol in avoid_list:
         print(f"   ⚠️ SKIPPING {symbol}: Too many past mistakes (3+ losses)")
         return None, {'skipped': True, 'reason': 'too_many_mistakes'}
+
+    # ✅ NEW: Get Agentic Loop instance
+    agentic = get_agentic_loop()
+    
+    # ✅ NEW: Get agent consensus before training
+    if AGENTIC_LOOP_CONFIG['enabled'] and len(symbol_data) > 20:
+        try:
+            if 'close' in symbol_data.columns:
+                volatility = symbol_data['close'].pct_change().std() * np.sqrt(252)
+            else:
+                volatility = 0.02
+                
+            decision, consensus_score, confidence, agent_details = agentic.get_consensus(
+                symbol=symbol,
+                symbol_data=symbol_data.tail(50),
+                volatility=volatility,
+                market_regime='NEUTRAL'
+            )
+            
+            if AGENTIC_LOOP_CONFIG['show_consensus']:
+                print(f"\n   🤖 AGENTIC LOOP CONSENSUS:")
+                print(f"      Decision: {decision}")
+                print(f"      Score: {consensus_score:.3f}")
+                print(f"      Confidence: {confidence:.3f}")
+            
+            # Optional: Skip if confidence too low
+            min_conf = AGENTIC_LOOP_CONFIG.get('min_confidence_for_trade', 0.55)
+            if confidence < min_conf and consensus_score < 0.5:
+                print(f"   ⚠️ Agent confidence too low ({confidence:.2%}) - skipping {symbol}")
+                return None, {'skipped': True, 'reason': 'low_agent_confidence'}
+        except Exception as e:
+            print(f"   ⚠️ Agentic Loop consensus failed: {e}")
 
     # Data split
     total_len = len(symbol_data)
@@ -786,10 +926,21 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
             total_return += reward_val
             steps += 1
 
-            # ✅ BUG FIX 1 & 2: Safe trade result extraction
+            # Safe trade result extraction
             trade_result = safe_extract_trade_result(info)
             if trade_result:
                 validation_trades.append(trade_result)
+                
+                # ✅ NEW: Record trade feedback for Agentic Loop
+                if AGENTIC_LOOP_CONFIG['enabled'] and trade_result.get('pnl', 0) != 0:
+                    agentic.record_trade_feedback({
+                        'symbol': symbol,
+                        'pnl': trade_result.get('pnl', 0),
+                        'success': trade_result.get('success', False),
+                        'entry_price': trade_result.get('entry_price', 0),
+                        'exit_price': trade_result.get('exit_price', 0),
+                        'exit_reason': trade_result.get('exit_reason', 'unknown')
+                    })
 
             if steps > 10000:
                 break
@@ -813,7 +964,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
                 pnl=trade.get('pnl', 0),
                 reason='validation_loss'
             )
-        
+
         if losing_trades:
             print(f"      📝 Recorded {len(losing_trades)} losing trades for learning")
 
@@ -908,10 +1059,21 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
         total_return += reward_val
         steps += 1
 
-        # ✅ BUG FIX 1 & 2: Safe trade result extraction
+        # Safe trade result extraction
         trade_result = safe_extract_trade_result(info)
         if trade_result:
             test_trades.append(trade_result)
+            
+            # ✅ NEW: Record trade feedback for Agentic Loop
+            if AGENTIC_LOOP_CONFIG['enabled'] and trade_result.get('pnl', 0) != 0:
+                agentic.record_trade_feedback({
+                    'symbol': symbol,
+                    'pnl': trade_result.get('pnl', 0),
+                    'success': trade_result.get('success', False),
+                    'entry_price': trade_result.get('entry_price', 0),
+                    'exit_price': trade_result.get('exit_price', 0),
+                    'exit_reason': trade_result.get('exit_reason', 'unknown')
+                })
 
         if steps > 10000:
             break
@@ -937,7 +1099,7 @@ def train_with_final_test(symbol, symbol_data, signals, xgb_auc, is_retrain=Fals
             pnl=trade.get('pnl', 0),
             reason='test_loss'
         )
-    
+
     if losing_trades_final:
         print(f"      📝 Recorded {len(losing_trades_final)} losing trades for learning")
 
@@ -1263,7 +1425,7 @@ def train_ppo_system():
     print("="*70)
     print(f"📅 Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print(f"💰 Initial Capital: ${TOTAL_CAPITAL:,.2f}")
-    print(f"📊 Features: Train/Val/Test Split | Noise Injection | Ensemble PPO | Sharpe Ratio")
+    print(f"📊 Features: Train/Val/Test Split | Noise Injection | Ensemble PPO | Sharpe Ratio | Agentic Loop")
     print("="*70)
 
     if not SB3_AVAILABLE or not GYM_AVAILABLE:
@@ -1277,6 +1439,11 @@ def train_ppo_system():
 
     print(f"\n📊 Training Status: {reason}")
     print(f"   Mode: {'RETRAIN' if is_retrain else 'FIRST-TIME'}")
+
+    # Initialize Agentic Loop (silently)
+    if AGENTIC_LOOP_CONFIG['enabled']:
+        agentic = get_agentic_loop()
+        agentic.init_if_needed()
 
     print("\n📂 Loading market data...")
     if not os.path.exists(CSV_MARKET):
@@ -1353,6 +1520,16 @@ def train_ppo_system():
     print("🏦 HEDGE FUND LEVEL PPO TRAINING COMPLETE!")
     print("="*70)
     print(f"   Per-symbol models: {len(trained_symbols)}")
+    
+    # Show Agentic Loop summary if enabled
+    if AGENTIC_LOOP_CONFIG['enabled'] and AGENTIC_LOOP_AVAILABLE:
+        agentic = get_agentic_loop()
+        summary = agentic.get_summary()
+        if isinstance(summary, pd.DataFrame) and not summary.empty:
+            print("\n🤖 AGENTIC LOOP PERFORMANCE SUMMARY:")
+            print(summary.to_string(index=False))
+        agentic.save_decisions()
+    
     print("="*70)
 
     return trained_symbols, shared_model if 'shared_model' in locals() else None
