@@ -191,18 +191,6 @@ if __name__ == "__main__":
     print(f"📁 PDF Source: {OUTPUT_FOLDER}")
     print("="*60)
 
-    # =========================================================
-    # 1. First, copy xgb_confidence.csv from csv folder to output
-    # =========================================================
-    confidence_source = os.path.join(CSV_FOLDER, 'xgb_confidence.csv')
-    confidence_dest = os.path.join(OUTPUT_FOLDER, 'xgb_confidence.csv')
-    
-    if os.path.exists(confidence_source):
-        import shutil
-        shutil.copy2(confidence_source, confidence_dest)
-        print(f"✅ Copied xgb_confidence.csv to {OUTPUT_FOLDER}")
-    else:
-        print(f"⚠️ xgb_confidence.csv not found in {CSV_FOLDER}")
 
     # =========================================================
     # 2. PDF Generation
