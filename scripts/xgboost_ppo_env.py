@@ -645,6 +645,29 @@ class HedgeFundTradingEnv(gym.Env):
         return obs
 
     def step(self, action):
+
+        
+
+        
+        if trade_closed:
+            # Send feedback to Agentic Loop
+            trade_result = {
+                'symbol': self.current_symbol,
+                'pnl': pnl,
+                'success': pnl > 0,
+                'entry_price': self.entry_price,
+                'exit_price': current_price
+            }
+            
+            # Update agents
+            from agentic_loop import AGENTIC_LOOP
+            feedback = AGENTIC_LOOP.after_trade_feedback(trade_result)
+            
+            # Adjust reward based on agent confidence
+            if feedback:
+                info['agent_feedback'] = feedback
+
+        
         """Execute action with proper reward scaling - FULLY FIXED"""
         if self.current_step >= len(self.symbol_data) - 1:
             return self._get_obs(), 0, True, False, {}
