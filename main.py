@@ -47,7 +47,7 @@ scripts = [
     "scripts/xgboost_Elliott_support.py",
     "scripts/ppo_train.py",
     "scripts/nightly_trader.py",
-    "scripts/agentic_loop.py",
+    #"scripts/agentic_loop.py",
     "scripts/generate_pdf.py",
     #"scripts/upload_csv.py",
     "scripts/dayliMassage.py",
