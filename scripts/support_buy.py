@@ -14,15 +14,10 @@ pred_df = './csv/prediction_log.csv'
 conf_df = './csv/xgb_confidence.csv'
 meta_df = './csv/model_metadata.csv'
 
-print("="*70)
-print("📊 SUPPORT BUY SIGNAL GENERATOR (FIXED)")
-print("="*70)
-print(f"   Loaded: {len(sr_df)} levels, {len(mongo_df)} market rows, {len(pred_df)} predictions")
-
-# -----------------------------
-# 
 output_path = './output/ai_signal/support_resistant.csv'
 os.makedirs('./output/ai_signal', exist_ok=True)
+
+
 
 # -----------------------------
 # Load CSV
