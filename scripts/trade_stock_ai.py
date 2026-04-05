@@ -12,6 +12,12 @@ def detect_market_regime(market_df):
     Detect current market regime
     Returns: 'BULL', 'BEAR', 'SIDEWAYS'
     """
+    # Make sure date is datetime
+    if 'date' in market_df.columns:
+        if not pd.api.types.is_datetime64_any_dtype(market_df['date']):
+            market_df['date'] = pd.to_datetime(market_df['date'], format='mixed', errors='coerce')
+            market_df = market_df.dropna(subset=['date'])
+    
     # Get NIFTY or broader market index (use first symbol as proxy)
     if 'NIFTY' in market_df['symbol'].values:
         index_data = market_df[market_df['symbol'] == 'NIFTY'].sort_values('date')
@@ -21,20 +27,20 @@ def detect_market_regime(market_df):
         # Use average of all symbols
         all_prices = market_df.pivot(index='date', columns='symbol', values='close')
         index_data = pd.DataFrame({'close': all_prices.mean(axis=1)}).reset_index()
-        index_data['date'] = pd.to_datetime(index_data['date'])
-        index_data = index_data.sort_values('date')
-    
+        index_data['date'] = pd.to_datetime(index_data['date'], format='mixed', errors='coerce')
+        index_data = index_data.dropna(subset=['date']).sort_values('date')
+
     if len(index_data) < 20:
         return 'SIDEWAYS', 0
-    
+
     # Calculate returns
     index_data['returns'] = index_data['close'].pct_change()
     index_data['sma_20'] = index_data['close'].rolling(20).mean()
     index_data['sma_50'] = index_data['close'].rolling(50).mean()
-    
+
     latest = index_data.iloc[-1]
     prev_20 = index_data.iloc[-20] if len(index_data) >= 20 else index_data.iloc[0]
-    
+
     # Market regime detection
     if latest['close'] > latest['sma_50'] and latest['close'] > latest['sma_20']:
         regime = 'BULL'
@@ -45,10 +51,10 @@ def detect_market_regime(market_df):
     else:
         regime = 'SIDEWAYS'
         strength = 0
-    
+
     # 20-day return
     twenty_day_return = (latest['close'] - prev_20['close']) / prev_20['close'] * 100
-    
+
     return regime, {
         'strength': round(strength, 2),
         'twenty_day_return': round(twenty_day_return, 2),
@@ -98,20 +104,20 @@ def get_relative_strength_score(symbol_data, market_df):
     """
     if len(symbol_data) < 20:
         return 0.5
-    
+
     # Symbol returns
     symbol_returns = symbol_data['close'].pct_change().tail(20).mean()
-    
+
     # Market returns (using all symbols average)
     market_avg = market_df.groupby('date')['close'].mean().pct_change().tail(20).mean()
-    
+
     # Relative strength
     if market_avg < 0:
         # In down market, stocks that fall less are strong
         relative = (symbol_returns - market_avg) / abs(market_avg) if market_avg != 0 else 0
     else:
         relative = symbol_returns / market_avg if market_avg > 0 else 0
-    
+
     # Convert to 0-1 score
     score = min(max(relative + 0.5, 0), 1)
     return score
@@ -151,11 +157,17 @@ def create_trade_stock_complete():
     meta_df = pd.read_csv(files['meta'])
     rsi_df = pd.read_csv(files['rsi'])
 
-    # Convert dates
-    sr_df['current_date'] = pd.to_datetime(sr_df['current_date'])
-    market_df['date'] = pd.to_datetime(market_df['date'])
-    pred_df['date'] = pd.to_datetime(pred_df['date'])
-    conf_df['date'] = pd.to_datetime(conf_df['date'])
+    # Convert dates with mixed format support
+    sr_df['current_date'] = pd.to_datetime(sr_df['current_date'], format='mixed', errors='coerce')
+    market_df['date'] = pd.to_datetime(market_df['date'], format='mixed', errors='coerce')
+    pred_df['date'] = pd.to_datetime(pred_df['date'], format='mixed', errors='coerce')
+    conf_df['date'] = pd.to_datetime(conf_df['date'], format='mixed', errors='coerce')
+    
+    # Remove rows with invalid dates
+    pred_df = pred_df.dropna(subset=['date'])
+    conf_df = conf_df.dropna(subset=['date'])
+    sr_df = sr_df.dropna(subset=['current_date'])
+    market_df = market_df.dropna(subset=['date'])
 
     print(f"   ✅ Support/Resistance: {len(sr_df)} records")
     print(f"   ✅ Market data: {len(market_df)} rows, {market_df['symbol'].nunique()} symbols")
@@ -166,24 +178,24 @@ def create_trade_stock_complete():
     print("\n📈 Detecting market regime...")
     regime, regime_stats = detect_market_regime(market_df)
     thresholds = get_market_aware_thresholds(regime)
-    
+
     print(f"   🎯 Market Regime: {regime}")
     print(f"   📊 {regime_stats}")
     print(f"   🎚️ Thresholds: {thresholds['description']}")
     print(f"      STRONG BUY: ≥{thresholds['STRONG_BUY']}, BUY: ≥{thresholds['BUY']}")
-    
+
     # In bear market, also check if we should even generate signals
     if regime == 'BEAR':
         print(f"\n   ⚠️ BEAR MARKET DETECTED!")
         print(f"   💡 Strategy: Very selective - only high confidence signals")
         print(f"   💡 Consider: Wait for market reversal or use short strategies")
-        
+
         # Optional: Check if we should skip entirely
         if regime_stats['twenty_day_return'] < -10:
             print(f"\n   🛑 Severe bear market ({regime_stats['twenty_day_return']:.1f}% down in 20 days)")
             print(f"   📝 No BUY signals will be generated - market too risky")
             print(f"   💡 PPO will use existing models without retraining")
-            
+
             # Create empty trade_stock.csv (no signals)
             empty_df = pd.DataFrame(columns=['symbol', 'date', 'buy', 'SL', 'tp', 'confidence', 'RRR'])
             empty_df.to_csv('./csv/trade_stock.csv', index=False)
@@ -214,7 +226,7 @@ def create_trade_stock_complete():
 
     # Calculate ATR
     print("\n📊 Calculating ATR...")
-    
+
     def calc_atr(group):
         group = group.copy().reset_index(drop=True)
         high = group['high'].values
@@ -234,47 +246,47 @@ def create_trade_stock_complete():
 
     # Generate signals
     print("\n🎯 Generating market-aware trading signals...")
-    
+
     signals = []
     buy_signals = []
-    
+
     for idx, row in sr_support.iterrows():
         symbol = row['symbol']
         current_date = row['current_date']
         support_level = row['current_low']
         strength = row.get('strength', 'Moderate')
-        
+
         # Skip if symbol not in good models
         if symbol not in good_symbols:
             continue
-        
+
         # Get market data
         sym_market = market_df[market_df['symbol'] == symbol].sort_values('date').reset_index(drop=True)
-        
+
         if len(sym_market) < 10:
             continue
-        
+
         # Find closest date
         date_diff = (sym_market['date'] - current_date).abs()
         if len(date_diff) == 0:
             continue
-        
+
         min_diff_idx = date_diff.idxmin()
         min_diff = date_diff.min()
-        
+
         if min_diff.days > 10:
             continue
-        
+
         if min_diff_idx + 1 >= len(sym_market):
             continue
-        
+
         # Check support held
         if sym_market.iloc[min_diff_idx + 1]['low'] <= support_level:
             continue
-        
+
         # Get prediction
         pred_row = pred_df[(pred_df['symbol'] == symbol) & (pred_df['date'] == current_date)]
-        
+
         if len(pred_row) == 0:
             # Try nearest date
             pred_dates = pred_df[pred_df['symbol'] == symbol]['date']
@@ -283,36 +295,36 @@ def create_trade_stock_complete():
                 if len(pred_date_diff) > 0:
                     nearest_idx = pred_date_diff.idxmin()
                     pred_row = pred_df.loc[[nearest_idx]]
-            
+
             if len(pred_row) == 0:
                 continue
-        
+
         prob_up = pred_row.iloc[0].get('prob_up', 0.5)
         if pd.isna(prob_up):
             prob_up = 0.5
-        
+
         confidence = pred_row.iloc[0].get('confidence_score', 50)
         if pd.isna(confidence):
             confidence = 50
-        
+
         # Calculate relative strength (how stock performs vs market)
         rel_strength = get_relative_strength_score(sym_market, market_df)
-        
+
         # RSI divergence
         rsi_row = rsi_df[(rsi_df['symbol'] == symbol) & (rsi_df['last_date'] == current_date)]
         rsi_bonus = 0.10 if (len(rsi_row) > 0 and rsi_row.iloc[0].get('divergence_type') == 'Bullish') else 0
-        
+
         # Strength multiplier (lower in bear market)
         if regime == 'BEAR':
             strength_mult = {'Weak': 0.4, 'Moderate': 0.6, 'Strong': 0.8}.get(strength, 0.5)
         else:
             strength_mult = {'Weak': 0.6, 'Moderate': 0.8, 'Strong': 1.0}.get(strength, 0.7)
-        
+
         # Final score with relative strength weighting
         base_score = (prob_up * 0.40) + ((confidence / 100) * 0.25) + (rel_strength * 0.20) + (rsi_bonus * 0.15)
         final_score = base_score * strength_mult
         final_score = min(max(final_score, 0), 1)
-        
+
         # Determine signal using market-aware thresholds
         if final_score >= thresholds['STRONG_BUY']:
             signal = "STRONG BUY"
@@ -324,13 +336,13 @@ def create_trade_stock_complete():
             signal = "SELL"
         else:
             signal = "STRONG SELL"
-        
+
         # Calculate entry and risk
         entry_price = sym_market.iloc[min_diff_idx + 1]['close']
         atr_value = sym_market.iloc[min_diff_idx + 1].get('atr', entry_price * 0.02)
         if pd.isna(atr_value):
             atr_value = entry_price * 0.02
-        
+
         # Wider stops in bear market
         if regime == 'BEAR':
             stop_loss = entry_price - (2.0 * atr_value)
@@ -338,10 +350,10 @@ def create_trade_stock_complete():
         else:
             stop_loss = entry_price - (1.5 * atr_value)
             take_profit = entry_price + (2.5 * atr_value)
-        
+
         risk = entry_price - stop_loss
         rrr = round((take_profit - entry_price) / risk, 2) if risk > 0 else 0
-        
+
         signal_record = {
             'symbol': symbol,
             'date': current_date.strftime('%Y-%m-%d'),
@@ -358,17 +370,17 @@ def create_trade_stock_complete():
             'rel_strength': round(rel_strength, 3),
             'rsi_divergence': 'Bullish' if rsi_bonus > 0 else 'None'
         }
-        
+
         signals.append(signal_record)
-        
+
         if signal in ['STRONG BUY', 'BUY'] and final_score >= thresholds['min_score_for_buy']:
             buy_signals.append(signal_record)
-    
+
     print(f"\n   📊 Results:")
     print(f"      Total signals: {len(signals)}")
     print(f"      BUY signals: {len(buy_signals)}")
     print(f"      SELL signals: {len(signals) - len(buy_signals)}")
-    
+
     # Create PPO file
     if len(buy_signals) > 0:
         ppo_df = pd.DataFrame([{
@@ -380,38 +392,38 @@ def create_trade_stock_complete():
             'confidence': s['score'],
             'RRR': s['rrr']
         } for s in buy_signals])
-        
+
         ppo_df.to_csv('./csv/trade_stock.csv', index=False)
         print(f"\n   ✅ {len(buy_signals)} BUY signals saved to trade_stock.csv")
     else:
         print(f"\n   ⚠️ No BUY signals in {regime} market")
         print(f"   💡 This is CORRECT - market conditions don't favor buying")
-        
+
         # Create empty file (no signals for PPO)
         empty_df = pd.DataFrame(columns=['symbol', 'date', 'buy', 'SL', 'tp', 'confidence', 'RRR'])
         empty_df.to_csv('./csv/trade_stock.csv', index=False)
         print(f"   ✅ Empty trade_stock.csv created")
-    
+
     # Save detailed signals
     if signals:
         output_df = pd.DataFrame(signals)
         output_df.to_csv('./csv/trade_stock_advanced.csv', index=False)
-        
+
         print("\n" + "="*70)
         print("📊 SIGNAL SUMMARY")
         print("="*70)
         print(output_df['signal'].value_counts().to_string())
-        
+
         if len(buy_signals) > 0:
             print(f"\n🔥 BUY SIGNALS ({len(buy_signals)}):")
             buy_df = pd.DataFrame(buy_signals)
             print(buy_df[['symbol', 'signal', 'score', 'entry_price', 'rrr']].head(10).to_string())
-    
+
     print("\n" + "="*70)
     print(f"✅ Market Regime: {regime}")
     print(f"✅ BUY signals: {len(buy_signals)}")
     print("="*70)
-    
+
     return True
 
 if __name__ == "__main__":
