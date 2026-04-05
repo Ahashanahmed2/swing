@@ -9,6 +9,7 @@
 # ✅ 7. FIXED: Observation space dimension (43 instead of 44)
 # ✅ 8. FIXED: step() method undefined variables (current_date, current_price)
 # ✅ 9. FIXED: Complete step() method with proper returns
+# ✅ 10. ADDED: Agentic Loop integration
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -20,6 +21,17 @@ from datetime import datetime
 from sklearn.preprocessing import StandardScaler
 import warnings
 warnings.filterwarnings('ignore')
+
+# =========================================================
+# AGENTIC LOOP IMPORT (NEW)
+# =========================================================
+
+AGENTIC_LOOP_AVAILABLE = False
+try:
+    from agentic_loop import AgenticLoop
+    AGENTIC_LOOP_AVAILABLE = True
+except ImportError:
+    pass
 
 # =========================================================
 # HEDGE FUND LEVEL CONFIGURATION
@@ -156,6 +168,15 @@ class HedgeFundTradingEnv(gym.Env):
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(self.obs_dim,), dtype=np.float32
         )
+
+        # ✅ NEW: Agentic Loop initialization
+        self.agentic_loop = None
+        if AGENTIC_LOOP_AVAILABLE:
+            try:
+                self.agentic_loop = AgenticLoop(xgb_model_dir=xgb_model_dir)
+                print("   🤖 Agentic Loop initialized in environment")
+            except Exception as e:
+                print(f"   ⚠️ Agentic Loop init failed: {e}")
 
         # Tracking variables
         self.reset()
@@ -419,31 +440,11 @@ class HedgeFundTradingEnv(gym.Env):
         ✅ FIXED: Calculate observation dimension correctly
         Returns: 43 (consistent with actual observation)
         """
-        # Base normalized features from _normalize_observation():
-        # - 5 price features (open, high, low, close, ema_200)
-        # - 1 volume feature
-        # - 1 rsi feature
-        # - 3 macd features
-        # - 2 bollinger features
-        # - 1 atr feature
-        # - 6 pattern features (Hammer, BullishEngulfing, MorningStar, Doji, PiercingLine, ThreeWhiteSoldiers)
-        # - 1 zigzag_signal feature
-        # Total = 5+1+1+3+2+1+6+1 = 20
-
         base_count = 20
-
-        # MTF features: 4 features per period × 4 periods = 16
         mtf_count = len(self.config.MTF_PERIODS) * 4
-
-        # XGBoost features: confidence, prediction = 2
         xgb_count = 2
-
-        # Position features: balance_ratio, position_ratio, drawdown, sharpe, volatility = 5
         position_count = 5
-
-        # Total: 20 + 16 + 2 + 5 = 43
         obs_dim = base_count + mtf_count + xgb_count + position_count
-
         return obs_dim
 
     def _calculate_mtf_features(self, df, current_idx):
@@ -559,7 +560,6 @@ class HedgeFundTradingEnv(gym.Env):
         zigzag = obs_dict.get('zigzag_signal', 0)
         normalized.append(float(zigzag) if not pd.isna(zigzag) else 0)
 
-        # Total: 5+1+1+3+2+1+6+1 = 20 features
         return normalized
 
     def reset(self, seed=None, options=None):
@@ -645,30 +645,8 @@ class HedgeFundTradingEnv(gym.Env):
         return obs
 
     def step(self, action):
+        """Execute action with proper reward scaling and Agentic Loop feedback"""
 
-        
-
-        
-        if trade_closed:
-            # Send feedback to Agentic Loop
-            trade_result = {
-                'symbol': self.current_symbol,
-                'pnl': pnl,
-                'success': pnl > 0,
-                'entry_price': self.entry_price,
-                'exit_price': current_price
-            }
-            
-            # Update agents
-            from agentic_loop import AGENTIC_LOOP
-            feedback = AGENTIC_LOOP.after_trade_feedback(trade_result)
-            
-            # Adjust reward based on agent confidence
-            if feedback:
-                info['agent_feedback'] = feedback
-
-        
-        """Execute action with proper reward scaling - FULLY FIXED"""
         if self.current_step >= len(self.symbol_data) - 1:
             return self._get_obs(), 0, True, False, {}
 
@@ -680,7 +658,7 @@ class HedgeFundTradingEnv(gym.Env):
         next_price = self._add_noise(next_row['close'])
         high_price = self._add_noise(row['high'])
 
-        # ✅ FIXED: Define current_date and current_price before using them
+        # Define variables
         current_date = row['date'] if 'date' in row.index else datetime.now().strftime('%Y-%m-%d')
         current_price = price
 
@@ -691,12 +669,12 @@ class HedgeFundTradingEnv(gym.Env):
 
         reward = 0
         terminated = False
+        trade_closed = False
+        pnl = 0
         trade_result = None
 
-        # ✅ FIXED: Get trade signal with proper variables
+        # Get trade signal
         signal = self._get_trade_signal(self.current_symbol, current_date, current_price)
-
-        # If signal is None, still try to trade with default
         if signal is None:
             signal = {'action': 'HOLD', 'entry': current_price, 'sl': current_price*0.99, 'tp': current_price*1.01, 'confidence': 0.5}
 
@@ -723,15 +701,13 @@ class HedgeFundTradingEnv(gym.Env):
                 sell_amount = self.position * price
                 self.balance += sell_amount * (1 - self.config.TRADING_FEE - self.config.SLIPPAGE)
                 pnl = (price - self.entry_price) / self.entry_price
-
+                trade_closed = True
                 trade_result = {'pnl': pnl, 'success': pnl > 0}
                 self.trades.append(trade_result)
                 self.returns.append(pnl)
-
-                # Update equity curve only on trade
                 self.equity_curve.append(self.balance)
 
-                # Clipped reward to prevent explosion
+                # Clipped reward
                 sharpe_reward = self._calculate_sharpe_ratio(self.returns) * self.config.SHARPE_WEIGHT
                 profit_reward = pnl * 5 * self.config.PROFIT_WEIGHT
                 reward = profit_reward + sharpe_reward
@@ -770,7 +746,22 @@ class HedgeFundTradingEnv(gym.Env):
                 if xgb_conf_norm > 0.6 and next_price > price:
                     reward += 0.002 * xgb_conf_norm
 
-        # Drawdown penalty (scaled)
+        # ✅ AGENTIC LOOP FEEDBACK (NEW - 구조 변경 없이 추가)
+        if trade_closed and self.agentic_loop is not None:
+            try:
+                feedback_trade = {
+                    'symbol': self.current_symbol,
+                    'pnl': pnl,
+                    'success': pnl > 0,
+                    'entry_price': self.entry_price,
+                    'exit_price': current_price,
+                    'exit_reason': 'take_profit' if pnl > 0.03 else 'stop_loss' if pnl < -0.02 else 'manual'
+                }
+                self.agentic_loop.after_trade_feedback(feedback_trade)
+            except Exception as e:
+                pass
+
+        # Drawdown penalty
         current_equity = self.balance + (self.position * price if self.position > 0 else 0)
         temp_curve = self.equity_curve + [current_equity]
         drawdown = self._calculate_drawdown(temp_curve)
@@ -801,8 +792,8 @@ class HedgeFundTradingEnv(gym.Env):
         # Final reward clipping
         reward = np.clip(reward, self.config.REWARD_CLIP_MIN, self.config.REWARD_CLIP_MAX)
 
-        # ✅ FIXED: Return proper values (5 values for Gymnasium)
-        return self._get_obs(), reward, terminated, False, {
+        # Build info dict
+        info = {
             'balance': self.balance,
             'symbol': self.current_symbol,
             'step': self.current_step,
@@ -813,6 +804,12 @@ class HedgeFundTradingEnv(gym.Env):
             'win_rate': sum(1 for t in self.trades if t.get('success', False)) / len(self.trades) if self.trades else 0,
             'total_return': (self.balance / self.config.INITIAL_BALANCE - 1) * 100
         }
+
+        # Add trade_result if trade closed
+        if trade_closed and trade_result:
+            info['trade_result'] = trade_result
+
+        return self._get_obs(), reward, terminated, False, info
 
 # =========================================================
 # ENVIRONMENT WRAPPER
