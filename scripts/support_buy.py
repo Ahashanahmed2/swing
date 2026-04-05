@@ -20,33 +20,19 @@ print("="*70)
 print(f"   Loaded: {len(sr_df)} levels, {len(mongo_df)} market rows, {len(pred_df)} predictions")
 
 # -----------------------------
-# Date convert - FIXED FOR MIXED FORMATS
-# -----------------------------
-sr_df['current_date'] = pd.to_datetime(sr_df['current_date'], errors='coerce')
-mongo_df['date'] = pd.to_datetime(mongo_df['date'], errors='coerce')
-pred_df['date'] = pd.to_datetime(pred_df['date'], format='mixed', errors='coerce')
-conf_df['date'] = pd.to_datetime(conf_df['date'], format='mixed', errors='coerce')
-
-# Remove rows with invalid dates (optional but recommended)
-pred_df = pred_df.dropna(subset=['date'])
-conf_df = conf_df.dropna(subset=['date'])
-
+# 
 output_path = './output/ai_signal/support_resistant.csv'
 os.makedirs('./output/ai_signal', exist_ok=True)
 
 # -----------------------------
 # Load CSV
 # -----------------------------
-sr_df = pd.read_csv(sr_path)
-mongo_df = pd.read_csv(mongo_path)
-pred_df = pd.read_csv(pred_path)
-conf_df = pd.read_csv(conf_path)
-meta_df = pd.read_csv(meta_path)
+sr_df = pd.read_csv(sr_df)
+mongo_df = pd.read_csv(mongo_df)
+pred_df = pd.read_csv(pred_df)
+conf_df = pd.read_csv(conf_df)
+meta_df = pd.read_csv(meta_df)
 
-print("="*70)
-print("📊 SUPPORT BUY SIGNAL GENERATOR (FIXED)")
-print("="*70)
-print(f"   Loaded: {len(sr_df)} levels, {len(mongo_df)} market rows, {len(pred_df)} predictions")
 
 # -----------------------------
 # Date convert
