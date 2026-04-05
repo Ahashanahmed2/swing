@@ -30,7 +30,7 @@ def nightly_trading_system():
     meta_df = pd.read_csv(os.path.join(base_path, 'model_metadata.csv'))
     
     market_df['date'] = pd.to_datetime(market_df['date'])
-    pred_df['date'] = pd.to_datetime(pred_df['date'])
+    pred_df['date'] = pd.to_datetime(pred_df['date'], format='mixed', errors='coerce')
     
     # Latest data
     latest_date = market_df['date'].max()
