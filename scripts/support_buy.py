@@ -41,7 +41,6 @@ conf_df['date'] = pd.to_datetime(conf_df['date'])
 # Filter only support
 # -----------------------------
 sr_df = sr_df[sr_df['type'] == 'support']
-print(f"   Support levels: {len(sr_df)}")
 
 # -----------------------------
 # Sort mongodb
