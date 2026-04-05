@@ -163,7 +163,28 @@ PPO_PER_SYMBOL_CONFIG = {
 # =========================================================
 # ✅ AGENTIC LOOP WRAPPER (NEW - STRUCTURE UNCHANGED)
 # =========================================================
-
+def safe_parse_date(date_series):
+    """Safely parse dates with multiple formats"""
+    try:
+        # Try standard date format
+        return pd.to_datetime(date_series, format='%Y-%m-%d', errors='coerce')
+    except:
+        pass
+    
+    try:
+        # Try with time
+        return pd.to_datetime(date_series, format='%Y-%m-%d %H:%M:%S', errors='coerce')
+    except:
+        pass
+    
+    try:
+        # Try mixed format (pandas 2.0+)
+        return pd.to_datetime(date_series, format='mixed', errors='coerce')
+    except:
+        pass
+    
+    # Let pandas infer
+    return pd.to_datetime(date_series, errors='coerce')
 class AgenticLoopWrapper:
     """Agentic Loop Wrapper -不影响现有结构"""
     
