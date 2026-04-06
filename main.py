@@ -59,7 +59,7 @@ scripts = [
 ]
 
 for script in scripts:
-    script_path=os.path.absapath(script)
+    script_path=os.path.abspath(script)
     try:
         subprocess.run([sys.executable,script_path],check=True)
         print(f"Finished {script}")
