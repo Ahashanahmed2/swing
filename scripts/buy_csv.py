@@ -29,14 +29,14 @@ def create_uptrend_downtrend_signals():
     mongodb_csv = './csv/mongodb.csv'
     trand_base_dir = './csv/trand/'
     output_dir = './csv/'
-    ai_output_dir = './output/ai_signal/'
+    #ai_output_dir = './output/ai_signal/'
    
 
     os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(ai_output_dir, exist_ok=True)
+    #os.makedirs(ai_output_dir, exist_ok=True)
 
     uptrend_file = os.path.join(output_dir, 'uptrand.csv')
-    downtrend_file = os.path.join(ai_output_dir, 'downtrand.csv')
+    #downtrend_file = os.path.join(ai_output_dir, 'downtrand.csv')
 
     print(f"Reading {mongodb_csv}...")
 
@@ -142,13 +142,13 @@ def create_uptrend_downtrend_signals():
 
         final_up_df.to_csv(uptrend_file, index=False)
 
-        if not new_up_symbols.empty:
-            new_up_symbols.to_csv(
-                os.path.join(ai_output_dir, 'uptrand.csv'),
-                index=False
-            )
+        #if not new_up_symbols.empty:
+            #new_up_symbols.to_csv(
+                #os.path.join(ai_output_dir, 'uptrand.csv'),
+                #index=False
+            #)
 
-        print("✅ Uptrend updated")
+        #print("✅ Uptrend updated")
 
     else:
         pd.DataFrame().to_csv(uptrend_file, index=False)
@@ -167,13 +167,13 @@ def create_uptrend_downtrend_signals():
 
         final_down_df.to_csv(downtrend_file, index=False)
 
-        if not new_down_symbols.empty:
-            new_down_symbols.to_csv(
-                os.path.join(ai_output_dir, 'downtrand.csv'),
-                index=False
-            )
+        #if not new_down_symbols.empty:
+            #new_down_symbols.to_csv(
+                #os.path.join(ai_output_dir, 'downtrand.csv'),
+                #index=False
+            #)
 
-        print("✅ Downtrend updated")
+        #print("✅ Downtrend updated")
 
     else:
         pd.DataFrame().to_csv(downtrend_file, index=False)
