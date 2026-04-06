@@ -52,6 +52,7 @@ scripts = [
     #"scripts/upload_csv.py",
     #"scripts/dayliMassage.py",
     #"scripts/email_reports.py",
+    "scripts/llm_upload.py"
     
 ]
 
