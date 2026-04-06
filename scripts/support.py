@@ -30,8 +30,8 @@ def process_support_resistance(input_file, output_file):
 
     results = []
 
-    print("\n" + "=" * 80)
-    print("📊 LATEST SUPPORT & RESISTANCE DETECTION")
+    #print("\n" + "=" * 80)
+    #print("📊 LATEST SUPPORT & RESISTANCE DETECTION")
     #print("=" * 80)
     #print("(Each symbol will have ONE entry - either Support or Resistance)")
     #print("=" * 80)
@@ -154,7 +154,7 @@ def process_support_resistance(input_file, output_file):
                 })
             else:
                 # Resistance is more recent
-                print(f"\n📌 LATEST LEVEL: RESISTANCE (More recent than Support)")
+                #(f"\n📌 LATEST LEVEL: RESISTANCE (More recent than Support)")
                 results.append({
                     'type': 'resistance',
                     'symbol': symbol,
@@ -170,7 +170,7 @@ def process_support_resistance(input_file, output_file):
 
         elif support_exists:
             # Only support found
-            print(f"\n📌 LATEST LEVEL: SUPPORT (Only Support found)")
+            #print(f"\n📌 LATEST LEVEL: SUPPORT (Only Support found)")
             results.append({
                 'type': 'support',
                 'symbol': symbol,
@@ -201,7 +201,8 @@ def process_support_resistance(input_file, output_file):
             })
 
         else:
-            print(f"\n⚠️ No Support or Resistance found for {symbol}")
+            pass
+            #print(f"\n⚠️ No Support or Resistance found for {symbol}")
 
     # ==================== CREATE OUTPUT DATAFRAME ====================
     if results:
@@ -244,12 +245,15 @@ def process_support_resistance(input_file, output_file):
         resistance_df = output_df[output_df['type'] == 'resistance']
 
         if len(support_df) > 0:
-            print(f"Support: {len(support_df)} symbols | Avg Gap: {support_df['gap_days'].mean():.1f} days")
+            pass
+            #print(f"Support: {len(support_df)} symbols | Avg Gap: {support_df['gap_days'].mean():.1f} days")
         if len(resistance_df) > 0:
-            print(f"Resistance: {len(resistance_df)} symbols | Avg Gap: {resistance_df['gap_days'].mean():.1f} days")
+            pass
+            #print(f"Resistance: {len(resistance_df)} symbols | Avg Gap: {resistance_df['gap_days'].mean():.1f} days")
 
     else:
-        print("\n❌ No support or resistance levels found")
+        
+        #print("\n❌ No support or resistance levels found")
         empty_df = pd.DataFrame(columns=[
             'no', 'type', 'symbol', 'current_date', 'current_low', 'current_high', 
             'current_close', 'level_date', 'level_price', 'gap_days', 'strength'
@@ -267,7 +271,7 @@ def main():
 
     # Check if input file exists
     if not os.path.exists(input_file):
-        print(f"❌ Error: Input file {input_file} not found!")
+        #print(f"❌ Error: Input file {input_file} not found!")
         #print("Creating sample data...")
 
         # Create sample data
