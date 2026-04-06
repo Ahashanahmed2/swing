@@ -11,10 +11,8 @@ import os
 scripts = [
     
     #"scripts/dse_scraper.py",
-    #"scripts/date_check.py",
-    
+    "scripts/date_check.py",
     "scripts/hf_download.py",
-    
     "scripts/mongodb.py",
     "scripts/support_buy.py",
     "scripts/sync_emails.py",
