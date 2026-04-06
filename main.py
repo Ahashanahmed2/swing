@@ -12,7 +12,9 @@ scripts = [
     
     #"scripts/dse_scraper.py",
     #"scripts/date_check.py",
+    
     "scripts/hf_download.py",
+    """
     "scripts/mongodb.py",
     "scripts/support_buy.py",
     "scripts/sync_emails.py",
@@ -49,6 +51,7 @@ scripts = [
     "scripts/nightly_trader.py",
     #"scripts/agentic_loop.py",
     "scripts/generate_pdf.py",
+    """
     "scripts/upload_csv.py",
     "scripts/dayliMassage.py",
     "scripts/email_reports.py",
