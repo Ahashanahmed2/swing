@@ -31,7 +31,17 @@ jobs:
         echo "✅ Directories created"
         echo "Current directory: $(pwd)"
         ls -la ./csv/   # ← ফোল্ডার দেখার জন্য
-       
+    
+    - name: Verify folders
+      run: |
+        echo "=== Checking ./csv ==="
+        ls -la ./csv/
+        echo "=== Checking ./csv/xgboost ==="
+        ls -la ./csv/xgboost/ | head -10
+        echo "=== Checking ./csv/ppo_models ==="
+        ls -la ./csv/ppo_models/
+        echo "=== Checking ./csv/ppo_models/per_symbol ==="
+        ls -la ./csv/ppo_models/per_symbol/   
         
     - name: Install dependencies
       run: |
