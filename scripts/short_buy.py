@@ -9,7 +9,7 @@ from datetime import datetime
 # =========================
 # Configuration
 # =========================
-RSI_DIVER_FILE = './output/ai_signal/rsi_diver.csv'
+RSI_DIVER_FILE = './csv/rsi_diver.csv'
 MONGO_FILE = './csv/mongodb.csv'
 OUTPUT_DIR = './output/ai_signal'
 OUTPUT_FILE = f'{OUTPUT_DIR}/breakout_signals.csv'
