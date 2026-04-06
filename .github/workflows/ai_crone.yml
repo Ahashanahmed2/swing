@@ -28,7 +28,7 @@ jobs:
         mkdir -p ./csv/ppo_models
         mkdir -p ./csv/ppo_models/per_symbol
         mkdir -p ./csv/ppo_models/ensemble
-        mkdir -p ./csv/ppo_models/ppo_shared
+       
         echo "Current directory: $(pwd)"
     - name: Install dependencies
       run: |
