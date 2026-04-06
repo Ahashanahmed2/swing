@@ -12,6 +12,7 @@ from io import StringIO
 # =========================
 # STEP 1: DOWNLOAD FROM HUGGING FACE FIRST
 # =========================
+"""
 print("="*60)
 print("STEP 1: Downloading master CSV from Hugging Face...")
 print("="*60)
@@ -45,6 +46,7 @@ try:
 except Exception as e:
     print(f"⚠️ HF download error: {e}")
     df_hf = pd.DataFrame()
+    """
 
 # =========================
 # STEP 2: CHECK FOR NEW DATA IN MONGODB
