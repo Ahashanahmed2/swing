@@ -1,4 +1,4 @@
-w# mongodb.py
+# mongodb.py
 from pymongo import MongoClient
 import pandas as pd
 import numpy as np
