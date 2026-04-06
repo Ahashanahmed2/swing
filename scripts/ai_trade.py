@@ -643,6 +643,7 @@ def monitor_trades():
 
 def main():
     """Main function - GitHub Actions এর জন্য (শুধু একবার রান করে)"""
+    """
     print("=" * 60)
     print("🤖 AI TRADE MONITOR - Automated Trading System")
     print("=" * 60)
@@ -653,7 +654,7 @@ def main():
     print("📅 Date source: Filename (stock/date.csv)")
     print("📌 Duplicate check: Same symbol + same date = blocked")
     print("▶️ Running once mode (for GitHub Actions)")
-    print("=" * 60)
+    print("=" * 60)"""
 
     # Ensure directories exist
     ensure_directories()
