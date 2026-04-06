@@ -28,8 +28,11 @@ jobs:
         mkdir -p ./csv/ppo_models
         mkdir -p ./csv/ppo_models/per_symbol
         mkdir -p ./csv/ppo_models/ensemble
-       
+        echo "✅ Directories created"
         echo "Current directory: $(pwd)"
+        ls -la ./csv/   # ← ফোল্ডার দেখার জন্য
+       
+        
     - name: Install dependencies
       run: |
         pip install torch==2.3.0 --index-url https://download.pytorch.org/whl/cpu
