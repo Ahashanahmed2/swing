@@ -5,8 +5,8 @@ snapshot_download(
     repo_type="dataset",
     local_dir="./csv",
     resume_download=True,
-    max_workers=1,  # slower but more stable
+    max_workers=2,  # slower but more stable
     timeout=600,    # 2 minutes timeout
-    etag_timeout=60,
+    etag_timeout=120,
 )
 print("✅ ডাউনলোড সম্পূর্ণ!")
