@@ -1,17 +1,11 @@
 # scripts/llm_train.py
-# Hugging Face ডেটাসেট থেকে ডাটা নিয়ে ছোট LLM ট্রেনিং করার স্ক্রিপ্ট
+# লোকাল ./csv/training_texts.txt ফাইল থেকে ডাটা নিয়ে ছোট LLM ট্রেনিং করার স্ক্রিপ্ট
 
 import os
 import torch
-
 import sys
-print("Python executable:", sys.executable)
-try:
-    print("PyTorch version:", torch.__version__)
-except ImportError as e:
-    print("PyTorch import failed:", e)
+import warnings
 import pandas as pd
-from datasets import load_dataset
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
@@ -20,7 +14,6 @@ from transformers import (
     DataCollatorForLanguageModeling
 )
 from huggingface_hub import login
-import warnings
 warnings.filterwarnings('ignore')
 
 def main():
@@ -28,23 +21,20 @@ def main():
     print("🚀 TRAINING SMALL LLM FOR STOCK PATTERN RECOGNITION")
     print("="*60)
     
-    # =========================================================
-    # 1. টোকেন চেক করুন
-    # =========================================================
+    # 1. টোকেন চেক (আপলোডের জন্য প্রয়োজন, লোকাল ট্রেনিংয়ের জন্য না)
     token = os.getenv("hf_token")
-    if not token:
-        print("❌ HF_TOKEN not found in environment variables!")
-        return
-    
-    try:
-        login(token=token)
-        print("✅ Logged in to Hugging Face")
-    except Exception as e:
-        print(f"❌ Login failed: {e}")
-        return
+    if token:
+        try:
+            login(token=token)
+            print("✅ Logged in to Hugging Face (for upload)")
+        except Exception as e:
+            print(f"⚠️ Login failed, but training will continue: {e}")
+    else:
+        print("ℹ️ No HF_TOKEN found. Model will be saved locally only.")
     
     # =========================================================
-    ✅ লোকাল ফাইল থেকে ডাটা লোড করুন
+    # 2. লোকাল ফাইল থেকে ডাটা লোড করুন (সংশোধিত অংশ)
+    # =========================================================
     csv_path = "./csv/training_texts.txt"
     
     if not os.path.exists(csv_path):
@@ -57,39 +47,39 @@ def main():
     
     print(f"✅ Loaded {len(text_data)} characters from {csv_path}")
     
-    # টেক্সটকে লাইনে ভাগ করুন
-    texts = [t.strip() for t in text_data.split('================================================================================') if len(t.strip()) > 100]
-    print(f"📊 Training examples: {len(texts)}")
+    # টেক্সটকে ট্রেনিং উদাহরণে ভাগ করুন (সংশোধিত অংশ)
+    # ('===' ডিলিমিটার ব্যবহার করে বিভক্ত করুন এবং খালি/ছোট উদাহরণ বাদ দিন)
+    raw_examples = text_data.split('================================================================================')
+    train_texts = []
+    for ex in raw_examples:
+        ex = ex.strip()
+        if len(ex) > 100:  # যেসব উদাহরণ ১০০ ক্যারেক্টারের বেশি, সেগুলো নিন
+            train_texts.append(ex)
     
-    # =========================================================
-    # 3. টোকেনাইজার সেটআপ করুন
-    # =========================================================
+    print(f"📊 Total training examples found: {len(train_texts)}")
+    
+    if not train_texts:
+        print("❌ No valid training examples found in the file.")
+        return
+    
+    # 3. টোকেনাইজার সেটআপ
     print("\n🔧 Setting up tokenizer...")
-    
-    # ছোট মডেলের জন্য GPT-2 টোকেনাইজার ব্যবহার করুন
-    model_name = "distilgpt2"  # ছোট মডেল (CPU-তে দ্রুত কাজ করে)
-    
+    model_name = "distilgpt2"  # CPU-তে দ্রুত কাজ করে
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.pad_token = tokenizer.eos_token
     
     # ডাটা টোকেনাইজ করুন
-    encodings = tokenizer(texts,truncation=True, padding=True, max_length=512, return_tensors="pt")
-    
+    encodings = tokenizer(train_texts, truncation=True, padding=True, max_length=512, return_tensors="pt")
     print(f"✅ Tokenizer ready (vocab size: {tokenizer.vocab_size})")
     
-    # =========================================================
-    # 4. মডেল সেটআপ করুন (CPU-তে চলবে)
-    # =========================================================
+    # 4. মডেল সেটআপ
     print("\n🏗️ Setting up model...")
-    
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        torch_dtype=torch.float32,  # CPU-তে float32 ভালো
+        torch_dtype=torch.float32,
         low_cpu_mem_usage=True
-      
     )
     
-    # CPU-তে চলার জন্য
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     
@@ -98,32 +88,7 @@ def main():
     print(f"   Total parameters: {total_params:,}")
     print(f"   Device: {device}")
     
-    # =========================================================
-    # 5. ডাটা প্রস্তুত করুন
-    # =========================================================
-    printextstr📊 Preparing dataset...")
-    
-    # টেক্সটকে ট্রেনিং ডাটাতে রূপান্তর
-    block_size = 128
-    texts = text_data.split('\n\n')  # প্যারাগ্রাফ দিয়ে ভাগ করুন
-    
-    train_texts = []
-    for text in texts:
-        if len(text.strip()) > 50:  # খুব ছোট টেক্সট বাদ দিন
-            train_texts.append(text.strip())
-    
-    print(f"   Training examples: {len(train_texts)}")
-    
-    # টোকেনাইজড ডাটা তৈরি করুন
-    train_encodings = tokenizer(
-        train_texts,
-        truncation=True,
-        padding=True,
-        max_length=block_size,
-        return_tensors="pt"
-    )
-    
-    # PyTorch ডেটাসেট তৈরি করুন
+    # 5. PyTorch ডেটাসেট তৈরি করুন
     class TextDataset(torch.utils.data.Dataset):
         def __init__(self, encodings):
             self.input_ids = encodings['input_ids']
@@ -133,52 +98,47 @@ def main():
             return {
                 'input_ids': self.input_ids[idx],
                 'attention_mask': self.attention_mask[idx],
-                'labels': self.input_ids[idx]  # causal LM এর জন্য
+                'labels': self.input_ids[idx]
             }
         
         def __len__(self):
             return len(self.input_ids)
     
-    train_dataset = TextDataset(train_encodings)
+    train_dataset = TextDataset(encodings)
     
-    # =========================================================
     # 6. ট্রেনিং আর্গুমেন্টস
-    # =========================================================
     print("\n⚙️ Setting up training arguments...")
-    
     output_dir = "./llm_stock_model"
     
     training_args = TrainingArguments(
         output_dir=output_dir,
         overwrite_output_dir=True,
-        num_train_epochs=10,  # কম epoch (CPU-তে দ্রুত)
-        per_device_train_batch_size=2,  # ছোট batch (CPU memory)
+        num_train_epochs=10,
+        per_device_train_batch_size=2,
         gradient_accumulation_steps=4,
-        save_steps=100,
+        save_steps=200,          # প্রতি ২০০ স্টেপে সেভ করবে (CPU-তে কম সেভ করা ভালো)
         save_total_limit=2,
         logging_steps=20,
         prediction_loss_only=True,
         learning_rate=5e-5,
-        warmup_steps=100,
+        warmup_steps=50,
         weight_decay=0.01,
-        fp16=False,  # CPU-তে fp16 বন্ধ
+        fp16=False,
         dataloader_drop_last=False,
-        report_to="none",  # TensorBoard বন্ধ (optional)
+        report_to="none",
     )
     
     print(f"   Output directory: {output_dir}")
     print(f"   Epochs: {training_args.num_train_epochs}")
     print(f"   Batch size: {training_args.per_device_train_batch_size}")
     
-    # =========================================================
-    # 7. ট্রেনিং শুরু করুন
-    # =========================================================
+    # 7. ট্রেনিং শুরু
     print("\n🏋️ Starting training...")
     print("-" * 40)
     
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
-        mlm=False  # Causal LM (GPT-style)
+        mlm=False
     )
     
     trainer = Trainer(
@@ -195,52 +155,34 @@ def main():
         print(f"\n❌ Training failed: {e}")
         return
     
-    # =========================================================
-    # 8. মডেল সেভ করুন
-    # =========================================================
+    # 8. মডেল সেভ
     print("\n💾 Saving model...")
-    
     model.save_pretrained(output_dir)
     tokenizer.save_pretrained(output_dir)
     print(f"✅ Model saved to: {output_dir}")
     
-    # =========================================================
-    # 9. Hugging Face-এ আপলোড করুন
-    # =========================================================
-    print("\n📤 Uploading model to Hugging Face...")
+    # 9. Hugging Face-এ আপলোড (শুধুমাত্র টোকেন থাকলেই)
+    if token:
+        print("\n📤 Uploading model to Hugging Face...")
+        model_repo_id = "ahashanahmed/llm-stock-model"
+        try:
+            from huggingface_hub import create_repo, upload_folder
+            create_repo(repo_id=model_repo_id, repo_type="model", exist_ok=True, private=False)
+            upload_folder(
+                folder_path=output_dir,
+                repo_id=model_repo_id,
+                repo_type="model",
+                commit_message="Upload trained LLM from local training_texts.txt"
+            )
+            print(f"✅ Model uploaded to: https://huggingface.co/{model_repo_id}")
+        except Exception as e:
+            print(f"⚠️ Upload failed: {e}")
+            print("   You can manually upload the folder:", output_dir)
+    else:
+        print("\nℹ️ Skipping upload to Hugging Face (no token provided).")
     
-    model_repo_id = "ahashanahmed/llm-stock-model"
-    
-    try:
-        from huggingface_hub import create_repo, upload_folder
-        
-        # রিপোজিটরি তৈরি করুন (যদি না থাকে)
-        create_repo(
-            repo_id=model_repo_id,
-            repo_type="model",
-            exist_ok=True,
-            private=False
-        )
-        print(f"✅ Repository ready: {model_repo_id}")
-        
-        # মডেল আপলোড করুন
-        upload_folder(
-            folder_path=output_dir,
-            repo_id=model_repo_id,
-            repo_type="model",
-            commit_message="Upload trained LLM for stock pattern recognition"
-        )
-        print(f"✅ Model uploaded to: https://huggingface.co/{model_repo_id}")
-        
-    except Exception as e:
-        print(f"⚠️ Upload failed: {e}")
-        print("   You can manually upload the folder:", output_dir)
-    
-    # =========================================================
-    # 10. টেস্ট করুন
-    # =========================================================
+    # 10. টেস্ট
     print("\n🧪 Testing the model...")
-    
     model.eval()
     test_prompt = "Stock pattern: Cup and Handle"
     inputs = tokenizer(test_prompt, return_tensors="pt")
@@ -259,16 +201,15 @@ def main():
     print(f"   Prompt: {test_prompt}")
     print(f"   Generated: {generated_text}")
     
-    # =========================================================
     # 11. সারাংশ
-    # =========================================================
     print("\n" + "="*60)
     print("📊 TRAINING SUMMARY")
     print("="*60)
     print(f"   ✅ Model trained successfully!")
     print(f"   📁 Local model: {output_dir}")
-    print(f"   🤗 Hugging Face: https://huggingface.co/{model_repo_id}")
-    print(f"   📚 Dataset: https://huggingface.co/datasets/ahashanahmed/LLM_model_stock")
+    if token:
+        print(f"   🤗 Hugging Face: https://huggingface.co/ahashanahmed/llm-stock-model")
+    print(f"   📚 Training data source: {csv_path}")
     print("="*60)
 
 if __name__ == "__main__":
