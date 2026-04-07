@@ -48,9 +48,8 @@ jobs:
         pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cpu
         python -c "import torch; print('PyTorch installed successfully')"
         pip install --force-reinstall transformers==4.40.0
-        # Verify version
-        python -c "import transformers; print(f'Transformers {transformers.__versioan__} installed')"
-        # Other libraries
+        python -c "import transformers; print(f'Transformers version: {transformers.__version__}')"
+        python -c "from transformers import TrainingArguments; print('TrainingArguments imported successfully')"
         pip install accelerate==0.33.0
         pip install peft==0.10.0
 
