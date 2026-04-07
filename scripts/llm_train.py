@@ -25,7 +25,7 @@ from huggingface_hub import login, create_repo, upload_folder, list_repo_files
 
 # Optional: LoRA for faster training
 try:
-    from peft import LoraConfig, get_peft_model, TaskType
+    from peft import LoraConfig, get_peft_model
     LORA_AVAILABLE = True
 except ImportError:
     LORA_AVAILABLE = False
