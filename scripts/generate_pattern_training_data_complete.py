@@ -1299,7 +1299,7 @@ def main():
         print(f"📊 Market regime for {symbol}: {market_regime}")
         
         row_count = 0
-        MAX_PAR_SYMBOL = 12
+        MAX_PAR_SYMBOL = 100
 
         # ✅ FIX 8: Better step logic
         step = 1 if len(symbol_data) < 500 else 2
