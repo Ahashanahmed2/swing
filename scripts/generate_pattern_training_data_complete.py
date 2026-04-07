@@ -1438,7 +1438,7 @@ def main():
                         sequence_used, pattern_high, pattern_low, use_row['close']
                     )
                     
-                    ✅ নতুন কোড (সঠিকভাবে শুধু Elliott Wave প্যাটার্ন চিনবে)
+                    #✅ নতুন কোড (সঠিকভাবে শুধু Elliott Wave প্যাটার্ন চিনবে)
                     elliott_pattern_names = list(get_elliott_wave_patterns().keys())
                     is_elliott = pattern_name in elliott_pattern_names
                     
