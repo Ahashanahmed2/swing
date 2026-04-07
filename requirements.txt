@@ -15,5 +15,5 @@ gymnasium
 stable-baselines3 
 shimmy
 transformers
-datasets
 numpy
+datasets>=2.12.0
