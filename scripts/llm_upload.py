@@ -1,56 +1,16 @@
 # scripts/llm_upload.py
-# 🚀 LLM Training Data Upload to Hugging Face (Production Ready)
+# 🔥 ZERO-BUG PRODUCTION VERSION
 
 import os
 from huggingface_hub import HfApi, login, create_repo, upload_file
 
-def main():
-    print("=" * 60)
-    print("🚀 UPLOADING LLM TRAINING DATA TO HUGGING FACE")
-    print("=" * 60)
 
-    # =========================================================
-    # 1. TOKEN CHECK
-    # =========================================================
-    token = os.getenv("hf_token")
-
-    if not token:
-        print("❌ hf_token not found in environment variables!")
-        return
-
-    print("✅ Token found")
-
-    # =========================================================
-    # 2. LOGIN
-    # =========================================================
-    try:
-        login(token=token)
-        print("✅ Logged in to Hugging Face")
-    except Exception as e:
-        print(f"❌ Login failed: {e}")
-        return
-
-    # =========================================================
-    # 3. REPO CONFIG
-    # =========================================================
-    repo_id = "ahashanahmed/LLM_model_stock"
-    api = HfApi()
-
-    # =========================================================
-    # 4. CREATE REPO (IF NOT EXISTS)
-    # =========================================================
-    try:
-        create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True)
-        print(f"✅ Repo ready: {repo_id}")
-    except Exception as e:
-        print(f"❌ Repo creation failed: {e}")
-        return
-
-    # =========================================================
-    # 5. CREATE TRAINING DATA
-    # =========================================================
-    training_text = """Symbol: RELIANCE1
-Pattern: Cup and Handle detected. Cup bottom at 52, handle between 55-57. 
+def get_training_text():
+    """
+    Keep training data isolated to avoid syntax break issues
+    """
+    return """Symbol: RELIANCE1
+Pattern: Cup and Handle detected. Cup bottom at 52, handle between 55-57.
 Breakout above 58 confirmed. Target: 65. Stop loss: 54.
 
 Symbol: KPCL
@@ -78,21 +38,60 @@ Pattern: Bull Flag. Sharp rally from 80 to 95. Consolidation at 90-93.
 Breakout expected above 95. Target: 110.
 """
 
+
+def main():
+    print("=" * 60)
+    print("🚀 LLM DATA UPLOAD STARTED")
+    print("=" * 60)
+
     # =========================================================
-    # 6. SAVE FILE
+    # 1. TOKEN CHECK
+    # =========================================================
+    token = os.getenv("hf_token")
+
+    if not token:
+        raise ValueError("❌ hf_token not found in environment variables!")
+
+    print("✅ Token found")
+
+    # =========================================================
+    # 2. LOGIN
+    # =========================================================
+    try:
+        login(token=token)
+        print("✅ Hugging Face login successful")
+    except Exception as e:
+        raise RuntimeError(f"❌ Login failed: {e}")
+
+    # =========================================================
+    # 3. REPO SETUP
+    # =========================================================
+    repo_id = "ahashanahmed/LLM_model_stock"
+    api = HfApi()
+
+    try:
+        create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True)
+        print(f"✅ Repo ready: {repo_id}")
+    except Exception as e:
+        raise RuntimeError(f"❌ Repo creation failed: {e}")
+
+    # =========================================================
+    # 4. CREATE FILE
     # =========================================================
     file_path = "training_texts.txt"
 
     try:
-        with open(file_path, "w") as f:
+        training_text = get_training_text()
+
+        with open(file_path, "w", encoding="utf-8") as f:
             f.write(training_text)
-        print(f"✅ File saved: {file_path}")
+
+        print(f"✅ File created: {file_path}")
     except Exception as e:
-        print(f"❌ File save failed: {e}")
-        return
+        raise RuntimeError(f"❌ File creation failed: {e}")
 
     # =========================================================
-    # 7. UPLOAD FILE
+    # 5. UPLOAD
     # =========================================================
     try:
         upload_file(
@@ -101,129 +100,17 @@ Breakout expected above 95. Target: 110.
             repo_id=repo_id,
             repo_type="dataset"
         )
-        print("✅ Upload successful!")
+        print("✅ Upload successful")
     except Exception as e:
-        print(f"❌ Upload failed: {e}")
-        return
+        raise RuntimeError(f"❌ Upload failed: {e}")
 
     print("=" * 60)
-    print("🎉 ALL DONE SUCCESSFULLY!")
+    print("🎉 ALL DONE - ZERO BUG EXECUTION")
     print("=" * 60)
 
 
 # =========================================================
-# RUN SCRIPT
+# ENTRY POINT (STRICTLY CLEAN)
 # =========================================================
 if __name__ == "__main__":
-    main()Pattern: Bull Flag. Sharp rally from 80 to 95. Consolidation at 90-93.
-Breakout above 95. Target: 110.
-"""
-    
-    with open("training_texts.txt", "w", encoding="utf-8") as f:
-        f.write(training_text)
-    print("✅ Created training_texts.txt")
-    
-    # =========================================================
-    # 5. market_patterns.csv ফাইল তৈরি করুন
-    # =========================================================
-    patterns_data = pd.DataFrame({
-        'symbol': ['RELIANCE1', 'KPCL', 'TECHNODRUG', 'APEXFOOT', 'SONALIANSH', 'VFSTDL', 'PF1STMF'],
-        'pattern': ['Cup and Handle', 'Bull Flag', 'Double Bottom', 'Bull Flag', 'Cup and Handle', 'Double Bottom', 'Bull Flag'],
-        'confidence': [0.85, 0.78, 0.82, 0.71, 0.88, 0.75, 0.80],
-        'target': [65, 62, 40, 70, 135, 38, 110],
-        'stop_loss': [54, 52, 33, 58, 112, 27, 92],
-        'support': [52, 45, 30, 50, 100, 25, 80],
-        'resistance': [58, 55, 35, 60, 118, 30, 95]
-    })
-    patterns_data.to_csv("market_patterns.csv", index=False)
-    print("✅ Created market_patterns.csv")
-    
-    # =========================================================
-    # 6. README.md ফাইল তৈরি করুন
-    # =========================================================
-    readme_text = """# LLM Model Stock Dataset
-
-## 📊 Description
-This dataset contains stock market pattern data for training a small LLM (Language Model) for pattern recognition.
-
-## 📁 Files
-- `training_texts.txt`: Text descriptions of stock patterns for training
-- `market_patterns.csv`: Structured pattern data with confidence scores
-
-## 📈 Pattern Types
-- Cup and Handle
-- Bull Flag
-- Double Bottom
-
-## 🚀 Usage
-```python
-from datasets import load_dataset
-
-# Load the dataset
-dataset = load_dataset("ahashanahmed/LLM_model_stock")
-
-# Access training texts
-print(dataset['train']['training_texts.txt'])
-
-# Access pattern data
-patterns = pd.read_csv("market_patterns.csv")
-with open("README.md", "w", encoding="utf-8") as f:
-    f.write(readme_text)
-print("✅ Created README.md")
-
-# =========================================================
-# 7. ফাইল চেক করুন
-# =========================================================
-print("\n📁 Checking created files:")
-files_to_upload = ["training_texts.txt", "market_patterns.csv", "README.md"]
-
-for file in files_to_upload:
-    if os.path.exists(file):
-        size = os.path.getsize(file)
-        print(f"   ✅ {file} ({size} bytes)")
-    else:
-        print(f"   ❌ {file} (NOT FOUND)")
-        return
-
-# =========================================================
-# 8. Hugging Face-এ আপলোড করুন
-# =========================================================
-print("\n📤 Uploading to Hugging Face...")
-print(f"📦 Repository: {repo_id}")
-print("-" * 40)
-
-success_count = 0
-fail_count = 0
-
-for file in files_to_upload:
-    try:
-        upload_file(
-            path_or_fileobj=file,
-            path_in_repo=file,
-            repo_id=repo_id,
-            repo_type="dataset",
-        )
-        print(f"   ✅ Uploaded: {file}")
-        success_count += 1
-    except Exception as e:
-        print(f"   ❌ Failed: {file} - {e}")
-        fail_count += 1
-
-# =========================================================
-# 9. ফলাফল সারাংশ
-# =========================================================
-print("\n" + "="*60)
-print("📊 UPLOAD SUMMARY")
-print("="*60)
-print(f"   ✅ Successful: {success_count}")
-print(f"   ❌ Failed: {fail_count}")
-print(f"   📁 Repository: https://huggingface.co/datasets/{repo_id}")
-print("="*60)
-
-if success_count == len(files_to_upload):
-    print("🎉 All files uploaded successfully!")
-else:
-    print("⚠️ Some files failed to upload. Please check the errors above.")
-
-if __name__ == "__main__":
-   main()
+    main()
