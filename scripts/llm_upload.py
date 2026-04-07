@@ -1,28 +1,27 @@
 # scripts/llm_upload.py
-# LLM ট্রেনিং ডাটা Hugging Face-এ আপলোড করার স্ক্রিপ্ট
+# 🚀 LLM Training Data Upload to Hugging Face (Production Ready)
 
 import os
-import pandas as pd
-from huggingface_hub import HfApi, login, upload_file
+from huggingface_hub import HfApi, login, create_repo, upload_file
 
 def main():
-    print("="*60)
+    print("=" * 60)
     print("🚀 UPLOADING LLM TRAINING DATA TO HUGGING FACE")
-    print("="*60)
-    
+    print("=" * 60)
+
     # =========================================================
-    # 1. টোকেন চেক করুন
+    # 1. TOKEN CHECK
     # =========================================================
     token = os.getenv("hf_token")
+
     if not token:
-        print("❌ HF_TOKEN not found in environment variables!")
-        print("   Please set hf_token in GitHub Secrets or .env file")
+        print("❌ hf_token not found in environment variables!")
         return
-    
+
     print("✅ Token found")
-    
+
     # =========================================================
-    # 2. Hugging Face-এ লগইন করুন
+    # 2. LOGIN
     # =========================================================
     try:
         login(token=token)
@@ -30,16 +29,25 @@ def main():
     except Exception as e:
         print(f"❌ Login failed: {e}")
         return
-    
+
+    # =========================================================
+    # 3. REPO CONFIG
+    # =========================================================
     repo_id = "ahashanahmed/LLM_model_stock"
-    
+    api = HfApi()
+
     # =========================================================
-    # 3. বর্তমান ডিরেক্টরি দেখান
+    # 4. CREATE REPO (IF NOT EXISTS)
     # =========================================================
-    print(f"\n📁 Current working directory: {os.getcwd()}")
-    
+    try:
+        create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True)
+        print(f"✅ Repo ready: {repo_id}")
+    except Exception as e:
+        print(f"❌ Repo creation failed: {e}")
+        return
+
     # =========================================================
-    # 4. training_texts.txt ফাইল তৈরি করুন
+    # 5. CREATE TRAINING DATA
     # =========================================================
     training_text = """Symbol: RELIANCE1
 Pattern: Cup and Handle detected. Cup bottom at 52, handle between 55-57. 
@@ -67,6 +75,47 @@ Breakout above 30 confirmed. Target: 38.
 
 Symbol: PF1STMF
 Pattern: Bull Flag. Sharp rally from 80 to 95. Consolidation at 90-93.
+Breakout expected above 95. Target: 110.
+"""
+
+    # =========================================================
+    # 6. SAVE FILE
+    # =========================================================
+    file_path = "training_texts.txt"
+
+    try:
+        with open(file_path, "w") as f:
+            f.write(training_text)
+        print(f"✅ File saved: {file_path}")
+    except Exception as e:
+        print(f"❌ File save failed: {e}")
+        return
+
+    # =========================================================
+    # 7. UPLOAD FILE
+    # =========================================================
+    try:
+        upload_file(
+            path_or_fileobj=file_path,
+            path_in_repo="training_texts.txt",
+            repo_id=repo_id,
+            repo_type="dataset"
+        )
+        print("✅ Upload successful!")
+    except Exception as e:
+        print(f"❌ Upload failed: {e}")
+        return
+
+    print("=" * 60)
+    print("🎉 ALL DONE SUCCESSFULLY!")
+    print("=" * 60)
+
+
+# =========================================================
+# RUN SCRIPT
+# =========================================================
+if __name__ == "__main__":
+    main()Pattern: Bull Flag. Sharp rally from 80 to 95. Consolidation at 90-93.
 Breakout above 95. Target: 110.
 """
     
@@ -118,7 +167,6 @@ print(dataset['train']['training_texts.txt'])
 
 # Access pattern data
 patterns = pd.read_csv("market_patterns.csv")
-"""
 with open("README.md", "w", encoding="utf-8") as f:
     f.write(readme_text)
 print("✅ Created README.md")
