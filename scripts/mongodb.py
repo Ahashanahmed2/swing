@@ -1,4 +1,3 @@
-# mongodb.py
 from pymongo import MongoClient
 import pandas as pd
 import numpy as np
@@ -10,43 +9,30 @@ import requests
 from io import StringIO
 
 # =========================
-# STEP 1: DOWNLOAD FROM HUGGING FACE FIRST
+# STEP 1: LOAD EXISTING CSV
 # =========================
 
 print("="*60)
-print("STEP 1: Downloading master CSV from Hugging Face...")
+print("STEP 1: Loading existing CSV from local storage...")
 print("="*60)
 
 csv_path = './csv/mongodb.csv'
 os.makedirs('./csv', exist_ok=True)
 
-# Hugging Face URL
-hf_url = "https://huggingface.co/datasets/ahashanahmed/csv/resolve/main/mongodb.csv"
-
-try:
-    response = requests.get(hf_url, timeout=60)
-    if response.status_code == 200:
-        # Read CSV from HF
-        df_hf = pd.read_csv(StringIO(response.text), encoding='utf-8-sig')
-        df_hf['date'] = pd.to_datetime(df_hf['date'])
-        
-        print(f"✅ Downloaded from HF:")
-        print(f"   Total rows: {len(df_hf):,}")
-        print(f"   Unique symbols: {df_hf['symbol'].nunique():,}")
-        print(f"   Date range: {df_hf['date'].min().date()} to {df_hf['date'].max().date()}")
-        
-        # Save as base CSV
-        df_hf.to_csv(csv_path, index=False, encoding='utf-8-sig')
-        print(f"💾 Saved to {csv_path}")
-        
-    else:
-        print(f"⚠️ HF download failed: HTTP {response.status_code}")
-        df_hf = pd.DataFrame()
-        
-except Exception as e:
-    print(f"⚠️ HF download error: {e}")
-    df_hf = pd.DataFrame()
-    
+# Load existing CSV if it exists
+if os.path.exists(csv_path):
+    df_existing = pd.read_csv(csv_path, encoding='utf-8-sig')
+    df_existing['date'] = pd.to_datetime(df_existing['date'])
+    print(f"✅ Loaded existing CSV:")
+    print(f"   Total rows: {len(df_existing):,}")
+    print(f"   Unique symbols: {df_existing['symbol'].nunique():,}")
+    print(f"   Date range: {df_existing['date'].min().date()} to {df_existing['date'].max().date()}")
+    existing_last_date = df_existing['date'].max()
+    print(f"   Last date in CSV: {existing_last_date.date()}")
+else:
+    df_existing = pd.DataFrame()
+    existing_last_date = None
+    print("⚠️ No existing CSV found. Will create new from MongoDB.")
 
 # =========================
 # STEP 2: CHECK FOR NEW DATA IN MONGODB
@@ -59,32 +45,24 @@ load_dotenv()
 client = MongoClient(os.getenv("MONGO_URL"))
 collection = client["candleData"]["candledatas"]
 
-# Get latest date from HF data
-if not df_hf.empty:
-    hf_last_date = df_hf['date'].max()
-    print(f"📅 Last date in HF: {hf_last_date.date()}")
+# Query MongoDB for data after CSV's last date
+if existing_last_date:
+    query = {"date": {"$gt": existing_last_date.strftime('%Y-%m-%d')}}
+    print(f"🔍 Looking for data after {existing_last_date.date()}...")
 else:
-    hf_last_date = None
-    print("📅 No HF data available")
-
-# Query MongoDB for data after HF's last date
-if hf_last_date:
-    query = {"date": {"$gt": hf_last_date.strftime('%Y-%m-%d')}}
-else:
-    query = {}  # Get all if no HF data
-
-print(f"🔍 Looking for data after {hf_last_date.date() if hf_last_date else 'beginning'}...")
+    query = {}  # Get all if no existing CSV
+    print("🔍 No existing CSV, fetching all data from MongoDB...")
 
 data = list(collection.find(query, {'_id': 0, '__v': 0}))
 client.close()
 
 if not data:
-    print("✅ No new data found in MongoDB. Using HF data only.")
+    print("✅ No new data found in MongoDB. Using existing CSV only.")
     df_mongo = pd.DataFrame()
 else:
     print(f"✅ Found {len(data)} new rows in MongoDB")
     df_mongo = pd.DataFrame(data)
-    
+
     # Rename columns to match CSV format
     df_mongo.rename(columns={
         'open_price': 'open', 'close_price': 'close',
@@ -92,46 +70,46 @@ else:
         'vol': 'volume', 'val': 'value', 'trade_count': 'trades',
         'chg': 'change', 'mcap': 'marketCap'
     }, inplace=True)
-    
+
     df_mongo['date'] = pd.to_datetime(df_mongo['date'], errors='coerce')
-    
+
     # Clean numeric columns
     numeric_cols = ['open', 'close', 'high', 'low', 'volume', 'value', 'trades', 'change', 'marketCap']
     for col in numeric_cols:
         if col in df_mongo.columns:
             df_mongo[col] = pd.to_numeric(df_mongo[col], errors='coerce')
-    
+
     if 'collectedAt' in df_mongo.columns:
         df_mongo.drop(columns=['collectedAt'], inplace=True)
-    
+
     print(f"   New data range: {df_mongo['date'].min().date()} to {df_mongo['date'].max().date()}")
     print(f"   New symbols: {df_mongo['symbol'].nunique()}")
 
 # =========================
-# STEP 3: MERGE HF AND MONGODB DATA
+# STEP 3: MERGE EXISTING CSV AND MONGODB DATA
 # =========================
 print("\n" + "="*60)
 print("STEP 3: Merging data...")
 print("="*60)
 
-if df_hf.empty and df_mongo.empty:
+if df_existing.empty and df_mongo.empty:
     print("❌ No data available from either source!")
     sys.exit(1)
 
-elif df_hf.empty:
+elif df_existing.empty:
     df = df_mongo
     print("Using only MongoDB data")
-    
+
 elif df_mongo.empty:
-    df = df_hf
-    print("Using only HF data")
-    
+    df = df_existing
+    print("Using only existing CSV data (no new data found)")
+
 else:
     # Merge both
-    df = pd.concat([df_hf, df_mongo], ignore_index=True)
+    df = pd.concat([df_existing, df_mongo], ignore_index=True)
     df = df.drop_duplicates(['symbol', 'date'], keep='last')
     df = df.sort_values(['symbol', 'date'])
-    print(f"✅ Merged: {len(df_hf)} (HF) + {len(df_mongo)} (Mongo) = {len(df)} total rows")
+    print(f"✅ Merged: {len(df_existing)} (existing) + {len(df_mongo)} (Mongo) = {len(df)} total rows")
     print(f"   Unique symbols: {df['symbol'].nunique()}")
 
 # =========================
@@ -174,10 +152,10 @@ def apply_indicators(group):
         high=group['high'], low=group['low'], close=group['close'], window=14
     )
     group['atr'] = atr.average_true_range()
-    
+
     # EMA 200
     group['ema_200'] = ta.trend.EMAIndicator(close=group['close'], window=200).ema_indicator()
-    
+
     return group
 
 print("🔄 Calculating indicators by symbol...")
@@ -267,7 +245,7 @@ df = df.groupby('symbol', group_keys=False).apply(detect_patterns)
 # STEP 7: SAVE FINAL CSV
 # =========================
 print("\n" + "="*60)
-print("STEP 5: Saving final CSV...")
+print("STEP 7: Saving final CSV...")
 print("="*60)
 
 df.to_csv(csv_path, index=False, encoding='utf-8-sig')
@@ -282,7 +260,7 @@ print(f"   Date range: {df['date'].min().date()} to {df['date'].max().date()}")
 print("\n" + "="*60)
 print("SUMMARY")
 print("="*60)
-print(f"📥 HF Data: {len(df_hf):,} rows" if not df_hf.empty else "📥 HF Data: None")
+print(f"📥 Existing CSV: {len(df_existing):,} rows" if not df_existing.empty else "📥 Existing CSV: None")
 print(f"📥 MongoDB New Data: {len(df_mongo):,} rows" if not df_mongo.empty else "📥 MongoDB New Data: None")
 print(f"📊 Final CSV: {len(df):,} rows, {df['symbol'].nunique()} symbols")
 print("="*60)
