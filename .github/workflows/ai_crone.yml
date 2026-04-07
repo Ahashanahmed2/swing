@@ -47,24 +47,12 @@ jobs:
       run: |
         pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cpu
         python -c "import torch; print('PyTorch installed successfully')"
-        - name: Install dependencies
-  run: |
-    # Clear cache
-    pip cache purge
-    
-    # PyTorch
-    pip install torch==2.3.0 --index-url https://download.pytorch.org/whl/cpu
-    
-    # Transformers with force reinstall
-    pip install --force-reinstall transformers==4.40.0
-    
-    # Verify version
-    python -c "import transformers; print(f'Transformers {transformers.__version__} installed')"
-    
-    # Other libraries
-    pip install accelerate==0.33.0
-    pip install peft==0.10.0
-    pip install -r requirements.txt
+        pip install --force-reinstall transformers==4.40.0
+        # Verify version
+        python -c "import transformers; print(f'Transformers {transformers.__versioan__} installed')"
+        # Other libraries
+        pip install accelerate==0.33.0
+        pip install peft==0.10.0
 
         pip install -r requirements.txt
 
