@@ -1,5 +1,5 @@
 # scripts/llm_train.py
-# Advanced LLM Trainer with Proper Label Prediction, Confidence Learning, and PPO Integration
+# Advanced LLM Trainer with XGBoost + PPO Integration, Proper Label Prediction, Confidence Learning
 
 import os
 import torch
@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 import re
 import requests
+import joblib
 from datetime import datetime, timedelta
 from collections import defaultdict
 from sklearn.metrics import accuracy_score, f1_score
@@ -46,6 +47,11 @@ MISTAKES_FILE = "./csv/trading_mistakes.csv"
 CONFIDENCE_LOG = "./csv/llm_confidence_log.csv"
 HARD_EXAMPLES_FILE = "./csv/hard_examples.csv"
 
+# XGBoost and PPO paths
+XGBOOST_DIR = "./csv/xgboost"
+PPO_MODELS_DIR = "./csv/ppo_models"
+PPO_PER_SYMBOL_DIR = "./csv/ppo_models/per_symbol"
+
 # Schedule
 FINE_TUNE_INTERVAL = 7
 LAST_FINE_TUNE_FILE = "./last_finetune.txt"
@@ -79,15 +85,115 @@ SIGNAL_PATTERNS = {
 CONFIDENCE_PATTERN = r'(?:Confidence|Signal Strength):?\s*(\d+(?:\.\d+)?)%'
 
 
+# =========================================================
+# XGBOOST + PPO INTEGRATION (NEW)
+# =========================================================
+
+class XGBoostPPOIntegrator:
+    """Integrate XGBoost and PPO models with LLM training"""
+    
+    def __init__(self):
+        self.xgb_models = {}
+        self.xgb_metadata = None
+        self.ppo_models = {}
+        self.load_xgb_models()
+        self.load_ppo_metadata()
+    
+    def load_xgb_models(self):
+        """Load all XGBoost models from directory"""
+        if os.path.exists(XGBOOST_DIR):
+            for file in os.listdir(XGBOOST_DIR):
+                if file.endswith('.joblib'):
+                    symbol = file.replace('.joblib', '')
+                    try:
+                        self.xgb_models[symbol] = joblib.load(os.path.join(XGBOOST_DIR, file))
+                    except Exception as e:
+                        print(f"   ⚠️ Failed to load XGBoost for {symbol}: {e}")
+            print(f"   ✅ Loaded {len(self.xgb_models)} XGBoost models")
+        else:
+            print(f"   ⚠️ XGBoost directory not found: {XGBOOST_DIR}")
+    
+    def load_ppo_metadata(self):
+        """Load PPO model metadata"""
+        if os.path.exists(PPO_PER_SYMBOL_DIR):
+            for file in os.listdir(PPO_PER_SYMBOL_DIR):
+                if file.endswith('.zip') and file.startswith('ppo_'):
+                    symbol = file.replace('ppo_', '').replace('.zip', '')
+                    self.ppo_models[symbol] = os.path.join(PPO_PER_SYMBOL_DIR, file)
+            print(f"   ✅ Found {len(self.ppo_models)} PPO models")
+        else:
+            print(f"   ⚠️ PPO models directory not found: {PPO_PER_SYMBOL_DIR}")
+    
+    def get_xgb_prediction(self, symbol, features_dict=None):
+        """Get XGBoost prediction for a symbol"""
+        if symbol not in self.xgb_models:
+            return None
+        
+        try:
+            model = self.xgb_models[symbol]
+            if features_dict:
+                # If features provided, use them
+                import numpy as np
+                feature_order = ['close', 'volume', 'return_5d', 'return_10d', 
+                                'volatility', 'volatility_5d', 'volume_ratio',
+                                'rsi_oversold', 'rsi_overbought', 'dist_from_sr', 
+                                'sr_strength', 'is_bullish_div', 'div_strength',
+                                'dist_from_ema', 'above_ema']
+                features = []
+                for col in feature_order:
+                    val = features_dict.get(col, 0)
+                    if pd.isna(val):
+                        val = 0
+                    features.append(val)
+                features_array = np.array(features).reshape(1, -1)
+                prob = model.predict_proba(features_array)[0, 1]
+            else:
+                # Return default if no features
+                prob = 0.5
+            
+            return {
+                'prob_up': prob,
+                'signal': 'BUY' if prob > 0.55 else 'SELL' if prob < 0.45 else 'NEUTRAL',
+                'confidence': prob,
+                'source': 'XGBoost'
+            }
+        except Exception as e:
+            return None
+    
+    def get_ppo_signal(self, symbol):
+        """Check if PPO model exists for symbol (signal would come from actual PPO inference)"""
+        if symbol in self.ppo_models:
+            return {
+                'exists': True,
+                'model_path': self.ppo_models[symbol],
+                'source': 'PPO'
+            }
+        return None
+    
+    def get_enhanced_context(self, symbol, features_dict=None):
+        """Get combined XGBoost + PPO context for prompt enhancement"""
+        context = []
+        
+        # XGBoost prediction
+        xgb_pred = self.get_xgb_prediction(symbol, features_dict)
+        if xgb_pred:
+            context.append(f"XGBoost Analysis: {xgb_pred['signal']} with {xgb_pred['prob_up']:.0%} confidence")
+        
+        # PPO model availability
+        ppo_info = self.get_ppo_signal(symbol)
+        if ppo_info:
+            context.append(f"PPO Model: Available for {symbol} (trained on historical patterns)")
+        
+        return "\n".join(context) if context else None
+
+
 class WeightedTrainer(Trainer):
-    """Custom trainer with weighted loss - ✅ FIX 2: Production-grade weight handling"""
+    """Custom trainer with weighted loss - Production-grade weight handling"""
     
     def compute_loss(self, model, inputs, return_outputs=False):
-        # ✅ FIX 2: Get weights from inputs (safer)
         weights = inputs.get("weight", None)
         labels = inputs.get("labels")
         
-        # Remove weight from inputs before forward pass
         if weights is not None:
             inputs = {k: v for k, v in inputs.items() if k != "weight"}
         
@@ -95,7 +201,6 @@ class WeightedTrainer(Trainer):
         logits = outputs.get("logits")
         
         if weights is not None:
-            # Shift for causal LM
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             
@@ -110,7 +215,7 @@ class WeightedTrainer(Trainer):
 
 
 class StructuredDataset(torch.utils.data.Dataset):
-    """✅ NEW: Dataset with built-in weights for safe training"""
+    """Dataset with built-in weights for safe training"""
     
     def __init__(self, encodings, weights=None):
         self.input_ids = encodings['input_ids']
@@ -123,7 +228,7 @@ class StructuredDataset(torch.utils.data.Dataset):
             'input_ids': self.input_ids[idx],
             'attention_mask': self.attention_mask[idx],
             'labels': self.labels[idx],
-            'weight': self.weights[idx]  # ✅ FIX 2: Weight in dataset
+            'weight': self.weights[idx]
         }
     
     def __len__(self):
@@ -131,32 +236,28 @@ class StructuredDataset(torch.utils.data.Dataset):
 
 
 class LabelExtractor:
-    """✅ FIX 1: Extract labels from generated text"""
+    """Extract labels from generated text"""
     
     @staticmethod
     def extract_signal(text):
         """Extract trading signal from generated text"""
         text_lower = text.lower()
         
-        # Check for bullish signals
         bullish_keywords = ['buy', 'bullish', 'long', '✅ buy', 'signal: buy']
         for kw in bullish_keywords:
             if kw in text_lower:
-                return 1  # Bullish/Buy
+                return 1
         
-        # Check for bearish signals
         bearish_keywords = ['sell', 'bearish', 'short', '❌ sell', 'signal: sell']
         for kw in bearish_keywords:
             if kw in text_lower:
-                return 0  # Bearish/Sell
+                return 0
         
-        # Check for neutral
         neutral_keywords = ['hold', 'neutral', 'wait']
         for kw in neutral_keywords:
             if kw in text_lower:
-                return 2  # Neutral
+                return 2
         
-        # Try regex patterns
         for pattern in SIGNAL_PATTERNS.values():
             if re.search(pattern, text, re.IGNORECASE):
                 if 'buy' in pattern or 'bullish' in pattern:
@@ -166,7 +267,7 @@ class LabelExtractor:
                 else:
                     return 2
         
-        return 2  # Default neutral
+        return 2
     
     @staticmethod
     def extract_confidence(text):
@@ -182,7 +283,6 @@ class MetricsCalculator:
     
     @staticmethod
     def evaluate_model(model, tokenizer, eval_texts, true_labels):
-        """✅ FIX 1: Proper label-based evaluation"""
         model.eval()
         predictions = []
         confidences = []
@@ -199,17 +299,14 @@ class MetricsCalculator:
                 )
                 generated = tokenizer.decode(outputs[0], skip_special_tokens=True)
                 
-                # Extract label and confidence
                 pred = LabelExtractor.extract_signal(generated)
                 conf = LabelExtractor.extract_confidence(generated)
                 predictions.append(pred)
                 confidences.append(conf)
         
-        # Calculate metrics
         acc = accuracy_score(true_labels, predictions)
         f1 = f1_score(true_labels, predictions, average='weighted', zero_division=0)
         
-        # Calculate profit simulation
         profit = 0
         correct = 0
         for pred, true, conf in zip(predictions, true_labels, confidences):
@@ -233,12 +330,13 @@ class MetricsCalculator:
 
 
 class MistakeCollector:
-    """Mistake collector with confidence tracking"""
+    """Mistake collector with confidence tracking and XGBoost/PPO integration"""
     
-    def __init__(self):
+    def __init__(self, xgb_ppo_integrator=None):
         self.mistakes = []
         self.confidence_history = []
         self.hard_examples = []
+        self.xgb_ppo = xgb_ppo_integrator
         self.load_mistakes()
         self.load_hard_examples()
     
@@ -331,16 +429,23 @@ class MistakeCollector:
         }
     
     def get_mistake_dataset(self, limit=200):
-        """Generate training examples with structured labels"""
+        """Generate training examples with structured labels and XGBoost/PPO context"""
         mistake_texts = []
         signal_map = {1: 'BUY', 0: 'SELL', 2: 'HOLD'}
         
         for m in self.get_hard_examples(limit=limit):
+            # Get XGBoost/PPO context if available
+            enhanced_context = ""
+            if self.xgb_ppo:
+                xgb_pred = self.xgb_ppo.get_xgb_prediction(m.get('symbol', ''))
+                if xgb_pred:
+                    enhanced_context = f"\nXGBoost Signal: {xgb_pred['signal']} (Confidence: {xgb_pred['prob_up']:.0%})"
+            
             text = f"""
 ================================================================================
 Pattern: {m.get('pattern', 'Unknown')}
 Symbol: {m.get('symbol')}
-Technical Analysis: Pattern detected with {m.get('confidence', 0.5):.0%} confidence
+Technical Analysis: Pattern detected with {m.get('confidence', 0.5):.0%} confidence{enhanced_context}
 
 Analysis: {m.get('correct_explanation', 'Review the pattern rules')}
 
@@ -359,7 +464,9 @@ class AutoLLMTrainer:
         self.trained_symbols = self.load_trained_symbols()
         self.model = None
         self.tokenizer = None
-        self.mistake_collector = MistakeCollector()
+        # ✅ NEW: Initialize XGBoost/PPO integrator
+        self.xgb_ppo = XGBoostPPOIntegrator()
+        self.mistake_collector = MistakeCollector(self.xgb_ppo)
         self.old_training_texts = []
         
     def load_trained_symbols(self):
@@ -461,7 +568,7 @@ class AutoLLMTrainer:
             train_texts = new_texts
             self.old_training_texts = train_texts.copy()
         
-        # Add mistake examples
+        # Add mistake examples (now includes XGBoost/PPO context)
         mistake_texts = self.mistake_collector.get_mistake_dataset(limit=200)
         
         if mistake_texts:
@@ -544,12 +651,9 @@ class AutoLLMTrainer:
         print("   ✅ Loaded base model")
     
     def _post_load_setup(self):
-        """✅ FIX 3: Proper tokenizer and model config"""
+        """Proper tokenizer and model config"""
         self.tokenizer.pad_token = self.tokenizer.eos_token
-        # ✅ FIX 3: Set pad_token_id in model config
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
-        
-        # ✅ FIX 5: Enable gradient checkpointing for memory efficiency
         self.model.gradient_checkpointing_enable()
         
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -561,6 +665,8 @@ class AutoLLMTrainer:
         print(f"   Trainable parameters: {trainable_params:,}")
         print(f"   Device: {device}")
         print(f"   Gradient Checkpointing: Enabled")
+        print(f"   XGBoost Models Loaded: {len(self.xgb_ppo.xgb_models)}")
+        print(f"   PPO Models Found: {len(self.xgb_ppo.ppo_models)}")
     
     def train(self, mode="incremental"):
         print(f"\n{'='*60}")
@@ -581,7 +687,6 @@ class AutoLLMTrainer:
             return_tensors="pt"
         )
         
-        # ✅ FIX 2: Use StructuredDataset with built-in weights
         train_dataset = StructuredDataset(encodings, example_weights)
         
         # Chronological split for validation
@@ -615,6 +720,7 @@ class AutoLLMTrainer:
         print(f"   Learning Rate: {learning_rate}")
         print(f"   Batch Size: {batch_size}")
         print(f"   LoRA: {'Enabled' if LORA_AVAILABLE else 'Disabled'}")
+        print(f"   XGBoost Integration: Enabled ({len(self.xgb_ppo.xgb_models)} models)")
         print(f"   Gradient Checkpointing: Enabled")
         
         training_args = TrainingArguments(
@@ -661,12 +767,10 @@ class AutoLLMTrainer:
         trainer.train()
         print("\n✅ Training completed!")
         
-        # Evaluation
         print("\n📊 Running evaluation...")
         eval_results = trainer.evaluate()
         print(f"   Evaluation loss: {eval_results.get('eval_loss', 0):.4f}")
         
-        # Save model
         self.model.save_pretrained("./llm_model")
         self.tokenizer.save_pretrained("./llm_model")
         print("💾 Model saved locally")
@@ -736,12 +840,14 @@ class AutoLLMTrainer:
     
     def run(self):
         print("="*60)
-        print("🚀 AUTO LLM TRAINER (Pro Version v4.0)")
+        print("🚀 AUTO LLM TRAINER (Pro Version v5.0 - XGBoost + PPO Integrated)")
         print("="*60)
         print(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"📚 Batch size: {BATCH_SIZE}")
         print(f"🔄 Fine-tune interval: {FINE_TUNE_INTERVAL} days")
         print(f"🔧 LoRA: {'Enabled' if LORA_AVAILABLE else 'Disabled'}")
+        print(f"📊 XGBoost Models: {len(self.xgb_ppo.xgb_models)}")
+        print(f"📁 PPO Models: {len(self.xgb_ppo.ppo_models)}")
         print("="*60)
         
         confidence_stats = self.mistake_collector.get_confidence_stats()
@@ -773,12 +879,18 @@ class AutoLLMTrainer:
             with open(temp_file, 'w', encoding='utf-8') as f:
                 signal_map = {1: 'BUY', 0: 'SELL', 2: 'HOLD'}
                 for ex in high_priority_examples[:50]:
+                    # Get XGBoost context for retraining examples
+                    xgb_context = ""
+                    xgb_pred = self.xgb_ppo.get_xgb_prediction(ex.get('symbol', ''))
+                    if xgb_pred:
+                        xgb_context = f"\nXGBoost Analysis: {xgb_pred['signal']} ({xgb_pred['prob_up']:.0%} confidence)"
+                    
                     f.write(f"""
 ================================================================================
 Pattern: {ex.get('pattern', 'Unknown')}
 Symbol: {ex.get('symbol')}
 Previous Prediction: {signal_map.get(ex.get('prediction', 2), 'HOLD')}
-❌ This was WRONG
+❌ This was WRONG{xgb_context}
 
 ✅ CORRECT ANSWER: {signal_map.get(ex.get('actual', 2), 'HOLD')}
 Explanation: {ex.get('correct_explanation', 'Review the pattern rules')}
@@ -802,6 +914,8 @@ Confidence: {min(95, max(65, int(ex.get('confidence', 0.7) * 100 + 10)))}
         print("📊 FINAL STATUS")
         print("="*60)
         print(f"   Total trained symbols: {len(self.trained_symbols)}")
+        print(f"   XGBoost Models Available: {len(self.xgb_ppo.xgb_models)}")
+        print(f"   PPO Models Available: {len(self.xgb_ppo.ppo_models)}")
         print(f"   HF Repository: {HF_REPO_ID}")
         print("="*60)
 
