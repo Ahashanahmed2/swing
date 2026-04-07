@@ -52,7 +52,7 @@ scripts = [
     #"scripts/upload_csv.py",
     #"scripts/dayliMassage.py",
     #"scripts/email_reports.py",
-    #"scripts/generate_pattern_training_data_complete.py",
+    "scripts/generate_pattern_training_data_complete.py",
     "scripts/llm_train.py",
     
 ]
