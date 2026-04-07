@@ -1,5 +1,6 @@
 # scripts/llm_train.py
 # Advanced LLM Trainer with XGBoost + PPO Integration, Proper Label Prediction, Confidence Learning
+# Fully Updated with Auto Batch Management, Incremental Learning, and Mistake Learning
 
 import os
 import torch
@@ -37,10 +38,15 @@ warnings.filterwarnings('ignore')
 # CONFIGURATION
 # =========================================================
 
-BATCH_SIZE = 5
+# Batch configuration for incremental training
+BATCH_SIZE = 5  # Number of symbols per training batch
+TOTAL_BATCHES = 4  # Will be auto-calculated
+MAX_SYMBOLS_PER_BATCH = 100  # Maximum symbols to train in one batch
+
 HF_REPO_ID = "ahashanahmed/llm-stock-model"
 BASE_MODEL = "distilgpt2"
 TRACKING_FILE = "./trained_symbols.json"
+BATCH_TRACKING_FILE = "./batch_tracking.json"
 TRAINING_DATA_PATH = "./csv/training_texts.txt"
 MARKET_DATA_PATH = "./csv/mongodb.csv"
 MISTAKES_FILE = "./csv/trading_mistakes.csv"
@@ -53,8 +59,10 @@ PPO_MODELS_DIR = "./csv/ppo_models"
 PPO_PER_SYMBOL_DIR = "./csv/ppo_models/per_symbol"
 
 # Schedule
-FINE_TUNE_INTERVAL = 7
+FINE_TUNE_INTERVAL = 7  # Days between fine-tuning
 LAST_FINE_TUNE_FILE = "./last_finetune.txt"
+LAST_CONSOLIDATE_FILE = "./last_consolidate.txt"
+CONSOLIDATE_INTERVAL = 30  # Days between full consolidation
 
 # Learning parameters
 MAX_OLD_EXAMPLES = 1000
@@ -65,14 +73,16 @@ MAX_GRAD_NORM = 1.0
 EARLY_STOPPING_PATIENCE = 3
 VALIDATION_SPLIT_RATIO = 0.1
 
-# ✅ FIX 1: Correct LoRA config for distilgpt2
+# Training mode flags
+FORCE_RETRAIN = False  # Set to True to retrain all symbols
+
+# LoRA config for distilgpt2
 LORA_CONFIG = {
     'r': 8,
     'lora_alpha': 32,
     'target_modules': ['c_attn'],
     'lora_dropout': 0.1,
     'bias': 'none',
-    
 }
 
 # Label patterns for extraction
@@ -86,7 +96,105 @@ CONFIDENCE_PATTERN = r'(?:Confidence|Signal Strength):?\s*(\d+(?:\.\d+)?)%'
 
 
 # =========================================================
-# XGBOOST + PPO INTEGRATION (NEW)
+# BATCH MANAGER (NEW)
+# =========================================================
+
+class BatchManager:
+    """Manages incremental training batches and auto batch growth"""
+    
+    def __init__(self):
+        self.batch_tracking = self.load_batch_tracking()
+        self.current_batch_index = self.batch_tracking.get('current_batch', 0)
+        self.completed_batches = self.batch_tracking.get('completed_batches', [])
+        self.batch_symbols = self.batch_tracking.get('batch_symbols', {})
+        
+    def load_batch_tracking(self):
+        if os.path.exists(BATCH_TRACKING_FILE):
+            try:
+                with open(BATCH_TRACKING_FILE, 'r') as f:
+                    return json.load(f)
+            except:
+                pass
+        return {
+            'current_batch': 0,
+            'completed_batches': [],
+            'batch_symbols': {},
+            'total_symbols_trained': 0,
+            'last_batch_date': None
+        }
+    
+    def save_batch_tracking(self):
+        with open(BATCH_TRACKING_FILE, 'w') as f:
+            json.dump(self.batch_tracking, f, indent=2)
+    
+    def get_next_batch_symbols(self, all_symbols, trained_symbols, batch_size=BATCH_SIZE):
+        """Get next batch of symbols to train (auto batch creation)"""
+        untrained = [s for s in all_symbols if s not in trained_symbols]
+        
+        if not untrained:
+            return []
+        
+        # Get next batch
+        next_batch = untrained[:batch_size]
+        
+        # Store batch info
+        batch_num = self.current_batch_index + 1
+        self.batch_symbols[str(batch_num)] = next_batch
+        self.batch_tracking['batch_symbols'] = self.batch_symbols
+        
+        return next_batch, batch_num
+    
+    def mark_batch_completed(self, batch_num, symbols):
+        """Mark a batch as completed"""
+        if batch_num not in self.completed_batches:
+            self.completed_batches.append(batch_num)
+            self.current_batch_index = batch_num
+            self.batch_tracking['current_batch'] = batch_num
+            self.batch_tracking['completed_batches'] = self.completed_batches
+            self.batch_tracking['total_symbols_trained'] += len(symbols)
+            self.batch_tracking['last_batch_date'] = datetime.now().isoformat()
+            self.save_batch_tracking()
+    
+    def get_batch_for_weekly_finetune(self):
+        """Get which batch to fine-tune this week (rotation)"""
+        if not self.completed_batches:
+            return None
+        
+        # Get current week number
+        week_num = (datetime.now() - datetime.strptime(self.batch_tracking.get('last_batch_date', '2024-01-01'), '%Y-%m-%dT%H:%M:%S.%f').date()).days // 7
+        
+        # Rotate through completed batches
+        batch_index = week_num % len(self.completed_batches)
+        batch_num = self.completed_batches[batch_index]
+        
+        return batch_num, self.batch_symbols.get(str(batch_num), [])
+    
+    def should_consolidate(self):
+        """Check if it's time for full consolidation"""
+        last_consolidate = self.batch_tracking.get('last_consolidate', None)
+        if not last_consolidate:
+            return True
+        
+        last_date = datetime.fromisoformat(last_consolidate)
+        days_since = (datetime.now() - last_date).days
+        return days_since >= CONSOLIDATE_INTERVAL
+    
+    def mark_consolidated(self):
+        """Mark that consolidation has been performed"""
+        self.batch_tracking['last_consolidate'] = datetime.now().isoformat()
+        self.save_batch_tracking()
+    
+    def get_all_batch_symbols(self):
+        """Get all symbols from all completed batches"""
+        all_symbols = []
+        for batch_num in self.completed_batches:
+            symbols = self.batch_symbols.get(str(batch_num), [])
+            all_symbols.extend(symbols)
+        return all_symbols
+
+
+# =========================================================
+# XGBOOST + PPO INTEGRATION
 # =========================================================
 
 class XGBoostPPOIntegrator:
@@ -132,7 +240,6 @@ class XGBoostPPOIntegrator:
         try:
             model = self.xgb_models[symbol]
             if features_dict:
-                # If features provided, use them
                 import numpy as np
                 feature_order = ['close', 'volume', 'return_5d', 'return_10d', 
                                 'volatility', 'volatility_5d', 'volume_ratio',
@@ -148,7 +255,6 @@ class XGBoostPPOIntegrator:
                 features_array = np.array(features).reshape(1, -1)
                 prob = model.predict_proba(features_array)[0, 1]
             else:
-                # Return default if no features
                 prob = 0.5
             
             return {
@@ -161,7 +267,7 @@ class XGBoostPPOIntegrator:
             return None
     
     def get_ppo_signal(self, symbol):
-        """Check if PPO model exists for symbol (signal would come from actual PPO inference)"""
+        """Check if PPO model exists for symbol"""
         if symbol in self.ppo_models:
             return {
                 'exists': True,
@@ -169,26 +275,10 @@ class XGBoostPPOIntegrator:
                 'source': 'PPO'
             }
         return None
-    
-    def get_enhanced_context(self, symbol, features_dict=None):
-        """Get combined XGBoost + PPO context for prompt enhancement"""
-        context = []
-        
-        # XGBoost prediction
-        xgb_pred = self.get_xgb_prediction(symbol, features_dict)
-        if xgb_pred:
-            context.append(f"XGBoost Analysis: {xgb_pred['signal']} with {xgb_pred['prob_up']:.0%} confidence")
-        
-        # PPO model availability
-        ppo_info = self.get_ppo_signal(symbol)
-        if ppo_info:
-            context.append(f"PPO Model: Available for {symbol} (trained on historical patterns)")
-        
-        return "\n".join(context) if context else None
 
 
 class WeightedTrainer(Trainer):
-    """Custom trainer with weighted loss - Production-grade weight handling"""
+    """Custom trainer with weighted loss"""
     
     def compute_loss(self, model, inputs, return_outputs=False):
         weights = inputs.get("weight", None)
@@ -240,7 +330,6 @@ class LabelExtractor:
     
     @staticmethod
     def extract_signal(text):
-        """Extract trading signal from generated text"""
         text_lower = text.lower()
         
         bullish_keywords = ['buy', 'bullish', 'long', '✅ buy', 'signal: buy']
@@ -271,7 +360,6 @@ class LabelExtractor:
     
     @staticmethod
     def extract_confidence(text):
-        """Extract confidence score from generated text"""
         match = re.search(CONFIDENCE_PATTERN, text)
         if match:
             return float(match.group(1)) / 100.0
@@ -429,12 +517,10 @@ class MistakeCollector:
         }
     
     def get_mistake_dataset(self, limit=200):
-        """Generate training examples with structured labels and XGBoost/PPO context"""
         mistake_texts = []
         signal_map = {1: 'BUY', 0: 'SELL', 2: 'HOLD'}
         
         for m in self.get_hard_examples(limit=limit):
-            # Get XGBoost/PPO context if available
             enhanced_context = ""
             if self.xgb_ppo:
                 xgb_pred = self.xgb_ppo.get_xgb_prediction(m.get('symbol', ''))
@@ -464,9 +550,9 @@ class AutoLLMTrainer:
         self.trained_symbols = self.load_trained_symbols()
         self.model = None
         self.tokenizer = None
-        # ✅ NEW: Initialize XGBoost/PPO integrator
         self.xgb_ppo = XGBoostPPOIntegrator()
         self.mistake_collector = MistakeCollector(self.xgb_ppo)
+        self.batch_manager = BatchManager()
         self.old_training_texts = []
         
     def load_trained_symbols(self):
@@ -558,7 +644,6 @@ class AutoLLMTrainer:
         new_texts = [ex.strip() for ex in raw_examples if len(ex.strip()) > 100]
         print(f"📊 New examples: {len(new_texts)}")
         
-        # Replay buffer
         if self.old_training_texts:
             self.old_training_texts.extend(new_texts)
             self.old_training_texts = self.old_training_texts[-MAX_OLD_EXAMPLES:]
@@ -568,7 +653,6 @@ class AutoLLMTrainer:
             train_texts = new_texts
             self.old_training_texts = train_texts.copy()
         
-        # Add mistake examples (now includes XGBoost/PPO context)
         mistake_texts = self.mistake_collector.get_mistake_dataset(limit=200)
         
         if mistake_texts:
@@ -577,14 +661,12 @@ class AutoLLMTrainer:
             train_texts = train_texts[:normal_count] + mistake_texts[:mistake_count]
             print(f"   Data mix: {normal_count} normal + {mistake_count} mistakes")
         
-        # Curriculum sorting
         easy_texts = [t for t in train_texts if self.classify_example_difficulty(t) == 'easy']
         medium_texts = [t for t in train_texts if self.classify_example_difficulty(t) == 'medium']
         hard_texts = [t for t in train_texts if self.classify_example_difficulty(t) == 'hard']
         train_texts = easy_texts + medium_texts + hard_texts
         print(f"   Curriculum: {len(easy_texts)} easy, {len(medium_texts)} medium, {len(hard_texts)} hard")
         
-        # Weighted learning
         example_weights = np.ones(len(train_texts))
         for i, text in enumerate(train_texts):
             difficulty = self.classify_example_difficulty(text)
@@ -601,7 +683,6 @@ class AutoLLMTrainer:
         print("\n🏗️ Loading model...")
         token = os.getenv("hf_token")
         
-        # Try to load from Hugging Face
         if token:
             try:
                 print(f"   Attempting to load from HF: {HF_REPO_ID}")
@@ -617,7 +698,6 @@ class AutoLLMTrainer:
             except Exception as e:
                 print(f"   No existing model on HF: {e}")
         
-        # Try local model
         if os.path.exists("./llm_model"):
             try:
                 print("   Loading local model...")
@@ -633,7 +713,6 @@ class AutoLLMTrainer:
             except:
                 pass
         
-        # Start from base model
         print(f"   Loading base model: {BASE_MODEL}")
         self.model = AutoModelForCausalLM.from_pretrained(
             BASE_MODEL, 
@@ -651,10 +730,8 @@ class AutoLLMTrainer:
         print("   ✅ Loaded base model")
     
     def _post_load_setup(self):
-        """Proper tokenizer and model config"""
         self.tokenizer.pad_token = self.tokenizer.eos_token
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
-        #self.model.gradient_checkpointing_enable()
         
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(device)
@@ -664,13 +741,14 @@ class AutoLLMTrainer:
         print(f"   Total parameters: {total_params:,}")
         print(f"   Trainable parameters: {trainable_params:,}")
         print(f"   Device: {device}")
-        print(f"   Gradient Checkpointing: Enabled")
         print(f"   XGBoost Models Loaded: {len(self.xgb_ppo.xgb_models)}")
         print(f"   PPO Models Found: {len(self.xgb_ppo.ppo_models)}")
     
-    def train(self, mode="incremental"):
+    def train(self, mode="incremental", symbols_batch=None):
         print(f"\n{'='*60}")
         print(f"🎯 TRAINING MODE: {mode.upper()}")
+        if symbols_batch:
+            print(f"📚 Symbols in this batch: {len(symbols_batch)}")
         print(f"{'='*60}")
         
         train_texts, example_weights = self.load_training_data_with_curriculum()
@@ -678,7 +756,6 @@ class AutoLLMTrainer:
             print("❌ No training data found!")
             return False
         
-        # Tokenize
         encodings = self.tokenizer(
             train_texts, 
             truncation=True, 
@@ -689,7 +766,6 @@ class AutoLLMTrainer:
         
         train_dataset = StructuredDataset(encodings, example_weights)
         
-        # Chronological split for validation
         dataset_size = len(train_dataset)
         val_size = max(1, int(dataset_size * VALIDATION_SPLIT_RATIO))
         train_size = dataset_size - val_size
@@ -701,17 +777,20 @@ class AutoLLMTrainer:
         eval_subset = torch.utils.data.Subset(train_dataset, val_indices)
         print(f"   Dataset split: {train_size} train, {val_size} validation (chronological)")
         
-        # Training config
         if mode == "first_train":
-            num_epochs = 5
+            num_epochs = 2
             learning_rate = 5e-5
-            batch_size = 2
+            batch_size = 4
         elif mode == "incremental":
-            num_epochs = 5
+            num_epochs = 2
             learning_rate = 3e-5
-            batch_size = 2
+            batch_size = 4
+        elif mode == "weekly_finetune":
+            num_epochs = 1
+            learning_rate = 1e-5
+            batch_size = 4
         else:
-            num_epochs = 3
+            num_epochs = 2
             learning_rate = 1e-5
             batch_size = 4
         
@@ -721,7 +800,6 @@ class AutoLLMTrainer:
         print(f"   Batch Size: {batch_size}")
         print(f"   LoRA: {'Enabled' if LORA_AVAILABLE else 'Disabled'}")
         print(f"   XGBoost Integration: Enabled ({len(self.xgb_ppo.xgb_models)} models)")
-        print(f"   Gradient Checkpointing: Enabled")
         
         training_args = TrainingArguments(
             output_dir="./llm_model",
@@ -813,23 +891,12 @@ class AutoLLMTrainer:
         except Exception as e:
             print(f"⚠️ Upload failed: {e}")
     
-    def should_fine_tune(self):
-        if not os.path.exists(LAST_FINE_TUNE_FILE):
-            return True
-        with open(LAST_FINE_TUNE_FILE, 'r') as f:
-            last_date = datetime.fromisoformat(f.read().strip())
-        return (datetime.now() - last_date).days >= FINE_TUNE_INTERVAL
-    
-    def update_last_fine_tune(self):
-        with open(LAST_FINE_TUNE_FILE, 'w') as f:
-            f.write(datetime.now().isoformat())
-    
     def generate_training_data_for_symbols(self, symbols):
         print(f"\n📝 Generating training data for {len(symbols)} symbols...")
         import subprocess
         result = subprocess.run(
             ["python", "scripts/generate_pattern_training_data_complete.py", 
-             "--symbols", ",".join(symbols[:BATCH_SIZE])], 
+             "--symbols", ",".join(symbols)], 
             capture_output=True, text=True
         )
         if result.returncode != 0:
@@ -840,7 +907,7 @@ class AutoLLMTrainer:
     
     def run(self):
         print("="*60)
-        print("🚀 AUTO LLM TRAINER (Pro Version v5.0 - XGBoost + PPO Integrated)")
+        print("🚀 AUTO LLM TRAINER (Pro Version v6.0 - Auto Batch Management)")
         print("="*60)
         print(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"📚 Batch size: {BATCH_SIZE}")
@@ -855,23 +922,56 @@ class AutoLLMTrainer:
         print(f"   Average confidence: {confidence_stats['avg_confidence']:.2%}")
         print(f"   High priority mistakes: {confidence_stats['high_priority_count']}")
         
+        all_symbols = self.get_all_symbols_from_mongodb()
         new_symbols = self.get_new_symbols()
+        
         self.load_model_with_lora()
         
+        # STEP 1: Train new symbols in batches
         if new_symbols:
             print(f"\n📚 Found {len(new_symbols)} new symbols to train")
+            
+            # Process in batches
             for i in range(0, len(new_symbols), BATCH_SIZE):
                 batch = new_symbols[i:i+BATCH_SIZE]
-                print(f"\n📦 Processing batch {i//BATCH_SIZE + 1}: {len(batch)} symbols")
+                batch_num = i // BATCH_SIZE + 1
+                print(f"\n📦 Processing batch {batch_num}: {len(batch)} symbols")
+                
                 if self.generate_training_data_for_symbols(batch):
-                    mode = "first_train" if len(self.trained_symbols) == 0 else "incremental"
-                    if self.train(mode):
+                    # Determine training mode
+                    if len(self.trained_symbols) == 0:
+                        mode = "first_train"
+                    else:
+                        mode = "incremental"
+                    
+                    if self.train(mode=mode, symbols_batch=batch):
                         self.trained_symbols.extend(batch)
                         self.save_trained_symbols()
+                        self.batch_manager.mark_batch_completed(batch_num, batch)
+                        print(f"✅ Batch {batch_num} complete! Total trained: {len(self.trained_symbols)}")
         else:
             print("\n✅ No new symbols found!")
         
-        # Hard example retraining
+        # STEP 2: Weekly fine-tune (rotate through batches)
+        weekly_batch_num, weekly_symbols = self.batch_manager.get_batch_for_weekly_finetune()
+        
+        if weekly_symbols and len(weekly_symbols) > 0:
+            print(f"\n🔄 Weekly fine-tuning on Batch {weekly_batch_num} ({len(weekly_symbols)} symbols)")
+            if self.generate_training_data_for_symbols(weekly_symbols):
+                self.train(mode="weekly_finetune", symbols_batch=weekly_symbols)
+                print("✅ Weekly fine-tune complete!")
+        
+        # STEP 3: Monthly consolidation
+        if self.batch_manager.should_consolidate():
+            print(f"\n🔄 Monthly consolidation - Training all symbols together")
+            all_trained_symbols = self.batch_manager.get_all_batch_symbols()
+            if all_trained_symbols:
+                if self.generate_training_data_for_symbols(all_trained_symbols):
+                    self.train(mode="consolidate", symbols_batch=all_trained_symbols)
+                    self.batch_manager.mark_consolidated()
+                    print("✅ Monthly consolidation complete!")
+        
+        # STEP 4: Hard example retraining
         high_priority_examples = self.mistake_collector.get_hard_examples(limit=100, priority_only=True)
         if high_priority_examples:
             print(f"\n🔥 Found {len(high_priority_examples)} high priority mistakes for retraining!")
@@ -879,7 +979,6 @@ class AutoLLMTrainer:
             with open(temp_file, 'w', encoding='utf-8') as f:
                 signal_map = {1: 'BUY', 0: 'SELL', 2: 'HOLD'}
                 for ex in high_priority_examples[:50]:
-                    # Get XGBoost context for retraining examples
                     xgb_context = ""
                     xgb_pred = self.xgb_ppo.get_xgb_prediction(ex.get('symbol', ''))
                     if xgb_pred:
@@ -899,21 +998,15 @@ Signal: {signal_map.get(ex.get('actual', 2), 'HOLD')}
 Confidence: {min(95, max(65, int(ex.get('confidence', 0.7) * 100 + 10)))}
 ================================================================================
 """)
-            self.train(mode="fine_tune")
+            self.train(mode="mistake_learning")
             if os.path.exists(temp_file):
                 os.remove(temp_file)
-        
-        # Weekly fine-tune
-        if self.should_fine_tune():
-            print(f"\n🔄 Time for weekly fine-tuning!")
-            self.load_model_with_lora()
-            if self.train(mode="fine_tune"):
-                self.update_last_fine_tune()
         
         print("\n" + "="*60)
         print("📊 FINAL STATUS")
         print("="*60)
         print(f"   Total trained symbols: {len(self.trained_symbols)}")
+        print(f"   Completed batches: {len(self.batch_manager.completed_batches)}")
         print(f"   XGBoost Models Available: {len(self.xgb_ppo.xgb_models)}")
         print(f"   PPO Models Available: {len(self.xgb_ppo.ppo_models)}")
         print(f"   HF Repository: {HF_REPO_ID}")
