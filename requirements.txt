@@ -18,4 +18,4 @@ transformers==4.35.0
 numpy
 datasets>=2.12.0
 accelerate==0.24.0
-peft
+peft>=0.7.0
