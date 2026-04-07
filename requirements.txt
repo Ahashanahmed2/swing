@@ -14,3 +14,4 @@ numba
 gymnasium 
 stable-baselines3 
 shimmy
+transformers
