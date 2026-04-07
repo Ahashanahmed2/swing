@@ -72,7 +72,7 @@ LORA_CONFIG = {
     'target_modules': ['c_attn'],
     'lora_dropout': 0.1,
     'bias': 'none',
-    'task_type': TaskType.CAUSAL_LM
+    
 }
 
 # Label patterns for extraction
