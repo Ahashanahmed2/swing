@@ -16,8 +16,8 @@ from datetime import datetime, timedelta
 # =========================================================
 
 # Symbol limits
-MAX_SYMBOLS =  80       # Process all 380 symbols
-MAX_PER_SYMBOL = 40      # 10 examples per symbol (balanced)
+MAX_SYMBOLS =  100       # Process all 380 symbols
+MAX_PER_SYMBOL = 60      # 10 examples per symbol (balanced)
 
 
 # Time control
