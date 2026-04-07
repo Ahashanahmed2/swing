@@ -178,4 +178,4 @@ else:
     print("⚠️ Some files failed to upload. Please check the errors above.")
 
 if__name__ == "__main__":
-main()
+   main()
