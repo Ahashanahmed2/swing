@@ -654,7 +654,7 @@ class AutoLLMTrainer:
         """Proper tokenizer and model config"""
         self.tokenizer.pad_token = self.tokenizer.eos_token
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
-        self.model.gradient_checkpointing_enable()
+        #self.model.gradient_checkpointing_enable()
         
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(device)
