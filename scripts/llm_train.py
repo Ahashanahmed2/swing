@@ -44,40 +44,22 @@ def main():
         return
     
     # =========================================================
-    # 2. ডেটাসেট লোড করুন
-    # =========================================================
-    print("\n📂 Loading dataset from Hugging Face...")
+    ✅ লোকাল ফাইল থেকে ডাটা লোড করুন
+     csv_path = "./csv/training_texts.txt"
     
-    try:
-        # আপনার ডেটাসেট থেকে training_texts.txt লোড করুন
-        dataset = load_dataset("ahashanahmed/LLM_model_stock", split="train")
-        
-        # টেক্সট ফাইলটি পড়ুন
-        text_data = ""
-        for item in dataset:
-            if 'training_texts.txt' in item:
-                text_data += item['training_texts.txt']
-            elif 'text' in item:
-                text_data += item['text']
-        
-        if not text_data:
-            # লোকাল ফাইল থেকে পড়ুন
-            with open("training_texts.txt", "r", encoding="utf-8") as f:
-                text_data = f.read()
-        
-        print(f"✅ Loaded {len(text_data)} characters of training data")
-        
-    except Exception as e:
-        print(f"⚠️ Could not load from HF: {e}")
-        print("   Using local training_texts.txt...")
-        
-        if os.path.exists("training_texts.txt"):
-            with open("training_texts.txt", "r", encoding="utf-8") as f:
-                text_data = f.read()
-            print(f"✅ Loaded {len(text_data)} characters from local file")
-        else:
-            print("❌ No training data found!")
-            return
+    if not os.path.exists(csv_path):
+        print(f"❌ Training file not found: {csv_path}")
+        print("   Please run generate_pattern_training_data_complete.py first")
+        return
+    
+    with open(csv_path, "r", encoding="utf-8") as f:
+        text_data = f.read()
+    
+    print(f"✅ Loaded {len(text_data)} characters from {csv_path}")
+    
+    # টেক্সটকে লাইনে ভাগ করুন
+    texts = [t.strip() for t in text_data.split('================================================================================') if len(t.strip()) > 100]
+    print(f"📊 Training examples: {len(texts)}")
     
     # =========================================================
     # 3. টোকেনাইজার সেটআপ করুন
@@ -91,7 +73,7 @@ def main():
     tokenizer.pad_token = tokenizer.eos_token
     
     # ডাটা টোকেনাইজ করুন
-    encodings = tokenizer(text_data, truncation=True, padding=True, max_length=512, return_tensors="pt")
+    encodings = tokenizer(texts,truncation=True, padding=True, max_length=512, return_tensors="pt")
     
     print(f"✅ Tokenizer ready (vocab size: {tokenizer.vocab_size})")
     
@@ -119,7 +101,7 @@ def main():
     # =========================================================
     # 5. ডাটা প্রস্তুত করুন
     # =========================================================
-    print("\n📊 Preparing dataset...")
+    printextstr📊 Preparing dataset...")
     
     # টেক্সটকে ট্রেনিং ডাটাতে রূপান্তর
     block_size = 128
