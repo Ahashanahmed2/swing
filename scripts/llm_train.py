@@ -703,7 +703,7 @@ class AutoLLMTrainer:
         
         # Training config
         if mode == "first_train":
-            num_epochs = 3
+            num_epochs = 5
             learning_rate = 5e-5
             batch_size = 2
         elif mode == "incremental":
