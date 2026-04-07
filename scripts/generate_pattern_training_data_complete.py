@@ -732,6 +732,13 @@ Consolidation expected. Wait for clearer signal.
 
 def generate_elliott_wave_data(symbol, df_row, pattern_type, config, indicator_values, metrics, variation_idx=0):
     """Elliott Wave প্যাটার্নের জন্য ডাটা তৈরি (Variations সহ)"""
+    # ✅ সুরক্ষা: যদি category Elliott না হয়, তাহলে অন্য ফাংশন কল করুন
+    if config.get('category') not in ['Motive Wave', 'Corrective Wave', 'Wave Relationships', 'Combination']:
+        # এটি Elliott Wave প্যাটার্ন না, কমপ্লিট প্যাটার্ন ফাংশন ব্যবহার করুন
+        return generate_complete_pattern_data(symbol, df_row, pattern_type, config, indicator_values, metrics, variation_idx)
+    
+    # ... বাকি কোড unchanged ...
+    
     current_price = df_row['close']
     current_date = df_row['date']
     
@@ -1431,8 +1438,9 @@ def main():
                         sequence_used, pattern_high, pattern_low, use_row['close']
                     )
                     
-                    elliott_keywords = ['Wave', 'Diagonal', 'Zigzag', 'Flat', 'Triangle', 'Extension']
-                    is_elliott = any(k in pattern_name for k in elliott_keywords)
+                    ✅ নতুন কোড (সঠিকভাবে শুধু Elliott Wave প্যাটার্ন চিনবে)
+                    elliott_pattern_names = list(get_elliott_wave_patterns().keys())
+                    is_elliott = pattern_name in elliott_pattern_names
                     
                     if is_elliott:
                         text = generate_elliott_wave_data(symbol, use_row, pattern_name, config, indicator_values, metrics, var_idx)
