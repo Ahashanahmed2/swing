@@ -37,7 +37,7 @@ warnings.filterwarnings('ignore')
 # CONFIGURATION
 # =========================================================
 
-BATCH_SIZE = 20
+BATCH_SIZE = 10
 HF_REPO_ID = "ahashanahmed/llm-stock-model"
 BASE_MODEL = "distilgpt2"
 TRACKING_FILE = "./trained_symbols.json"
