@@ -40,7 +40,7 @@ warnings.filterwarnings('ignore')
 
 # Batch configuration for incremental training
 BATCH_SIZE = 60  # Number of symbols per training batch
-TOTAL_BATCHES = 4  # Will be auto-calculated
+TOTAL_BATCHES = "auto"  # Will be auto-calculated
 MAX_SYMBOLS_PER_BATCH = 100  # Maximum symbols to train in one batch
 
 HF_REPO_ID = "ahashanahmed/llm-stock-model"
