@@ -39,7 +39,7 @@ warnings.filterwarnings('ignore')
 # =========================================================
 
 # Batch configuration for incremental training
-BATCH_SIZE = 5  # Number of symbols per training batch
+BATCH_SIZE = 60  # Number of symbols per training batch
 TOTAL_BATCHES = 4  # Will be auto-calculated
 MAX_SYMBOLS_PER_BATCH = 100  # Maximum symbols to train in one batch
 
