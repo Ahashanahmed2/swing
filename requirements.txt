@@ -17,3 +17,4 @@ shimmy
 transformers==4.35.0
 numpy
 datasets>=2.12.0
+accelerate
