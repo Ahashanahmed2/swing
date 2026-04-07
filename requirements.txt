@@ -2,17 +2,16 @@ pymongo
 ta
 dotenv
 requests
-#torch==2.3.0+cpu -f https://download.pytorch.org/whl/torch_stable.html
 fpdf2>=2.7.0
-#huggingface_hub==0.20.0
+huggingface_hub>=0.20.0
 schedule>=1.2.0
 pandas>=2.0.0
-xgboost 
+xgboost
 scikit-learn
 joblib>=1.3.0
 numba
-gymnasium 
-stable-baselines3 
+gymnasium
+stable-baselines3
 shimmy
 transformers
 numpy
