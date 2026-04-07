@@ -177,5 +177,5 @@ if success_count == len(files_to_upload):
 else:
     print("⚠️ Some files failed to upload. Please check the errors above.")
 
-if name == "main":
+if__name__ == "__main__":
 main()
