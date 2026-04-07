@@ -708,7 +708,7 @@ def main():
     output_file = os.path.join(output_dir, "training_texts.txt")
 
     with open(output_file, "w", encoding="utf-8") as f:
-    f.write("\n".join(training_data))
+        f.write("\n".join(training_data))
     
     print(f"\n📊 Training data saved: {output_file}")
     print(f"   Total examples: {len(training_data)}")
