@@ -855,65 +855,7 @@ Additional Confirmation:
     return training_text
 
 
-def get_elliott_wave_patterns():
-    """Elliott Wave সম্পূর্ণ প্যাটার্ন লাইব্রেরি"""
-    return {
-        'Impulse Wave': {
-            'category': 'Motive Wave', 'structure': '5-3-5-3-5', 'bias': 'Bullish',
-            'degree': 'Primary/Intermediate/Minor', 'fib_ratios': 'Wave 2: 0.382-0.618, Wave 3: 1.618-2.618',
-            'specifications': 'Wave 1: Initial move, volume confirmation needed\nWave 2: Shallow/deep retracement\nWave 3: Strongest wave, extension potential\nWave 4: Simple/complex correction\nWave 5: Divergence check',
-            'wave_position': '3 (Extension possible)', 'wave_count': '1-2-3-4-5',
-            'expected_target': 'Wave 3 = 1.618 x Wave 1', 'invalidation': 'Below Wave 1 start'
-        },
-        'Leading Diagonal': {
-            'category': 'Motive Wave', 'structure': '5-3-5-3-5', 'bias': 'Bullish/Bearish',
-            'degree': 'Primary/Intermediate', 'fib_ratios': 'Wave 3: 1.0-1.618',
-            'specifications': 'Occurs in Wave 1 or A position\nEach leg has 5-3-5-3-5 internal\nOverlapping waves\nNarrowing wedge shape',
-            'wave_position': 'Wave 1 or A', 'wave_count': '1-2-3-4-5 (overlapping)',
-            'expected_target': 'Breakout direction', 'invalidation': 'Structural violation'
-        },
-        'Ending Diagonal': {
-            'category': 'Motive Wave', 'structure': '3-3-3-3-3', 'bias': 'Bullish/Bearish',
-            'degree': 'Intermediate/Minor', 'fib_ratios': 'Wave 3: 1.0-1.382',
-            'specifications': 'Occurs in Wave 5 or C position\nEach leg has 3-3-3-3-3 internal\nOverlapping waves\nVolume spike at termination',
-            'wave_position': 'Wave 5 or C', 'wave_count': '1-2-3-4-5 (overlapping)',
-            'expected_target': 'Terminal move', 'invalidation': 'Pattern expansion'
-        },
-        '3rd Wave Extension': {
-            'category': 'Motive Wave', 'structure': '5-3-5-3-5 (extended)', 'bias': 'Bullish',
-            'degree': 'Primary/Intermediate', 'fib_ratios': 'Wave 3 = 1.618-2.618 x Wave 1',
-            'specifications': 'Most common extension\nStrongest momentum\nHighest volume\nWave 3 subdivides extensively',
-            'wave_position': 'Wave 3 (Extended)', 'wave_count': '1-2-[3-3-3-3-3]-4-5',
-            'expected_target': '1.618 x Wave 1', 'invalidation': 'Below Wave 1 high'
-        },
-        '5th Wave Extension': {
-            'category': 'Motive Wave', 'structure': '5-3-5-3-5 (extended)', 'bias': 'Bullish/Bearish',
-            'degree': 'Intermediate/Minor', 'fib_ratios': 'Wave 5 = 0.618-1.618 x Wave 1',
-            'specifications': 'Terminal move\nDivergence with oscillators\nLower volume than Wave 3\nEnd of trend signal',
-            'wave_position': 'Wave 5 (Terminal)', 'wave_count': '1-2-3-4-[5-5-5-5-5]',
-            'expected_target': '0.618-1.618 x Wave 1', 'invalidation': 'Divergence confirmed'
-        },
-        'Single Zigzag (5-3-5)': {
-            'category': 'Corrective Wave', 'structure': '5-3-5', 'bias': 'Neutral',
-            'degree': 'Any', 'fib_ratios': 'Wave B = 0.382-0.786, Wave C = 0.618-1.618',
-            'specifications': 'Sharp correction\nWave A has 5 sub-waves\nWave B has 3 sub-waves\nWave C has 5 sub-waves',
-            'wave_position': 'ABC', 'wave_count': 'A-B-C (5-3-5)',
-            'expected_target': 'Wave C = Wave A', 'invalidation': 'Complex structure'
-        },
-        'Double Zigzag (W-X-Y)': {
-            'category': 'Corrective Wave', 'structure': '5-3-5-3-5', 'bias': 'Neutral',
-            'degree': 'Intermediate/Minor', 'fib_ratios': 'Wave Y = 0.618-1.618 x Wave W',
-            'specifications': 'Two zigzags connected by X wave\nDeeper/longer correction\nWave X is 3 waves',
-            'wave_position': 'W-X-Y', 'wave_count': 'W-X-Y (5-3-5-3-5)',
-            'expected_target': 'Wave Y = Wave W', 'invalidation': 'Triple zigzag'
-        },
-        'Regular Flat (3-3-5)': {
-            'category': 'Corrective Wave', 'structure': '3-3-5', 'bias': 'Neutral',
-            'degree': 'Any', 'fib_ratios': 'Wave B = 0.90-1.05, Wave C = 1.0 x Wave A',
-            'specifications': 'Sideways correction\nWave A has 3 sub-waves\nWave B retraces 90-105% of A',
-            'wave_position': 'A-B-C', 'wave_count': 'A-B-C (3-3-5)',
-            'expected_target': 'Wave C = Wave A', 'invalidation': 'B > 1.05 x A'
-        },
+
 def get_elliott_wave_patterns():
     """Elliott Wave সম্পূর্ণ প্যাটার্ন লাইব্রেরি - ✅ FIX: Added missing keys"""
     return {
