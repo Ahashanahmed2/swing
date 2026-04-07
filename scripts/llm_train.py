@@ -45,7 +45,7 @@ def main():
     
     # =========================================================
     ✅ লোকাল ফাইল থেকে ডাটা লোড করুন
-     csv_path = "./csv/training_texts.txt"
+    csv_path = "./csv/training_texts.txt"
     
     if not os.path.exists(csv_path):
         print(f"❌ Training file not found: {csv_path}")
