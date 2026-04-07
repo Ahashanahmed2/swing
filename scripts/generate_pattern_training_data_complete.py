@@ -16,11 +16,9 @@ from datetime import datetime, timedelta
 # =========================================================
 
 # Symbol limits
-MAX_SYMBOLS = 380        # Process all 380 symbols
-MAX_PER_SYMBOL = 10      # 10 examples per symbol (balanced)
+MAX_SYMBOLS =  60       # Process all 380 symbols
+MAX_PER_SYMBOL = 12      # 10 examples per symbol (balanced)
 
-# Batch configuration (match with llm_train.py)
-BATCH_SIZE = 5           # Same as llm_train.py BATCH_SIZE
 
 # Time control
 MAX_EXAMPLES_PER_RUN = 5000  # Max examples to generate (prevents timeout)
@@ -1301,7 +1299,7 @@ def main():
         print(f"📊 Market regime for {symbol}: {market_regime}")
         
         row_count = 0
-        MAX_PAR_SYMBOL = 10
+        MAX_PAR_SYMBOL = 12
 
         # ✅ FIX 8: Better step logic
         step = 1 if len(symbol_data) < 500 else 2
