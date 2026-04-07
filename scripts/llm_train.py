@@ -3,6 +3,13 @@
 
 import os
 import torch
+
+import sys
+print("Python executable:", sys.executable)
+try:
+    print("PyTorch version:", torch.__version__)
+except ImportError as e:
+    print("PyTorch import failed:", e)
 import pandas as pd
 from datasets import load_dataset
 from transformers import (
