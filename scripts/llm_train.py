@@ -592,8 +592,8 @@ class AutoLLMTrainer:
             else:
                 print(f"   ⚠️ Agentic Loop running without XGBoost models")
         
-                os.makedirs(AGENTIC_LOOP_LOG_DIR, exist_ok=True)
-                print("="*60 + "\n")
+            os.makedirs(AGENTIC_LOOP_LOG_DIR, exist_ok=True)
+            print("="*60 + "\n")
         
         except Exception as e:
             print(f"   ❌ Agentic Loop init failed: {e}")
@@ -614,7 +614,7 @@ class AutoLLMTrainer:
             success = simulated_pnl > 0
         
             for symbol in symbols:
-                self_result = {
+                trade_result = {
                     'symbol': symbol,
                     'pnl': simulated_pnl,
                     'success': success,
