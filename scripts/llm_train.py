@@ -998,7 +998,7 @@ class AutoLLMTrainer:
         
         print("\n📤 Uploading to Hugging Face...")
         try:
-            login(token=print)
+            login(token=token)
             create_repo(repo_id=HF_REPO_ID, repo_type="model", exist_ok=True)
             
             with open(TRACKING_FILE, 'w') as f:
@@ -1145,15 +1145,8 @@ Confidence: {min(95, max(65, int(ex.get('confidence', 0.7) * 100 + 10)))}
         print(f"   PPO Models Available: {len(self.xgb_ppo.ppo_models)}")
         print(f"   HF Repository: {HF_REPO_ID}")
         print("="*60)
-        print("\n" + "="*60)
-        print("📊 FINAL STATUS")
-        print("="*60)
-        print(f"   Total trained symbols: {len(self.trained_symbols)}")
-        print(f"   Completed batches: {len(self.batch_manager.completed_batches)}")
-        print(f"   XGBoost Models Available: {len(self.xgb_ppo.xgb_models)}")
-        print(f"   PPO Models Available: {len(self.xgb_ppo.ppo_models)}")
-        print(f"   HF Repository: {HF_REPO_ID}")
-        print("="*60)
+        
+    
     
         # ========== AGENTIC LOOP FINALIZE ==========
         self._finalize_agentic_loop()
