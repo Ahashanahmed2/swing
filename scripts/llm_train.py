@@ -819,9 +819,9 @@ class AutoLLMTrainer:
             fp16=False,
             report_to="none",
             max_grad_norm=MAX_GRAD_NORM,
-            load_best_model_at_end=True,
-            metric_for_best_model="eval_loss",
-            greater_is_better=False
+            load_best_model_at_end=False,
+            #metric_for_best_model="eval_loss",
+            #greater_is_better=False
         )
         
         data_collator = DataCollatorForLanguageModeling(
