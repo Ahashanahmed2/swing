@@ -1,7 +1,9 @@
+# v4 - FINAL (UPDATED PATHS)
 # scripts/llm_train.py
-# Advanced LLM Trainer with XGBoost + PPO Integration, Proper Label Prediction, Confidence Learning
-# Fully Updated with Auto Batch Management, Incremental Learning, and Mistake Learning
-# ULTIMATE 70+ HOURS TRAINING CONFIGURATION
+# Advanced LLM Trainer with XGBoost + PPO Integration
+# ✅ CHECKPOINT + FINAL MODEL SAVE TO HF DATASET REPO: ahashanahmed/csv/
+# ✅ NO DOWNLOAD FROM HF - ALL LOCAL DATA FROM ./csv/
+# ✅ ALL LOCAL PATHS UPDATED TO ./csv/
 
 import os
 import torch
@@ -23,7 +25,7 @@ from transformers import (
     DataCollatorForLanguageModeling,
     EarlyStoppingCallback
 )
-from huggingface_hub import login, create_repo, upload_folder, list_repo_files
+from huggingface_hub import login, create_repo, upload_folder, upload_file, HfApi
 
 # =========================================================
 # AGENTIC LOOP INTEGRATION
@@ -50,14 +52,21 @@ warnings.filterwarnings('ignore')
 # =========================================================
 
 # Batch configuration for incremental training
-BATCH_SIZE = 1  # ✅ 1 → 40 (ছোট ব্যাচ, ধীরে ট্রেনিং)
+BATCH_SIZE = 1
 TOTAL_BATCHES = "auto"
-MAX_SYMBOLS_PER_BATCH = 1 # 1-> 40
+MAX_SYMBOLS_PER_BATCH = 1
 
-HF_REPO_ID = "ahashanahmed/llm-stock-model"
+# ✅ SINGLE REPOSITORY CONFIGURATION
+HF_DATASET_REPO = "ahashanahmed/csv"  # ✅ সবকিছু এখানে সেভ হবে (চেকপয়েন্ট + ফাইনাল মডেল)
 BASE_MODEL = "distilgpt2"
-TRACKING_FILE = "./trained_symbols.json"
-BATCH_TRACKING_FILE = "./batch_tracking.json"
+
+# ✅ ALL LOCAL PATHS UPDATED TO ./csv/
+TRACKING_FILE = "./csv/trained_symbols.json"
+BATCH_TRACKING_FILE = "./csv/batch_tracking.json"
+LAST_FINE_TUNE_FILE = "./csv/last_finetune.txt"
+LAST_CONSOLIDATE_FILE = "./csv/last_consolidate.txt"
+
+# ✅ LOCAL DATA PATHS ONLY - NO HF DOWNLOAD
 TRAINING_DATA_PATH = "./csv/training_texts.txt"
 MARKET_DATA_PATH = "./csv/mongodb.csv"
 MISTAKES_FILE = "./csv/trading_mistakes.csv"
@@ -69,19 +78,20 @@ XGBOOST_DIR = "./csv/xgboost"
 PPO_MODELS_DIR = "./csv/ppo_models"
 PPO_PER_SYMBOL_DIR = "./csv/ppo_models/per_symbol"
 
+# LLM Model local directory
+LLM_MODEL_DIR = "./csv/llm_model"
+
 # Schedule
 FINE_TUNE_INTERVAL = 7
-LAST_FINE_TUNE_FILE = "./last_finetune.txt"
-LAST_CONSOLIDATE_FILE = "./last_consolidate.txt"
 CONSOLIDATE_INTERVAL = 30
 
 # Learning parameters - 70+ HOURS OPTIMIZED
-MAX_OLD_EXAMPLES = 5000                 # ✅ 1000 → 5000 (বড় রিপ্লে বাফার)
-HARD_EXAMPLE_THRESHOLD = 0.20           # ✅ 0.3 → 0.20 (আরও কঠিন চিহ্নিত)
-HIGH_PRIORITY_THRESHOLD = 0.30          # ✅ 0.4 → 0.30
+MAX_OLD_EXAMPLES = 5000
+HARD_EXAMPLE_THRESHOLD = 0.20
+HIGH_PRIORITY_THRESHOLD = 0.30
 WEIGHTED_LOSS_ENABLED = True
-MAX_GRAD_NORM = 0.7                     # ✅ 1.0 → 0.7 (টাইটার ক্লিপিং)
-EARLY_STOPPING_PATIENCE = 8             # ✅ 3 → 8
+MAX_GRAD_NORM = 0.7
+EARLY_STOPPING_PATIENCE = 8
 VALIDATION_SPLIT_RATIO = 0.1
 
 # Training mode flags
@@ -89,10 +99,10 @@ FORCE_RETRAIN = False
 
 # LoRA config for distilgpt2 - 70+ HOURS OPTIMIZED
 LORA_CONFIG = {
-    'r': 32,                            # ✅ 8 → 32 (Elliott/SMC জন্য ক্যাপাসিটি)
-    'lora_alpha': 64,                   # ✅ 32 → 64
-    'target_modules': ['c_attn', 'c_proj', 'c_fc'],  # ✅ সম্পূর্ণ কভারেজ
-    'lora_dropout': 0.15,               # ✅ 0.1 → 0.15 (ওভারফিটিং রোধ)
+    'r': 32,
+    'lora_alpha': 64,
+    'target_modules': ['c_attn', 'c_proj', 'c_fc'],
+    'lora_dropout': 0.15,
     'bias': 'none',
 }
 
@@ -113,23 +123,23 @@ AGENTIC_LOOP_LOG_DIR = "./csv/agentic_loop_logs"
 # 70+ HOURS EPOCH CONFIGURATION
 # =========================================================
 EPOCHS_CONFIG = {
-    "first_train": 15,          # ✅ 2 → 15 (~20 ঘন্টা)
-    "incremental": 10,          # ✅ 2 → 10 (~14 ঘน্টা)
-    "weekly_finetune": 5,       # ✅ 1 → 5 (~7 ঘন্টা)
-    "consolidate": 12,          # ✅ 2 → 12 (~16 ঘন্টা)
-    "mistake_learning": 8,      # ✅ 2 → 8 (~11 ঘন্টা)
+    "first_train": 15,
+    "incremental": 10,
+    "weekly_finetune": 5,
+    "consolidate": 12,
+    "mistake_learning": 8,
 }
 
 LR_CONFIG = {
-    "first_train": 1.5e-5,      # ✅ 5e-5 → 1.5e-5 (খুব ধীরে)
-    "incremental": 1e-5,        # ✅ 3e-5 → 1e-5
-    "weekly_finetune": 8e-6,    # ✅ 1e-5 → 8e-6
-    "consolidate": 8e-6,        # ✅ 1e-5 → 8e-6
+    "first_train": 1.5e-5,
+    "incremental": 1e-5,
+    "weekly_finetune": 8e-6,
+    "consolidate": 8e-6,
     "mistake_learning": 1.5e-5,
 }
 
 BATCH_SIZE_CONFIG = {
-    "first_train": 1,           # ✅ 4 → 1 (CPU সেফ, ধীরে)
+    "first_train": 1,
     "incremental": 1,
     "weekly_finetune": 1,
     "consolidate": 1,
@@ -137,7 +147,7 @@ BATCH_SIZE_CONFIG = {
 }
 
 GRAD_ACCUM_CONFIG = {
-    "first_train": 16,          # ✅ 4 → 16 (কার্যকর ব্যাচ = 16)
+    "first_train": 16,
     "incremental": 16,
     "weekly_finetune": 8,
     "consolidate": 16,
@@ -146,18 +156,118 @@ GRAD_ACCUM_CONFIG = {
 
 
 # =========================================================
-# BATCH MANAGER (UNCHANGED)
+# HF UPLOADER (CHECKPOINT + FINAL MODEL)
+# =========================================================
+
+class HFUploader:
+    """Upload checkpoints and final model to HF Dataset Repository"""
+    
+    def __init__(self, repo_id=HF_DATASET_REPO):
+        self.repo_id = repo_id
+        self.api = None
+        self._init_api()
+    
+    def _init_api(self):
+        token = os.getenv("hf_token")
+        if token:
+            try:
+                login(token=token)
+                self.api = HfApi(token=token)
+                create_repo(repo_id=self.repo_id, repo_type="dataset", exist_ok=True)
+                print(f"   ✅ HF Dataset Repo ready: {self.repo_id}")
+            except Exception as e:
+                print(f"   ⚠️ HF API init failed: {e}")
+                self.api = None
+    
+    def upload_checkpoint(self, checkpoint_path, step_num):
+        """Upload a checkpoint folder to HF Dataset repo"""
+        if self.api is None:
+            print("   ⚠️ HF API not available, skipping checkpoint upload")
+            return False
+        
+        try:
+            repo_path = f"checkpoints/checkpoint-{step_num}"
+            
+            self.api.upload_folder(
+                folder_path=checkpoint_path,
+                path_in_repo=repo_path,
+                repo_id=self.repo_id,
+                repo_type="dataset",
+                commit_message=f"Checkpoint {step_num} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            )
+            print(f"   📤 Checkpoint {step_num} uploaded to {self.repo_id}/checkpoints/")
+            return True
+        except Exception as e:
+            print(f"   ⚠️ Checkpoint upload failed: {e}")
+            return False
+    
+    def upload_final_model(self, model_path, mode):
+        """Upload final model to HF Dataset repo"""
+        if self.api is None:
+            print("   ⚠️ HF API not available, skipping final model upload")
+            return False
+        
+        try:
+            repo_path = f"final_model/{mode}"
+            
+            self.api.upload_folder(
+                folder_path=model_path,
+                path_in_repo=repo_path,
+                repo_id=self.repo_id,
+                repo_type="dataset",
+                commit_message=f"Final Model ({mode}) - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            )
+            print(f"   📤 Final model uploaded to {self.repo_id}/final_model/{mode}/")
+            return True
+        except Exception as e:
+            print(f"   ⚠️ Final model upload failed: {e}")
+            return False
+    
+    def upload_tracking_files(self):
+        """Upload tracking files to HF Dataset repo"""
+        if self.api is None:
+            return
+        
+        try:
+            # trained_symbols.json
+            if os.path.exists(TRACKING_FILE):
+                self.api.upload_file(
+                    path_or_fileobj=TRACKING_FILE,
+                    path_in_repo="trained_symbols.json",
+                    repo_id=self.repo_id,
+                    repo_type="dataset",
+                    commit_message=f"Update trained symbols - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                )
+                print(f"   📤 trained_symbols.json uploaded to {self.repo_id}")
+            
+            # batch_tracking.json
+            if os.path.exists(BATCH_TRACKING_FILE):
+                self.api.upload_file(
+                    path_or_fileobj=BATCH_TRACKING_FILE,
+                    path_in_repo="batch_tracking.json",
+                    repo_id=self.repo_id,
+                    repo_type="dataset",
+                    commit_message=f"Update batch tracking - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                )
+                print(f"   📤 batch_tracking.json uploaded to {self.repo_id}")
+                
+        except Exception as e:
+            print(f"   ⚠️ Tracking upload failed: {e}")
+
+
+# =========================================================
+# BATCH MANAGER
 # =========================================================
 
 class BatchManager:
     """Manages incremental training batches and auto batch growth"""
-    
+
     def __init__(self):
         self.batch_tracking = self.load_batch_tracking()
         self.current_batch_index = self.batch_tracking.get('current_batch', 0)
         self.completed_batches = self.batch_tracking.get('completed_batches', [])
         self.batch_symbols = self.batch_tracking.get('batch_symbols', {})
-        
+
     def load_batch_tracking(self):
         if os.path.exists(BATCH_TRACKING_FILE):
             try:
@@ -172,11 +282,13 @@ class BatchManager:
             'total_symbols_trained': 0,
             'last_batch_date': None
         }
-    
+
     def save_batch_tracking(self):
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(BATCH_TRACKING_FILE), exist_ok=True)
         with open(BATCH_TRACKING_FILE, 'w') as f:
             json.dump(self.batch_tracking, f, indent=2)
-    
+
     def get_next_batch_symbols(self, all_symbols, trained_symbols, batch_size=BATCH_SIZE):
         untrained = [s for s in all_symbols if s not in trained_symbols]
         if not untrained:
@@ -186,7 +298,7 @@ class BatchManager:
         self.batch_symbols[str(batch_num)] = next_batch
         self.batch_tracking['batch_symbols'] = self.batch_symbols
         return next_batch, batch_num
-    
+
     def mark_batch_completed(self, batch_num, symbols):
         if batch_num not in self.completed_batches:
             self.completed_batches.append(batch_num)
@@ -196,27 +308,35 @@ class BatchManager:
             self.batch_tracking['total_symbols_trained'] += len(symbols)
             self.batch_tracking['last_batch_date'] = datetime.now().isoformat()
             self.save_batch_tracking()
-    
+
     def get_batch_for_weekly_finetune(self):
         if not self.completed_batches:
-            return None
-        week_num = (datetime.now() - datetime.strptime(self.batch_tracking.get('last_batch_date', '2024-01-01'), '%Y-%m-%dT%H:%M:%S.%f').date()).days // 7
+            return None, []
+        last_date_str = self.batch_tracking.get('last_batch_date', '2024-01-01T00:00:00.000000')
+        try:
+            last_date = datetime.fromisoformat(last_date_str)
+        except:
+            last_date = datetime(2024, 1, 1)
+        week_num = (datetime.now() - last_date).days // 7
         batch_index = week_num % len(self.completed_batches)
         batch_num = self.completed_batches[batch_index]
         return batch_num, self.batch_symbols.get(str(batch_num), [])
-    
+
     def should_consolidate(self):
         last_consolidate = self.batch_tracking.get('last_consolidate', None)
         if not last_consolidate:
             return True
-        last_date = datetime.fromisoformat(last_consolidate)
+        try:
+            last_date = datetime.fromisoformat(last_consolidate)
+        except:
+            return True
         days_since = (datetime.now() - last_date).days
         return days_since >= CONSOLIDATE_INTERVAL
-    
+
     def mark_consolidated(self):
         self.batch_tracking['last_consolidate'] = datetime.now().isoformat()
         self.save_batch_tracking()
-    
+
     def get_all_batch_symbols(self):
         all_symbols = []
         for batch_num in self.completed_batches:
@@ -226,19 +346,19 @@ class BatchManager:
 
 
 # =========================================================
-# XGBOOST + PPO INTEGRATION (UNCHANGED)
+# XGBOOST + PPO INTEGRATION
 # =========================================================
 
 class XGBoostPPOIntegrator:
     """Integrate XGBoost and PPO models with LLM training"""
-    
+
     def __init__(self):
         self.xgb_models = {}
         self.xgb_metadata = None
         self.ppo_models = {}
         self.load_xgb_models()
         self.load_ppo_metadata()
-    
+
     def load_xgb_models(self):
         if os.path.exists(XGBOOST_DIR):
             for file in os.listdir(XGBOOST_DIR):
@@ -251,7 +371,7 @@ class XGBoostPPOIntegrator:
             print(f"   ✅ Loaded {len(self.xgb_models)} XGBoost models")
         else:
             print(f"   ⚠️ XGBoost directory not found: {XGBOOST_DIR}")
-    
+
     def load_ppo_metadata(self):
         if os.path.exists(PPO_PER_SYMBOL_DIR):
             for file in os.listdir(PPO_PER_SYMBOL_DIR):
@@ -261,7 +381,7 @@ class XGBoostPPOIntegrator:
             print(f"   ✅ Found {len(self.ppo_models)} PPO models")
         else:
             print(f"   ⚠️ PPO models directory not found: {PPO_PER_SYMBOL_DIR}")
-    
+
     def get_xgb_prediction(self, symbol, features_dict=None):
         if symbol not in self.xgb_models:
             return None
@@ -292,7 +412,7 @@ class XGBoostPPOIntegrator:
             }
         except Exception as e:
             return None
-    
+
     def get_ppo_signal(self, symbol):
         if symbol in self.ppo_models:
             return {'exists': True, 'model_path': self.ppo_models[symbol], 'source': 'PPO'}
@@ -301,40 +421,40 @@ class XGBoostPPOIntegrator:
 
 class WeightedTrainer(Trainer):
     """Custom trainer with weighted loss"""
-    
+
     def compute_loss(self, model, inputs, return_outputs=False):
         weights = inputs.get("weight", None)
         labels = inputs.get("labels")
-        
+
         if weights is not None:
             inputs = {k: v for k, v in inputs.items() if k != "weight"}
-        
+
         outputs = model(**inputs)
         logits = outputs.get("logits")
-        
+
         if weights is not None:
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
-            
+
             loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
             loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
             loss = loss.view(shift_logits.shape[0], -1).mean(dim=1)
             loss = (loss * weights.to(loss.device)).mean()
         else:
             loss = super().compute_loss(model, inputs, return_outputs)
-        
+
         return (loss, outputs) if return_outputs else loss
 
 
 class StructuredDataset(torch.utils.data.Dataset):
     """Dataset with built-in weights for safe training"""
-    
+
     def __init__(self, encodings, weights=None):
         self.input_ids = encodings['input_ids']
         self.attention_mask = encodings['attention_mask']
         self.labels = encodings['input_ids']
         self.weights = torch.tensor(weights) if weights is not None else torch.ones(len(self.input_ids))
-    
+
     def __getitem__(self, idx):
         return {
             'input_ids': self.input_ids[idx],
@@ -342,14 +462,14 @@ class StructuredDataset(torch.utils.data.Dataset):
             'labels': self.labels[idx],
             'weight': self.weights[idx]
         }
-    
+
     def __len__(self):
         return len(self.input_ids)
 
 
 class LabelExtractor:
     """Extract labels from generated text"""
-    
+
     @staticmethod
     def extract_signal(text):
         text_lower = text.lower()
@@ -374,7 +494,7 @@ class LabelExtractor:
                 else:
                     return 2
         return 2
-    
+
     @staticmethod
     def extract_confidence(text):
         match = re.search(CONFIDENCE_PATTERN, text)
@@ -383,50 +503,9 @@ class LabelExtractor:
         return 0.5
 
 
-class MetricsCalculator:
-    """Evaluation metrics with proper label extraction"""
-    
-    @staticmethod
-    def evaluate_model(model, tokenizer, eval_texts, true_labels):
-        model.eval()
-        predictions = []
-        confidences = []
-        with torch.no_grad():
-            for text in eval_texts:
-                inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
-                outputs = model.generate(
-                    inputs.input_ids, max_new_tokens=50, temperature=0.7,
-                    do_sample=True, pad_token_id=tokenizer.eos_token_id
-                )
-                generated = tokenizer.decode(outputs[0], skip_special_tokens=True)
-                pred = LabelExtractor.extract_signal(generated)
-                conf = LabelExtractor.extract_confidence(generated)
-                predictions.append(pred)
-                confidences.append(conf)
-        acc = accuracy_score(true_labels, predictions)
-        f1 = f1_score(true_labels, predictions, average='weighted', zero_division=0)
-        profit = 0
-        correct = 0
-        for pred, true, conf in zip(predictions, true_labels, confidences):
-            if conf < 0.5:
-                continue
-            if pred == true:
-                correct += 1
-                profit += 0.02 if true == 1 else 0.01
-            else:
-                profit -= 0.01 if pred == 1 else 0.005
-        win_rate = correct / len([c for c in confidences if c >= 0.5]) if any(c >= 0.5 for c in confidences) else 0
-        print(f"\n📊 MODEL EVALUATION:")
-        print(f"   Accuracy: {acc:.2%}")
-        print(f"   F1 Score: {f1:.3f}")
-        print(f"   Simulated Profit: {profit:.2%}")
-        print(f"   Win Rate: {win_rate:.2%}")
-        return {'accuracy': acc, 'f1_score': f1, 'profit': profit, 'win_rate': win_rate}
-
-
 class MistakeCollector:
     """Mistake collector with confidence tracking and XGBoost/PPO integration"""
-    
+
     def __init__(self, xgb_ppo_integrator=None):
         self.mistakes = []
         self.confidence_history = []
@@ -434,7 +513,7 @@ class MistakeCollector:
         self.xgb_ppo = xgb_ppo_integrator
         self.load_mistakes()
         self.load_hard_examples()
-    
+
     def load_mistakes(self):
         if os.path.exists(MISTAKES_FILE):
             try:
@@ -443,7 +522,7 @@ class MistakeCollector:
                 print(f"   ✅ Loaded {len(self.mistakes)} past mistakes")
             except Exception as e:
                 print(f"   ⚠️ Could not load mistakes: {e}")
-    
+
     def load_hard_examples(self):
         if os.path.exists(HARD_EXAMPLES_FILE):
             try:
@@ -451,7 +530,7 @@ class MistakeCollector:
                 self.hard_examples = df.to_dict('records')
             except:
                 pass
-    
+
     def add_mistake(self, symbol, prediction, actual, confidence, pattern, market_regime=""):
         mistake = {
             'symbol': symbol, 'timestamp': datetime.now().isoformat(),
@@ -470,7 +549,7 @@ class MistakeCollector:
             'timestamp': datetime.now(), 'symbol': symbol, 'confidence': confidence,
             'is_mistake': prediction != actual, 'is_high_priority': mistake['is_high_priority']
         })
-    
+
     def _generate_explanation(self, pattern, actual, market_regime):
         explanations = {
             1: f"This pattern indicates upward price movement. Entry at breakout, stop loss below support.",
@@ -478,21 +557,21 @@ class MistakeCollector:
             2: f"This pattern indicates consolidation. Wait for breakout confirmation."
         }
         return explanations.get(actual, f"The correct signal is {actual}")
-    
+
     def save_mistakes(self):
         try:
             df = pd.DataFrame(self.mistakes)
             df.to_csv(MISTAKES_FILE, index=False)
         except:
             pass
-    
+
     def save_hard_examples(self):
         try:
             df = pd.DataFrame(self.hard_examples)
             df.to_csv(HARD_EXAMPLES_FILE, index=False)
         except:
             pass
-    
+
     def get_hard_examples(self, limit=100, priority_only=False):
         if priority_only:
             examples = [m for m in self.hard_examples if m.get('is_high_priority', False)]
@@ -500,18 +579,18 @@ class MistakeCollector:
             examples = self.hard_examples.copy()
         examples.sort(key=lambda x: x.get('confidence', 1.0))
         return examples[:limit]
-    
+
     def get_confidence_stats(self):
         if not self.confidence_history:
             return {'avg_confidence': 0, 'mistake_rate': 0, 'high_priority_count': 0}
         df = pd.DataFrame(self.confidence_history)
         return {
-            'avg_confidence': df['confidence'].mean(),
-            'mistake_rate': (df['prediction'] != df['actual']).mean() if 'actual' in df.columns else 0,
-            'low_confidence_count': len(df[df['confidence'] < HARD_EXAMPLE_THRESHOLD]),
+            'avg_confidence': df['confidence'].mean() if 'confidence' in df.columns else 0,
+            'mistake_rate': (df['is_mistake'].mean() * 100) if 'is_mistake' in df.columns else 0,
+            'low_confidence_count': len(df[df['confidence'] < HARD_EXAMPLE_THRESHOLD]) if 'confidence' in df.columns else 0,
             'high_priority_count': len(df[df.get('is_high_priority', False)])
         }
-    
+
     def get_mistake_dataset(self, limit=200):
         mistake_texts = []
         signal_map = {1: 'BUY', 0: 'SELL', 2: 'HOLD'}
@@ -545,6 +624,11 @@ Timeframe: Short-term
 
 class AutoLLMTrainer:
     def __init__(self):
+        # Ensure csv directory exists
+        os.makedirs("./csv", exist_ok=True)
+        os.makedirs(LLM_MODEL_DIR, exist_ok=True)
+        os.makedirs(AGENTIC_LOOP_LOG_DIR, exist_ok=True)
+        
         self.trained_symbols = self.load_trained_symbols()
         self.model = None
         self.tokenizer = None
@@ -552,6 +636,8 @@ class AutoLLMTrainer:
         self.mistake_collector = MistakeCollector(self.xgb_ppo)
         self.batch_manager = BatchManager()
         self.old_training_texts = []
+        self.hf_uploader = HFUploader()  # ✅ HF আপলোডার (চেকপয়েন্ট + ফাইনাল মডেল)
+        
         # ========== AGENTIC LOOP INIT ==========
         self.agentic_loop = None
         if AGENTIC_LOOP_AVAILABLE:
@@ -559,7 +645,7 @@ class AutoLLMTrainer:
         # =======================================
 
     # =========================================================
-    # AGENTIC LOOP METHODS (UNCHANGED)
+    # AGENTIC LOOP METHODS
     # =========================================================
 
     def _init_agentic_loop(self):
@@ -636,9 +722,9 @@ class AutoLLMTrainer:
             print(f"   ⚠️ Final report failed: {e}")
 
     # =========================================================
-    # ORIGINAL METHODS (UNCHANGED STRUCTURE)
+    # ORIGINAL METHODS
     # =========================================================
-        
+
     def load_trained_symbols(self):
         if os.path.exists(TRACKING_FILE):
             try:
@@ -648,7 +734,7 @@ class AutoLLMTrainer:
             except:
                 return []
         return []
-    
+
     def save_trained_symbols(self):
         data = {
             'symbols': self.trained_symbols,
@@ -657,23 +743,7 @@ class AutoLLMTrainer:
         }
         with open(TRACKING_FILE, 'w') as f:
             json.dump(data, f, indent=2)
-    
-    def get_hf_trained_symbols(self):
-        try:
-            token = os.getenv("hf_token")
-            if not token:
-                return []
-            files = list_repo_files(repo_id=HF_REPO_ID, repo_type="model", token=token)
-            if "trained_symbols.json" in files:
-                url = f"https://huggingface.co/{HF_REPO_ID}/raw/main/trained_symbols.json"
-                response = requests.get(url)
-                if response.status_code == 200:
-                    data = response.json()
-                    return data.get('symbols', [])
-            return []
-        except:
-            return []
-    
+
     def get_all_symbols_from_mongodb(self, limit=None):
         if not os.path.exists(MARKET_DATA_PATH):
             print(f"❌ Market data not found: {MARKET_DATA_PATH}")
@@ -684,18 +754,16 @@ class AutoLLMTrainer:
             symbols = symbols[:limit]
         print(f"   Found {len(symbols)} total symbols in mongodb.csv")
         return symbols
-    
+
     def get_new_symbols(self):
         print("\n🔍 Checking for new symbols...")
         all_symbols = self.get_all_symbols_from_mongodb()
         trained_local = set(self.trained_symbols)
-        trained_hf = set(self.get_hf_trained_symbols())
-        all_trained = trained_local.union(trained_hf)
-        new_symbols = [s for s in all_symbols if s not in all_trained]
-        print(f"   Already trained: {len(all_trained)} symbols")
+        new_symbols = [s for s in all_symbols if s not in trained_local]
+        print(f"   Already trained: {len(self.trained_symbols)} symbols")
         print(f"   New symbols found: {len(new_symbols)}")
         return new_symbols
-    
+
     def classify_example_difficulty(self, text):
         text_lower = text.lower()
         hard_keywords = ['complex', 'multi timeframe', 'divergence', 'harmonic', 'elliott', 'smc', 'order block', 'fvg', 'liquidity']
@@ -712,19 +780,19 @@ class AutoLLMTrainer:
         elif text_len > 800:
             return 'medium'
         return 'easy'
-    
+
     def load_training_data_with_curriculum(self):
         if not os.path.exists(TRAINING_DATA_PATH):
             print(f"❌ Training data not found: {TRAINING_DATA_PATH}")
             return None, None
-        
+
         with open(TRAINING_DATA_PATH, "r", encoding="utf-8") as f:
             text_data = f.read()
-        
+
         raw_examples = text_data.split('================================================================================')
         new_texts = [ex.strip() for ex in raw_examples if len(ex.strip()) > 100]
         print(f"📊 New examples: {len(new_texts)}")
-        
+
         if self.old_training_texts:
             self.old_training_texts.extend(new_texts)
             self.old_training_texts = self.old_training_texts[-MAX_OLD_EXAMPLES:]
@@ -733,30 +801,27 @@ class AutoLLMTrainer:
         else:
             train_texts = new_texts
             self.old_training_texts = train_texts.copy()
-        
+
         mistake_texts = self.mistake_collector.get_mistake_dataset(limit=300)
-        
+
         if mistake_texts:
             normal_count = int(len(train_texts) * 0.75)
             mistake_count = min(len(mistake_texts), int(len(train_texts) * 0.25))
             train_texts = train_texts[:normal_count] + mistake_texts[:mistake_count]
             print(f"   Data mix: {normal_count} normal + {mistake_count} mistakes")
-        
+
         easy_texts = [t for t in train_texts if self.classify_example_difficulty(t) == 'easy']
         medium_texts = [t for t in train_texts if self.classify_example_difficulty(t) == 'medium']
         hard_texts = [t for t in train_texts if self.classify_example_difficulty(t) == 'hard']
         train_texts = easy_texts + medium_texts + hard_texts
         print(f"   Curriculum: {len(easy_texts)} easy, {len(medium_texts)} medium, {len(hard_texts)} hard")
-        
-        # ✅ 70+ HOURS: Enhanced curriculum weights
+
         example_weights = np.ones(len(train_texts))
         for i, text in enumerate(train_texts):
             difficulty = self.classify_example_difficulty(text)
-            
-            # Elliott Wave = সর্বোচ্চ গুরুত্ব
+
             if 'Elliott Wave' in text or 'Impulse Wave' in text or 'Corrective Wave' in text:
                 example_weights[i] = 5.0
-            # SMC Patterns = উচ্চ গুরুত্ব
             elif 'SMC' in text or 'Order Block' in text or 'FVG' in text or 'Liquidity' in text:
                 example_weights[i] = 4.5
             elif 'Harmonic' in text or 'Gartley' in text or 'Butterfly' in text:
@@ -767,33 +832,31 @@ class AutoLLMTrainer:
                 example_weights[i] = 1.5
             else:
                 example_weights[i] = 0.8
-        
+
         return train_texts, example_weights
-    
+
     def load_model_with_lora(self):
         print("\n🏗️ Loading model...")
         token = os.getenv("hf_token")
-        
+
+        # ✅ HF Dataset Repo থেকে ফাইনাল মডেল লোড করার চেষ্টা
         if token:
             try:
-                print(f"   Attempting to load from HF: {HF_REPO_ID}")
-                self.model = AutoModelForCausalLM.from_pretrained(HF_REPO_ID)
-                self.tokenizer = AutoTokenizer.from_pretrained(HF_REPO_ID)
-                print("   ✅ Loaded existing model from Hugging Face")
-                if LORA_AVAILABLE:
-                    lora_config = LoraConfig(**LORA_CONFIG)
-                    self.model = get_peft_model(self.model, lora_config)
-                    print("   ✅ LoRA applied")
-                self._post_load_setup()
-                return
+                print(f"   Attempting to load from HF Dataset: {HF_DATASET_REPO}/final_model/")
+                from huggingface_hub import list_repo_files
+                files = list_repo_files(repo_id=HF_DATASET_REPO, repo_type="dataset", token=token)
+                
+                final_model_folders = [f for f in files if f.startswith("final_model/")]
+                if final_model_folders:
+                    print(f"   ✅ Found final model in HF Dataset repo")
             except Exception as e:
-                print(f"   No existing model on HF: {e}")
-        
-        if os.path.exists("./llm_model"):
+                print(f"   No final model in HF Dataset: {e}")
+
+        if os.path.exists(LLM_MODEL_DIR):
             try:
-                print("   Loading local model...")
-                self.model = AutoModelForCausalLM.from_pretrained("./llm_model")
-                self.tokenizer = AutoTokenizer.from_pretrained("./llm_model")
+                print(f"   Loading local model from {LLM_MODEL_DIR}...")
+                self.model = AutoModelForCausalLM.from_pretrained(LLM_MODEL_DIR)
+                self.tokenizer = AutoTokenizer.from_pretrained(LLM_MODEL_DIR)
                 print("   ✅ Loaded local model")
                 if LORA_AVAILABLE:
                     lora_config = LoraConfig(**LORA_CONFIG)
@@ -803,7 +866,7 @@ class AutoLLMTrainer:
                 return
             except:
                 pass
-        
+
         print(f"   Loading base model: {BASE_MODEL}")
         self.model = AutoModelForCausalLM.from_pretrained(
             BASE_MODEL, 
@@ -811,22 +874,22 @@ class AutoLLMTrainer:
             low_cpu_mem_usage=True
         )
         self.tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
-        
+
         if LORA_AVAILABLE:
             lora_config = LoraConfig(**LORA_CONFIG)
             self.model = get_peft_model(self.model, lora_config)
             print("   ✅ LoRA applied")
-        
+
         self._post_load_setup()
         print("   ✅ Loaded base model")
-    
+
     def _post_load_setup(self):
         self.tokenizer.pad_token = self.tokenizer.eos_token
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
-        
+
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(device)
-        
+
         total_params = sum(p.numel() for p in self.model.parameters())
         trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
         print(f"   Total parameters: {total_params:,}")
@@ -834,20 +897,19 @@ class AutoLLMTrainer:
         print(f"   Device: {device}")
         print(f"   XGBoost Models Loaded: {len(self.xgb_ppo.xgb_models)}")
         print(f"   PPO Models Found: {len(self.xgb_ppo.ppo_models)}")
-    
+
     def train(self, mode="incremental", symbols_batch=None):
         print(f"\n{'='*60}")
         print(f"🎯 TRAINING MODE: {mode.upper()}")
         if symbols_batch:
             print(f"📚 Symbols in this batch: {len(symbols_batch)}")
         print(f"{'='*60}")
-        
+
         train_texts, example_weights = self.load_training_data_with_curriculum()
         if not train_texts:
             print("❌ No training data found!")
             return False
-        
-        # ✅ 70+ HOURS: Full context (512 tokens)
+
         encodings = self.tokenizer(
             train_texts, 
             truncation=True, 
@@ -855,26 +917,25 @@ class AutoLLMTrainer:
             max_length=512,
             return_tensors="pt"
         )
-        
+
         train_dataset = StructuredDataset(encodings, example_weights)
-        
+
         dataset_size = len(train_dataset)
         val_size = max(1, int(dataset_size * VALIDATION_SPLIT_RATIO))
         train_size = dataset_size - val_size
-        
+
         train_indices = list(range(train_size))
         val_indices = list(range(train_size, dataset_size))
-        
+
         train_subset = torch.utils.data.Subset(train_dataset, train_indices)
         eval_subset = torch.utils.data.Subset(train_dataset, val_indices)
         print(f"   Dataset split: {train_size} train, {val_size} validation (chronological)")
-        
-        # ✅ 70+ HOURS: Extended epoch configuration
+
         num_epochs = EPOCHS_CONFIG.get(mode, 10)
         learning_rate = LR_CONFIG.get(mode, 1e-5)
         batch_size = BATCH_SIZE_CONFIG.get(mode, 1)
         grad_accum = GRAD_ACCUM_CONFIG.get(mode, 16)
-        
+
         print(f"\n⚙️ 70+ Hours Training Config:")
         print(f"   Epochs: {num_epochs}")
         print(f"   Learning Rate: {learning_rate}")
@@ -883,52 +944,47 @@ class AutoLLMTrainer:
         print(f"   LoRA: {'Enabled (r=32)' if LORA_AVAILABLE else 'Disabled'}")
         print(f"   Max Length: 512 (full context)")
         print(f"   XGBoost Integration: Enabled ({len(self.xgb_ppo.xgb_models)} models)")
-        
+        print(f"   📤 HF Repo: {HF_DATASET_REPO}")
+
         training_args = TrainingArguments(
-            output_dir="./llm_model",
+            output_dir=LLM_MODEL_DIR,
             overwrite_output_dir=True,
-            
-            # ========== 70+ HOURS OPTIMIZED ==========
+
             num_train_epochs=num_epochs,
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size,
             gradient_accumulation_steps=grad_accum,
-            
-            # Learning rate - slow and steady
+
             learning_rate=learning_rate,
-            warmup_steps=300,                      # ✅ Extended warmup
-            weight_decay=0.015,                    # ✅ Slightly higher
+            warmup_steps=300,
+            weight_decay=0.015,
             lr_scheduler_type="cosine_with_restarts",
-            
-            # Save - every 1-2 hours
-            save_steps=80,                         # ✅ More frequent saves
-            save_total_limit=15,                   # ✅ Keep more checkpoints
+
+            save_steps=80,
+            save_total_limit=3,
             logging_steps=10,
             save_strategy="steps",
-            
-            # Evaluation (disabled)
+
             evaluation_strategy="no",
             load_best_model_at_end=False,
-            
-            # CPU Optimization
+
             fp16=False,
             dataloader_num_workers=0,
             dataloader_pin_memory=False,
             report_to="none",
             max_grad_norm=MAX_GRAD_NORM,
-            
-            # Adam optimizer - long training optimized
+
             optim="adamw_torch",
             adam_beta1=0.9,
-            adam_beta2=0.98,                       # ✅ Better for long training
+            adam_beta2=0.98,
             adam_epsilon=1e-8,
         )
-        
+
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=self.tokenizer, 
             mlm=False
         )
-        
+
         trainer = WeightedTrainer(
             model=self.model,
             args=training_args,
@@ -937,59 +993,56 @@ class AutoLLMTrainer:
             data_collator=data_collator,
         )
         
+        # ✅ HF চেকপয়েন্ট কাস্টম আপলোডার
+        class CustomHFCallback:
+            def __init__(self, hf_uploader):
+                self.hf_uploader = hf_uploader
+            
+            def on_save(self, args, state, control, **kwargs):
+                if state.is_world_process_zero:
+                    checkpoint_dir = os.path.join(args.output_dir, f"checkpoint-{state.global_step}")
+                    if os.path.exists(checkpoint_dir):
+                        print(f"\n   📤 Uploading checkpoint {state.global_step} to HF Dataset repo...")
+                        self.hf_uploader.upload_checkpoint(checkpoint_dir, state.global_step)
+                        self.hf_uploader.upload_tracking_files()
+        
+        trainer.add_callback(CustomHFCallback(self.hf_uploader))
+
         print("\n🏋️ Starting 70+ Hours Training...")
         print("   ⏰ This will take multiple days (resume automatically)")
+        print(f"   📤 Checkpoints will be uploaded to: {HF_DATASET_REPO}/checkpoints/")
         trainer.train()
         print("\n✅ Training completed!")
-    
+
         # ========== AGENTIC LOOP UPDATE ==========
         if symbols_batch and hasattr(self, 'agentic_loop') and self.agentic_loop is not None:
             batch_num = self.batch_manager.current_batch_index if self.batch_manager.current_batch_index > 0 else 1
             self._update_agentic_loop_after_batch(batch_num, symbols_batch, eval_loss=0.5)
         # =========================================
-    
-        self.model.save_pretrained("./llm_model")
-        self.tokenizer.save_pretrained("./llm_model")
-        print("💾 Model saved locally")
-    
-        self.upload_to_huggingface(mode)
+
+        self.model.save_pretrained(LLM_MODEL_DIR)
+        self.tokenizer.save_pretrained(LLM_MODEL_DIR)
+        print(f"💾 Model saved locally to {LLM_MODEL_DIR}")
+
+        # ✅ ফাইনাল মডেল HF Dataset Repo-তে আপলোড
+        self.upload_final_model_to_hf(mode)
         return True
-    
-    def upload_to_huggingface(self, mode):
+
+    def upload_final_model_to_hf(self, mode):
+        """Upload final model to HF Dataset Repo"""
         token = os.getenv("hf_token")
         if not token:
-            print("ℹ️ No HF_TOKEN, skipping upload")
+            print("ℹ️ No HF_TOKEN, skipping final model upload")
             return
-        
-        print("\n📤 Uploading to Hugging Face...")
+
+        print(f"\n📤 Uploading final model to HF Dataset Repo: {HF_DATASET_REPO}/final_model/{mode}/")
         try:
-            login(token=token)
-            create_repo(repo_id=HF_REPO_ID, repo_type="model", exist_ok=True)
-            
-            with open(TRACKING_FILE, 'w') as f:
-                json.dump({
-                    'symbols': self.trained_symbols,
-                    'last_updated': datetime.now().isoformat(),
-                    'total_trained': len(self.trained_symbols)
-                }, f)
-            
-            upload_folder(
-                folder_path="./llm_model", 
-                repo_id=HF_REPO_ID, 
-                repo_type="model", 
-                commit_message=f"{mode}: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-            )
-            upload_folder(
-                folder_path=".", 
-                repo_id=HF_REPO_ID, 
-                repo_type="model", 
-                path_in_repo="trained_symbols.json", 
-                commit_message="Update trained symbols"
-            )
-            print(f"✅ Uploaded to: https://huggingface.co/{HF_REPO_ID}")
+            self.hf_uploader.upload_final_model(LLM_MODEL_DIR, mode)
+            self.hf_uploader.upload_tracking_files()
+            print(f"✅ Final model uploaded to: https://huggingface.co/datasets/{HF_DATASET_REPO}/tree/main/final_model/{mode}")
         except Exception as e:
-            print(f"⚠️ Upload failed: {e}")
-    
+            print(f"⚠️ Final model upload failed: {e}")
+
     def generate_training_data_for_symbols(self, symbols):
         print(f"\n📝 Generating training data for {len(symbols)} symbols...")
         import subprocess
@@ -1003,7 +1056,7 @@ class AutoLLMTrainer:
             return False
         print("   ✅ Training data generated")
         return True
-    
+
     def run(self):
         print("="*60)
         print("🚀 AUTO LLM TRAINER - 70+ HOURS ULTIMATE VERSION")
@@ -1015,33 +1068,36 @@ class AutoLLMTrainer:
         print(f"📊 XGBoost Models: {len(self.xgb_ppo.xgb_models)}")
         print(f"📁 PPO Models: {len(self.xgb_ppo.ppo_models)}")
         print(f"⏰ 70+ Hours Training Mode: ENABLED")
+        print(f"📤 ALL SAVED TO: {HF_DATASET_REPO}")
+        print(f"💾 Local Model Dir: {LLM_MODEL_DIR}")
         print("="*60)
-        
+
         confidence_stats = self.mistake_collector.get_confidence_stats()
         print(f"\n📊 Confidence Statistics:")
         print(f"   Average confidence: {confidence_stats['avg_confidence']:.2%}")
+        print(f"   Mistake rate: {confidence_stats['mistake_rate']:.2f}%")
         print(f"   High priority mistakes: {confidence_stats['high_priority_count']}")
-        
+
         all_symbols = self.get_all_symbols_from_mongodb()
         new_symbols = self.get_new_symbols()
-        
+
         self.load_model_with_lora()
-        
+
         # STEP 1: Train new symbols in batches
         if new_symbols:
             print(f"\n📚 Found {len(new_symbols)} new symbols to train")
-            
+
             for i in range(0, len(new_symbols), BATCH_SIZE):
                 batch = new_symbols[i:i+BATCH_SIZE]
                 batch_num = i // BATCH_SIZE + 1
                 print(f"\n📦 Processing batch {batch_num}: {len(batch)} symbols")
-                
+
                 if self.generate_training_data_for_symbols(batch):
                     if len(self.trained_symbols) == 0:
                         mode = "first_train"
                     else:
                         mode = "incremental"
-                    
+
                     if self.train(mode=mode, symbols_batch=batch):
                         self.trained_symbols.extend(batch)
                         self.save_trained_symbols()
@@ -1049,16 +1105,16 @@ class AutoLLMTrainer:
                         print(f"✅ Batch {batch_num} complete! Total trained: {len(self.trained_symbols)}")
         else:
             print("\n✅ No new symbols found!")
-        
+
         # STEP 2: Weekly fine-tune
         weekly_batch_num, weekly_symbols = self.batch_manager.get_batch_for_weekly_finetune()
-        
+
         if weekly_symbols and len(weekly_symbols) > 0:
             print(f"\n🔄 Weekly fine-tuning on Batch {weekly_batch_num} ({len(weekly_symbols)} symbols)")
             if self.generate_training_data_for_symbols(weekly_symbols):
                 self.train(mode="weekly_finetune", symbols_batch=weekly_symbols)
                 print("✅ Weekly fine-tune complete!")
-        
+
         # STEP 3: Monthly consolidation
         if self.batch_manager.should_consolidate():
             print(f"\n🔄 Monthly consolidation - Training all symbols together")
@@ -1068,12 +1124,12 @@ class AutoLLMTrainer:
                     self.train(mode="consolidate", symbols_batch=all_trained_symbols)
                     self.batch_manager.mark_consolidated()
                     print("✅ Monthly consolidation complete!")
-        
+
         # STEP 4: Hard example retraining
         high_priority_examples = self.mistake_collector.get_hard_examples(limit=200, priority_only=True)
         if high_priority_examples:
             print(f"\n🔥 Found {len(high_priority_examples)} high priority mistakes for retraining!")
-            temp_file = "./temp_hard_examples.txt"
+            temp_file = "./csv/temp_hard_examples.txt"
             with open(temp_file, 'w', encoding='utf-8') as f:
                 signal_map = {1: 'BUY', 0: 'SELL', 2: 'HOLD'}
                 for ex in high_priority_examples[:100]:
@@ -1081,7 +1137,7 @@ class AutoLLMTrainer:
                     xgb_pred = self.xgb_ppo.get_xgb_prediction(ex.get('symbol', ''))
                     if xgb_pred:
                         xgb_context = f"\nXGBoost Analysis: {xgb_pred['signal']} ({xgb_pred['prob_up']:.0%} confidence)"
-                    
+
                     f.write(f"""
 ================================================================================
 Pattern: {ex.get('pattern', 'Unknown')}
@@ -1096,10 +1152,14 @@ Signal: {signal_map.get(ex.get('actual', 2), 'HOLD')}
 Confidence: {min(95, max(65, int(ex.get('confidence', 0.7) * 100 + 10)))}
 ================================================================================
 """)
+            # Temporarily replace training data
+            original_path = TRAINING_DATA_PATH
+            TRAINING_DATA_PATH = temp_file
             self.train(mode="mistake_learning")
+            TRAINING_DATA_PATH = original_path
             if os.path.exists(temp_file):
                 os.remove(temp_file)
-        
+
         print("\n" + "="*60)
         print("📊 FINAL STATUS")
         print("="*60)
@@ -1107,9 +1167,10 @@ Confidence: {min(95, max(65, int(ex.get('confidence', 0.7) * 100 + 10)))}
         print(f"   Completed batches: {len(self.batch_manager.completed_batches)}")
         print(f"   XGBoost Models Available: {len(self.xgb_ppo.xgb_models)}")
         print(f"   PPO Models Available: {len(self.xgb_ppo.ppo_models)}")
-        print(f"   HF Repository: {HF_REPO_ID}")
+        print(f"   Local Model Dir: {LLM_MODEL_DIR}")
+        print(f"   HF Dataset Repo (ALL): {HF_DATASET_REPO}")
         print("="*60)
-        
+
         # ========== AGENTIC LOOP FINALIZE ==========
         self._finalize_agentic_loop()
         # ===========================================
