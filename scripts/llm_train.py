@@ -52,9 +52,9 @@ warnings.filterwarnings('ignore')
 # =========================================================
 
 # Batch configuration for incremental training
-BATCH_SIZE = 1
+BATCH_SIZE = 10
 TOTAL_BATCHES = "auto"
-MAX_SYMBOLS_PER_BATCH = 1
+MAX_SYMBOLS_PER_BATCH = 10
 
 # ✅ SINGLE REPOSITORY CONFIGURATION
 HF_DATASET_REPO = "ahashanahmed/csv"  # ✅ সবকিছু এখানে সেভ হবে (চেকপয়েন্ট + ফাইনাল মডেল)
@@ -123,19 +123,19 @@ AGENTIC_LOOP_LOG_DIR = "./csv/agentic_loop_logs"
 # 70+ HOURS EPOCH CONFIGURATION
 # =========================================================
 EPOCHS_CONFIG = {
-    "first_train": 15,
-    "incremental": 10,
-    "weekly_finetune": 5,
-    "consolidate": 12,
-    "mistake_learning": 8,
+    "first_train": 2,
+    "incremental": 1,
+    "weekly_finetune": 1,
+    "consolidate": 2,
+    "mistake_learning": 1,
 }
 
 LR_CONFIG = {
     "first_train": 1.5e-5,
-    "incremental": 1e-5,
-    "weekly_finetune": 8e-6,
-    "consolidate": 8e-6,
-    "mistake_learning": 1.5e-5,
+    "incremental": 1.5e-5,
+    "weekly_finetune"e-1e-5,
+    "consolidate": 1e-5,
+    "mistake_learning": 2e-5,
 }
 
 BATCH_SIZE_CONFIG = {
@@ -147,11 +147,11 @@ BATCH_SIZE_CONFIG = {
 }
 
 GRAD_ACCUM_CONFIG = {
-    "first_train": 16,
-    "incremental": 16,
-    "weekly_finetune": 8,
-    "consolidate": 16,
-    "mistake_learning": 16,
+    "first_train": 8,
+    "incremental": 4,
+    "weekly_finetune": 2,
+    "consolidate": 4,
+    "mistake_learning": 4,
 }
 
 
@@ -914,7 +914,7 @@ class AutoLLMTrainer:
             train_texts, 
             truncation=True, 
             padding="max_length", 
-            max_length=512,
+            max_length=256,
             return_tensors="pt"
         )
 
