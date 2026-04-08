@@ -568,7 +568,7 @@ class AutoLLMTrainer:
         self.mistake_collector = MistakeCollector(self.xgb_ppo)
         self.batch_manager = BatchManager()
         self.old_training_texts = [] 
-           # ========== AGENTIC LOOP INIT ==========
+        # ========== AGENTIC LOOP INIT ==========
         self.agentic_loop = None
         if AGENTIC_LOOP_AVAILABLE:
             self._init_agentic_loop()
@@ -618,9 +618,9 @@ class AutoLLMTrainer:
                     'symbol': symbol,
                     'pnl': simulated_pnl,
                     'success': success,
-                    'batch': bbatchnum
+                    'batch': batch_num
                 }
-                self.agentic.loop.after_trade_feedback(trade_result)
+                self.agentic_loop.after_trade_feedback(trade_result)
                     
             summary = self.agentic_loop.get_summary()
             if len(summary) > 0:
