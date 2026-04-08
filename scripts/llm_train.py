@@ -993,11 +993,11 @@ class AutoLLMTrainer:
             data_collator=data_collator,
         )
         
-        # ✅ HF চেকপয়েন্ট কাস্টম আপলোডার
+        ✅ ফিক্সড HF চেকপয়েন্ট কাস্টম আপলোডার
         class CustomHFCallback:
             def __init__(self, hf_uploader):
                 self.hf_uploader = hf_uploader
-            
+        
             def on_save(self, args, state, control, **kwargs):
                 if state.is_world_process_zero:
                     checkpoint_dir = os.path.join(args.output_dir, f"checkpoint-{state.global_step}")
@@ -1005,10 +1005,18 @@ class AutoLLMTrainer:
                         print(f"\n   📤 Uploading checkpoint {state.global_step} to HF Dataset repo...")
                         self.hf_uploader.upload_checkpoint(checkpoint_dir, state.global_step)
                         self.hf_uploader.upload_tracking_files()
+                return control         
         
+            # সব missing methods handle করার জন্য
+            def __getattr__(self, name):
+                if name.startswith('on_'):
+                    return lambda *args, **kwargs: args[2] if len(args) > 2 else None
+                raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+    
         trainer.add_callback(CustomHFCallback(self.hf_uploader))
 
         print("\n🏋️ Starting 70+ Hours Training...")
+        # ... বাকি কোড ...
         print("   ⏰ This will take multiple days (resume automatically)")
         print(f"   📤 Checkpoints will be uploaded to: {HF_DATASET_REPO}/checkpoints/")
         trainer.train()
@@ -1021,7 +1029,7 @@ class AutoLLMTrainer:
         # =========================================
 
         self.model.save_pretrained(LLM_MODEL_DIR)
-        self.tokenizer.save_pretrained(LLM_MODEL_DIR)
+        self.tokenizer.return trained(LLM_MODEL_DIR)
         print(f"💾 Model saved locally to {LLM_MODEL_DIR}")
 
         # ✅ ফাইনাল মডেল HF Dataset Repo-তে আপলোড
