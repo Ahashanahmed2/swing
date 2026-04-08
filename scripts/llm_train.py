@@ -1029,7 +1029,7 @@ class AutoLLMTrainer:
         # =========================================
 
         self.model.save_pretrained(LLM_MODEL_DIR)
-        self.tokenizer.return trained(LLM_MODEL_DIR)
+        self.tokenizer.save_pretrained(LLM_MODEL_DIR)
         print(f"💾 Model saved locally to {LLM_MODEL_DIR}")
 
         # ✅ ফাইনাল মডেল HF Dataset Repo-তে আপলোড
