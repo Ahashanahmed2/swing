@@ -52,9 +52,9 @@ warnings.filterwarnings('ignore')
 # =========================================================
 
 # Batch configuration for incremental training
-BATCH_SIZE = 10
+BATCH_SIZE = 1
 TOTAL_BATCHES = "auto"
-MAX_SYMBOLS_PER_BATCH = 10
+MAX_SYMBOLS_PER_BATCH = 1
 
 # ✅ SINGLE REPOSITORY CONFIGURATION
 HF_DATASET_REPO = "ahashanahmed/csv"  # ✅ সবকিছু এখানে সেভ হবে (চেকপয়েন্ট + ফাইনাল মডেল)
@@ -133,7 +133,7 @@ EPOCHS_CONFIG = {
 LR_CONFIG = {
     "first_train": 1.5e-5,
     "incremental": 1.5e-5,
-    "weekly_finetune"e-1e-5,
+    "weekly_finetune":1e-5,
     "consolidate": 1e-5,
     "mistake_learning": 2e-5,
 }
