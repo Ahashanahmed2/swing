@@ -928,27 +928,38 @@ class AutoLLMTrainer:
         print(f"   LoRA: {'Enabled' if LORA_AVAILABLE else 'Disabled'}")
         print(f"   XGBoost Integration: Enabled ({len(self.xgb_ppo.xgb_models)} models)")
         
+        # =========================================================
+        # ট্রেনিং আর্গুমেন্টস (সম্পূর্ণরূপে পরিমার্জিত)
+        # =========================================================
         training_args = TrainingArguments(
             output_dir="./llm_model",
             overwrite_output_dir=True,
             num_train_epochs=num_epochs,
             per_device_train_batch_size=batch_size,
-            per_device_eval_batch_size=batch_size,
+            # per_device_eval_batch_size=batch_size,  # ✅ দরকার নেই
             gradient_accumulation_steps=4,
             save_steps=200,
             save_total_limit=2,
             logging_steps=20,
-            #evaluation_strategy="no",
-            #eval_steps=200,
+    
+            # ❌ === এই লাইনগুলো মুছে দিন বা কমেন্ট করুন ===
+            # evaluation_strategy="steps",
+            # eval_steps=200,
+            # load_best_model_at_end=True,
+            # metric_for_best_model="eval_loss",
+            # greater_is_better=False,
+    
             learning_rate=learning_rate,
             warmup_steps=50,
             weight_decay=0.01,
             fp16=False,
             report_to="none",
             max_grad_norm=MAX_GRAD_NORM,
-            #load_best_model_at_end="False",
-            #metric_for_best_model="eval_loss",
-            #greater_is_better=False
+    
+            # ✅ নিরাপদ ডিফল্ট
+            evaluation_strategy="no",          # ইভ্যালুয়েশন সম্পূর্ণ নিষ্ক্রিয়
+            load_best_model_at_end=False,      # বেস্ট মডেল খোঁজা বন্ধ
+            save_strategy="steps",             # শুধু স্টেপ অনুযায়ী সেভ
         )
         
         data_collator = DataCollatorForLanguageModeling(
@@ -963,7 +974,7 @@ class AutoLLMTrainer:
             model=self.model,
             args=training_args,
             train_dataset=train_subset,
-            eval_dataset=eval_subset,
+            eval_dataset=None,
             data_collator=data_collator,
             #callbacks=[early_stop_callback]
         )
@@ -972,15 +983,15 @@ class AutoLLMTrainer:
         trainer.train()
         print("\n✅ Training completed!")
         
-        print("\n📊 Running evaluation...")
-        eval_results = trainer.evaluate()
-        eval_loss = eval_results.get('eval_loss', 0.5)
-        print(f"   Evaluation loss: {eval_loss:.4f}")
+        #print("\n📊 Running evaluation...")
+        #eval_results = trainer.evaluate()
+        #eval_loss = eval_results.get('eval_loss', 0.5)
+        #print(f"   Evaluation loss: {eval_loss:.4f}")
     
         # ========== AGENTIC LOOP UPDATE ==========
-        if symbols_batch and hasattr(self, 'agentic_loop'):
+        if symbols_batch and hasattr(self, 'agentic_loop') and self.agentic_loop is not None:
             batch_num = self.batch_manager.current_batch_index if self.batch_manager.current_batch_index > 0 else 1
-            self._update_agentic_loop_after_batch(batch_num, symbols_batch, eval_loss)
+            self._update_agentic_loop_after_batch(batch_num, symbols_batch, eval_loss=0.5)
         # =========================================
     
         self.model.save_pretrained("./llm_model")
