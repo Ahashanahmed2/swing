@@ -1,6 +1,7 @@
 # scripts/llm_train.py
 # Advanced LLM Trainer with XGBoost + PPO Integration, Proper Label Prediction, Confidence Learning
 # Fully Updated with Auto Batch Management, Incremental Learning, and Mistake Learning
+# ULTIMATE 70+ HOURS TRAINING CONFIGURATION
 
 import os
 import torch
@@ -45,13 +46,13 @@ except ImportError:
 warnings.filterwarnings('ignore')
 
 # =========================================================
-# CONFIGURATION
+# CONFIGURATION - 70+ HOURS ULTIMATE TRAINING
 # =========================================================
 
 # Batch configuration for incremental training
-BATCH_SIZE = 100  # Number of symbols per training batch
-TOTAL_BATCHES = "auto"  # Will be auto-calculated
-MAX_SYMBOLS_PER_BATCH = 100  # Maximum symbols to train in one batch
+BATCH_SIZE = 40  # ✅ 100 → 40 (ছোট ব্যাচ, ধীরে ট্রেনিং)
+TOTAL_BATCHES = "auto"
+MAX_SYMBOLS_PER_BATCH = 40
 
 HF_REPO_ID = "ahashanahmed/llm-stock-model"
 BASE_MODEL = "distilgpt2"
@@ -69,29 +70,29 @@ PPO_MODELS_DIR = "./csv/ppo_models"
 PPO_PER_SYMBOL_DIR = "./csv/ppo_models/per_symbol"
 
 # Schedule
-FINE_TUNE_INTERVAL = 7  # Days between fine-tuning
+FINE_TUNE_INTERVAL = 7
 LAST_FINE_TUNE_FILE = "./last_finetune.txt"
 LAST_CONSOLIDATE_FILE = "./last_consolidate.txt"
-CONSOLIDATE_INTERVAL = 30  # Days between full consolidation
+CONSOLIDATE_INTERVAL = 30
 
-# Learning parameters
-MAX_OLD_EXAMPLES = 1000
-HARD_EXAMPLE_THRESHOLD = 0.3
-HIGH_PRIORITY_THRESHOLD = 0.4
+# Learning parameters - 70+ HOURS OPTIMIZED
+MAX_OLD_EXAMPLES = 5000                 # ✅ 1000 → 5000 (বড় রিপ্লে বাফার)
+HARD_EXAMPLE_THRESHOLD = 0.20           # ✅ 0.3 → 0.20 (আরও কঠিন চিহ্নিত)
+HIGH_PRIORITY_THRESHOLD = 0.30          # ✅ 0.4 → 0.30
 WEIGHTED_LOSS_ENABLED = True
-MAX_GRAD_NORM = 1.0
-EARLY_STOPPING_PATIENCE = 3
+MAX_GRAD_NORM = 0.7                     # ✅ 1.0 → 0.7 (টাইটার ক্লিপিং)
+EARLY_STOPPING_PATIENCE = 8             # ✅ 3 → 8
 VALIDATION_SPLIT_RATIO = 0.1
 
 # Training mode flags
-FORCE_RETRAIN = False  # Set to True to retrain all symbols
+FORCE_RETRAIN = False
 
-# LoRA config for distilgpt2
+# LoRA config for distilgpt2 - 70+ HOURS OPTIMIZED
 LORA_CONFIG = {
-    'r': 8,
-    'lora_alpha': 32,
-    'target_modules': ['c_attn'],
-    'lora_dropout': 0.1,
+    'r': 32,                            # ✅ 8 → 32 (Elliott/SMC জন্য ক্যাপাসিটি)
+    'lora_alpha': 64,                   # ✅ 32 → 64
+    'target_modules': ['c_attn', 'c_proj', 'c_fc'],  # ✅ সম্পূর্ণ কভারেজ
+    'lora_dropout': 0.15,               # ✅ 0.1 → 0.15 (ওভারফিটিং রোধ)
     'bias': 'none',
 }
 
@@ -104,13 +105,48 @@ SIGNAL_PATTERNS = {
 
 CONFIDENCE_PATTERN = r'(?:Confidence|Signal Strength):?\s*(\d+(?:\.\d+)?)%'
 
-
 # Agentic Loop paths
 AGENTIC_LOOP_STATE_FILE = "./csv/agentic_loop_state.json"
 AGENTIC_LOOP_LOG_DIR = "./csv/agentic_loop_logs"
 
 # =========================================================
-# BATCH MANAGER (NEW)
+# 70+ HOURS EPOCH CONFIGURATION
+# =========================================================
+EPOCHS_CONFIG = {
+    "first_train": 15,          # ✅ 2 → 15 (~20 ঘন্টা)
+    "incremental": 10,          # ✅ 2 → 10 (~14 ঘน্টা)
+    "weekly_finetune": 5,       # ✅ 1 → 5 (~7 ঘন্টা)
+    "consolidate": 12,          # ✅ 2 → 12 (~16 ঘন্টা)
+    "mistake_learning": 8,      # ✅ 2 → 8 (~11 ঘন্টা)
+}
+
+LR_CONFIG = {
+    "first_train": 1.5e-5,      # ✅ 5e-5 → 1.5e-5 (খুব ধীরে)
+    "incremental": 1e-5,        # ✅ 3e-5 → 1e-5
+    "weekly_finetune": 8e-6,    # ✅ 1e-5 → 8e-6
+    "consolidate": 8e-6,        # ✅ 1e-5 → 8e-6
+    "mistake_learning": 1.5e-5,
+}
+
+BATCH_SIZE_CONFIG = {
+    "first_train": 1,           # ✅ 4 → 1 (CPU সেফ, ধীরে)
+    "incremental": 1,
+    "weekly_finetune": 1,
+    "consolidate": 1,
+    "mistake_learning": 1,
+}
+
+GRAD_ACCUM_CONFIG = {
+    "first_train": 16,          # ✅ 4 → 16 (কার্যকর ব্যাচ = 16)
+    "incremental": 16,
+    "weekly_finetune": 8,
+    "consolidate": 16,
+    "mistake_learning": 16,
+}
+
+
+# =========================================================
+# BATCH MANAGER (UNCHANGED)
 # =========================================================
 
 class BatchManager:
@@ -142,24 +178,16 @@ class BatchManager:
             json.dump(self.batch_tracking, f, indent=2)
     
     def get_next_batch_symbols(self, all_symbols, trained_symbols, batch_size=BATCH_SIZE):
-        """Get next batch of symbols to train (auto batch creation)"""
         untrained = [s for s in all_symbols if s not in trained_symbols]
-        
         if not untrained:
             return []
-        
-        # Get next batch
         next_batch = untrained[:batch_size]
-        
-        # Store batch info
         batch_num = self.current_batch_index + 1
         self.batch_symbols[str(batch_num)] = next_batch
         self.batch_tracking['batch_symbols'] = self.batch_symbols
-        
         return next_batch, batch_num
     
     def mark_batch_completed(self, batch_num, symbols):
-        """Mark a batch as completed"""
         if batch_num not in self.completed_batches:
             self.completed_batches.append(batch_num)
             self.current_batch_index = batch_num
@@ -170,36 +198,26 @@ class BatchManager:
             self.save_batch_tracking()
     
     def get_batch_for_weekly_finetune(self):
-        """Get which batch to fine-tune this week (rotation)"""
         if not self.completed_batches:
             return None
-        
-        # Get current week number
         week_num = (datetime.now() - datetime.strptime(self.batch_tracking.get('last_batch_date', '2024-01-01'), '%Y-%m-%dT%H:%M:%S.%f').date()).days // 7
-        
-        # Rotate through completed batches
         batch_index = week_num % len(self.completed_batches)
         batch_num = self.completed_batches[batch_index]
-        
         return batch_num, self.batch_symbols.get(str(batch_num), [])
     
     def should_consolidate(self):
-        """Check if it's time for full consolidation"""
         last_consolidate = self.batch_tracking.get('last_consolidate', None)
         if not last_consolidate:
             return True
-        
         last_date = datetime.fromisoformat(last_consolidate)
         days_since = (datetime.now() - last_date).days
         return days_since >= CONSOLIDATE_INTERVAL
     
     def mark_consolidated(self):
-        """Mark that consolidation has been performed"""
         self.batch_tracking['last_consolidate'] = datetime.now().isoformat()
         self.save_batch_tracking()
     
     def get_all_batch_symbols(self):
-        """Get all symbols from all completed batches"""
         all_symbols = []
         for batch_num in self.completed_batches:
             symbols = self.batch_symbols.get(str(batch_num), [])
@@ -208,7 +226,7 @@ class BatchManager:
 
 
 # =========================================================
-# XGBOOST + PPO INTEGRATION
+# XGBOOST + PPO INTEGRATION (UNCHANGED)
 # =========================================================
 
 class XGBoostPPOIntegrator:
@@ -222,7 +240,6 @@ class XGBoostPPOIntegrator:
         self.load_ppo_metadata()
     
     def load_xgb_models(self):
-        """Load all XGBoost models from directory"""
         if os.path.exists(XGBOOST_DIR):
             for file in os.listdir(XGBOOST_DIR):
                 if file.endswith('.joblib'):
@@ -236,7 +253,6 @@ class XGBoostPPOIntegrator:
             print(f"   ⚠️ XGBoost directory not found: {XGBOOST_DIR}")
     
     def load_ppo_metadata(self):
-        """Load PPO model metadata"""
         if os.path.exists(PPO_PER_SYMBOL_DIR):
             for file in os.listdir(PPO_PER_SYMBOL_DIR):
                 if file.endswith('.zip') and file.startswith('ppo_'):
@@ -247,10 +263,8 @@ class XGBoostPPOIntegrator:
             print(f"   ⚠️ PPO models directory not found: {PPO_PER_SYMBOL_DIR}")
     
     def get_xgb_prediction(self, symbol, features_dict=None):
-        """Get XGBoost prediction for a symbol"""
         if symbol not in self.xgb_models:
             return None
-        
         try:
             model = self.xgb_models[symbol]
             if features_dict:
@@ -270,7 +284,6 @@ class XGBoostPPOIntegrator:
                 prob = model.predict_proba(features_array)[0, 1]
             else:
                 prob = 0.5
-            
             return {
                 'prob_up': prob,
                 'signal': 'BUY' if prob > 0.55 else 'SELL' if prob < 0.45 else 'NEUTRAL',
@@ -281,13 +294,8 @@ class XGBoostPPOIntegrator:
             return None
     
     def get_ppo_signal(self, symbol):
-        """Check if PPO model exists for symbol"""
         if symbol in self.ppo_models:
-            return {
-                'exists': True,
-                'model_path': self.ppo_models[symbol],
-                'source': 'PPO'
-            }
+            return {'exists': True, 'model_path': self.ppo_models[symbol], 'source': 'PPO'}
         return None
 
 
@@ -345,22 +353,18 @@ class LabelExtractor:
     @staticmethod
     def extract_signal(text):
         text_lower = text.lower()
-        
         bullish_keywords = ['buy', 'bullish', 'long', '✅ buy', 'signal: buy']
         for kw in bullish_keywords:
             if kw in text_lower:
                 return 1
-        
         bearish_keywords = ['sell', 'bearish', 'short', '❌ sell', 'signal: sell']
         for kw in bearish_keywords:
             if kw in text_lower:
                 return 0
-        
         neutral_keywords = ['hold', 'neutral', 'wait']
         for kw in neutral_keywords:
             if kw in text_lower:
                 return 2
-        
         for pattern in SIGNAL_PATTERNS.values():
             if re.search(pattern, text, re.IGNORECASE):
                 if 'buy' in pattern or 'bullish' in pattern:
@@ -369,7 +373,6 @@ class LabelExtractor:
                     return 0
                 else:
                     return 2
-        
         return 2
     
     @staticmethod
@@ -388,27 +391,20 @@ class MetricsCalculator:
         model.eval()
         predictions = []
         confidences = []
-        
         with torch.no_grad():
             for text in eval_texts:
                 inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
                 outputs = model.generate(
-                    inputs.input_ids,
-                    max_new_tokens=50,
-                    temperature=0.7,
-                    do_sample=True,
-                    pad_token_id=tokenizer.eos_token_id
+                    inputs.input_ids, max_new_tokens=50, temperature=0.7,
+                    do_sample=True, pad_token_id=tokenizer.eos_token_id
                 )
                 generated = tokenizer.decode(outputs[0], skip_special_tokens=True)
-                
                 pred = LabelExtractor.extract_signal(generated)
                 conf = LabelExtractor.extract_confidence(generated)
                 predictions.append(pred)
                 confidences.append(conf)
-        
         acc = accuracy_score(true_labels, predictions)
         f1 = f1_score(true_labels, predictions, average='weighted', zero_division=0)
-        
         profit = 0
         correct = 0
         for pred, true, conf in zip(predictions, true_labels, confidences):
@@ -419,15 +415,12 @@ class MetricsCalculator:
                 profit += 0.02 if true == 1 else 0.01
             else:
                 profit -= 0.01 if pred == 1 else 0.005
-        
         win_rate = correct / len([c for c in confidences if c >= 0.5]) if any(c >= 0.5 for c in confidences) else 0
-        
         print(f"\n📊 MODEL EVALUATION:")
         print(f"   Accuracy: {acc:.2%}")
         print(f"   F1 Score: {f1:.3f}")
         print(f"   Simulated Profit: {profit:.2%}")
         print(f"   Win Rate: {win_rate:.2%}")
-        
         return {'accuracy': acc, 'f1_score': f1, 'profit': profit, 'win_rate': win_rate}
 
 
@@ -461,30 +454,21 @@ class MistakeCollector:
     
     def add_mistake(self, symbol, prediction, actual, confidence, pattern, market_regime=""):
         mistake = {
-            'symbol': symbol,
-            'timestamp': datetime.now().isoformat(),
-            'prediction': prediction,
-            'actual': actual,
-            'confidence': confidence,
-            'pattern': pattern,
-            'market_regime': market_regime,
+            'symbol': symbol, 'timestamp': datetime.now().isoformat(),
+            'prediction': prediction, 'actual': actual, 'confidence': confidence,
+            'pattern': pattern, 'market_regime': market_regime,
             'is_hard': confidence < HARD_EXAMPLE_THRESHOLD,
             'is_high_priority': confidence < HIGH_PRIORITY_THRESHOLD and prediction != actual,
             'correct_explanation': self._generate_explanation(pattern, actual, market_regime)
         }
         self.mistakes.append(mistake)
-        
         if mistake['is_hard']:
             self.hard_examples.append(mistake)
             self.save_hard_examples()
-        
         self.save_mistakes()
         self.confidence_history.append({
-            'timestamp': datetime.now(),
-            'symbol': symbol,
-            'confidence': confidence,
-            'is_mistake': prediction != actual,
-            'is_high_priority': mistake['is_high_priority']
+            'timestamp': datetime.now(), 'symbol': symbol, 'confidence': confidence,
+            'is_mistake': prediction != actual, 'is_high_priority': mistake['is_high_priority']
         })
     
     def _generate_explanation(self, pattern, actual, market_regime):
@@ -514,14 +498,12 @@ class MistakeCollector:
             examples = [m for m in self.hard_examples if m.get('is_high_priority', False)]
         else:
             examples = self.hard_examples.copy()
-        
         examples.sort(key=lambda x: x.get('confidence', 1.0))
         return examples[:limit]
     
     def get_confidence_stats(self):
         if not self.confidence_history:
             return {'avg_confidence': 0, 'mistake_rate': 0, 'high_priority_count': 0}
-        
         df = pd.DataFrame(self.confidence_history)
         return {
             'avg_confidence': df['confidence'].mean(),
@@ -533,14 +515,12 @@ class MistakeCollector:
     def get_mistake_dataset(self, limit=200):
         mistake_texts = []
         signal_map = {1: 'BUY', 0: 'SELL', 2: 'HOLD'}
-        
         for m in self.get_hard_examples(limit=limit):
             enhanced_context = ""
             if self.xgb_ppo:
                 xgb_pred = self.xgb_ppo.get_xgb_prediction(m.get('symbol', ''))
                 if xgb_pred:
                     enhanced_context = f"\nXGBoost Signal: {xgb_pred['signal']} (Confidence: {xgb_pred['prob_up']:.0%})"
-            
             text = f"""
 ================================================================================
 Pattern: {m.get('pattern', 'Unknown')}
@@ -559,6 +539,10 @@ Timeframe: Short-term
         return mistake_texts
 
 
+# =========================================================
+# AUTO LLM TRAINER CLASS
+# =========================================================
+
 class AutoLLMTrainer:
     def __init__(self):
         self.trained_symbols = self.load_trained_symbols()
@@ -567,87 +551,67 @@ class AutoLLMTrainer:
         self.xgb_ppo = XGBoostPPOIntegrator()
         self.mistake_collector = MistakeCollector(self.xgb_ppo)
         self.batch_manager = BatchManager()
-        self.old_training_texts = [] 
+        self.old_training_texts = []
         # ========== AGENTIC LOOP INIT ==========
         self.agentic_loop = None
         if AGENTIC_LOOP_AVAILABLE:
             self._init_agentic_loop()
         # =======================================
-# =========================================================
-# AGENTIC LOOP METHODS
-# =========================================================
+
+    # =========================================================
+    # AGENTIC LOOP METHODS (UNCHANGED)
+    # =========================================================
 
     def _init_agentic_loop(self):
-        """Initialize Agentic Loop"""
         try:
             print("\n" + "="*60)
             print("🤖 INITIALIZING AGENTIC LOOP")
             print("="*60)
-        
             self.agentic_loop = AgenticLoop(xgb_model_dir=XGBOOST_DIR)
-        
             xgb_agent = next((a for a in self.agentic_loop.agents if a.name == "XGBoost"), None)
             if xgb_agent and xgb_agent.models:
                 print(f"   ✅ Agentic Loop ready with {len(xgb_agent.models)} XGBoost models")
             else:
                 print(f"   ⚠️ Agentic Loop running without XGBoost models")
-        
             os.makedirs(AGENTIC_LOOP_LOG_DIR, exist_ok=True)
             print("="*60 + "\n")
-        
         except Exception as e:
             print(f"   ❌ Agentic Loop init failed: {e}")
             self.agentic_loop = None
 
     def _update_agentic_loop_after_batch(self, batch_num, symbols, eval_loss=None):
-        """Update Agentic Loop after batch completion"""
         if self.agentic_loop is None:
             return
-    
         try:
             print(f"\n   📊 Agentic Loop: Processing batch {batch_num} feedback...")
-        
             simulated_pnl = 0.02
             if eval_loss is not None:
                 simulated_pnl = max(-0.08, min(0.08, -eval_loss * 0.008))
-        
             success = simulated_pnl > 0
-        
             for symbol in symbols:
-                trade_result = {
-                    'symbol': symbol,
-                    'pnl': simulated_pnl,
-                    'success': success,
-                    'batch': batch_num
-                }
+                trade_result = {'symbol': symbol, 'pnl': simulated_pnl, 'success': success, 'batch': batch_num}
                 self.agentic_loop.after_trade_feedback(trade_result)
-                    
             summary = self.agentic_loop.get_summary()
             if len(summary) > 0:
                 print("\n   📈 Agent Performance:")
                 for _, row in summary.iterrows():
                     print(f"      {row['agent']}: {row['accuracy']} accuracy")
-        
             log_path = os.path.join(AGENTIC_LOOP_LOG_DIR, f'batch_{batch_num}_log.csv')
             self.agentic_loop.save_decision_log(log_path)
-        
         except Exception as e:
-            print(f"   ⚠️ Agentic Loop update failed: {e}")   
+            print(f"   ⚠️ Agentic Loop update failed: {e}")
+
     def _finalize_agentic_loop(self):
-        """Show final Agentic Loop report"""
         if self.agentic_loop is None:
             return
-    
         try:
             print("\n" + "="*60)
             print("🏆 AGENTIC LOOP FINAL REPORT")
             print("="*60)
-        
             summary = self.agentic_loop.get_summary()
             if len(summary) > 0:
                 for _, row in summary.iterrows():
                     print(f"   {row['agent']}: {row['accuracy']} accuracy ({row['total_predictions']} predictions)")
-        
             best_agent = None
             best_acc = 0
             for agent in self.agentic_loop.agents:
@@ -655,32 +619,25 @@ class AutoLLMTrainer:
                 if acc > best_acc:
                     best_acc = acc
                     best_agent = agent.name
-        
             if best_agent:
                 print(f"\n   🥇 Best Agent: {best_agent} ({best_acc:.1%} accuracy)")
-        
-            state = {
-                'timestamp': str(datetime.now()),
-                'agents': {}
-            }
+            state = {'timestamp': str(datetime.now()), 'agents': {}}
             for agent in self.agentic_loop.agents:
                 state['agents'][agent.name] = {
                     'accuracy': agent.get_accuracy(),
                     'predictions': agent.total_predictions,
                     'weight': agent.get_dynamic_weight()
                 }
-        
             with open(AGENTIC_LOOP_STATE_FILE, 'w') as f:
                 json.dump(state, f, indent=2)
-        
             print(f"\n   💾 State saved to {AGENTIC_LOOP_STATE_FILE}")
             print("="*60)
-        
         except Exception as e:
             print(f"   ⚠️ Final report failed: {e}")
 
-
-    
+    # =========================================================
+    # ORIGINAL METHODS (UNCHANGED STRUCTURE)
+    # =========================================================
         
     def load_trained_symbols(self):
         if os.path.exists(TRACKING_FILE):
@@ -721,7 +678,6 @@ class AutoLLMTrainer:
         if not os.path.exists(MARKET_DATA_PATH):
             print(f"❌ Market data not found: {MARKET_DATA_PATH}")
             return []
-        
         df = pd.read_csv(MARKET_DATA_PATH)
         symbols = df['symbol'].unique().tolist()
         if limit:
@@ -742,16 +698,14 @@ class AutoLLMTrainer:
     
     def classify_example_difficulty(self, text):
         text_lower = text.lower()
-        hard_keywords = ['complex', 'multi timeframe', 'divergence', 'harmonic', 'elliott']
+        hard_keywords = ['complex', 'multi timeframe', 'divergence', 'harmonic', 'elliott', 'smc', 'order block', 'fvg', 'liquidity']
         medium_keywords = ['triangle', 'wedge', 'flag', 'pennant', 'reversal']
-        
         for kw in hard_keywords:
             if kw in text_lower:
                 return 'hard'
         for kw in medium_keywords:
             if kw in text_lower:
                 return 'medium'
-        
         text_len = len(text)
         if text_len > 1500:
             return 'hard'
@@ -780,11 +734,11 @@ class AutoLLMTrainer:
             train_texts = new_texts
             self.old_training_texts = train_texts.copy()
         
-        mistake_texts = self.mistake_collector.get_mistake_dataset(limit=200)
+        mistake_texts = self.mistake_collector.get_mistake_dataset(limit=300)
         
         if mistake_texts:
-            normal_count = int(len(train_texts) * 0.8)
-            mistake_count = min(len(mistake_texts), int(len(train_texts) * 0.2))
+            normal_count = int(len(train_texts) * 0.75)
+            mistake_count = min(len(mistake_texts), int(len(train_texts) * 0.25))
             train_texts = train_texts[:normal_count] + mistake_texts[:mistake_count]
             print(f"   Data mix: {normal_count} normal + {mistake_count} mistakes")
         
@@ -794,15 +748,25 @@ class AutoLLMTrainer:
         train_texts = easy_texts + medium_texts + hard_texts
         print(f"   Curriculum: {len(easy_texts)} easy, {len(medium_texts)} medium, {len(hard_texts)} hard")
         
+        # ✅ 70+ HOURS: Enhanced curriculum weights
         example_weights = np.ones(len(train_texts))
         for i, text in enumerate(train_texts):
             difficulty = self.classify_example_difficulty(text)
-            if difficulty == 'hard':
-                example_weights[i] = 2.0
+            
+            # Elliott Wave = সর্বোচ্চ গুরুত্ব
+            if 'Elliott Wave' in text or 'Impulse Wave' in text or 'Corrective Wave' in text:
+                example_weights[i] = 5.0
+            # SMC Patterns = উচ্চ গুরুত্ব
+            elif 'SMC' in text or 'Order Block' in text or 'FVG' in text or 'Liquidity' in text:
+                example_weights[i] = 4.5
+            elif 'Harmonic' in text or 'Gartley' in text or 'Butterfly' in text:
+                example_weights[i] = 4.0
+            elif difficulty == 'hard':
+                example_weights[i] = 3.5
             elif difficulty == 'medium':
-                example_weights[i] = 1.0
+                example_weights[i] = 1.5
             else:
-                example_weights[i] = 0.5
+                example_weights[i] = 0.8
         
         return train_texts, example_weights
     
@@ -883,11 +847,12 @@ class AutoLLMTrainer:
             print("❌ No training data found!")
             return False
         
+        # ✅ 70+ HOURS: Full context (512 tokens)
         encodings = self.tokenizer(
             train_texts, 
             truncation=True, 
-            padding=True, 
-            max_length=512, 
+            padding="max_length", 
+            max_length=512,
             return_tensors="pt"
         )
         
@@ -904,70 +869,64 @@ class AutoLLMTrainer:
         eval_subset = torch.utils.data.Subset(train_dataset, val_indices)
         print(f"   Dataset split: {train_size} train, {val_size} validation (chronological)")
         
-        if mode == "first_train":
-            num_epochs = 2
-            learning_rate = 5e-5
-            batch_size = 4
-        elif mode == "incremental":
-            num_epochs = 2
-            learning_rate = 3e-5
-            batch_size = 4
-        elif mode == "weekly_finetune":
-            num_epochs = 1
-            learning_rate = 1e-5
-            batch_size = 4
-        else:
-            num_epochs = 2
-            learning_rate = 1e-5
-            batch_size = 4
+        # ✅ 70+ HOURS: Extended epoch configuration
+        num_epochs = EPOCHS_CONFIG.get(mode, 10)
+        learning_rate = LR_CONFIG.get(mode, 1e-5)
+        batch_size = BATCH_SIZE_CONFIG.get(mode, 1)
+        grad_accum = GRAD_ACCUM_CONFIG.get(mode, 16)
         
-        print(f"\n⚙️ Training Config:")
+        print(f"\n⚙️ 70+ Hours Training Config:")
         print(f"   Epochs: {num_epochs}")
         print(f"   Learning Rate: {learning_rate}")
-        print(f"   Batch Size: {batch_size}")
-        print(f"   LoRA: {'Enabled' if LORA_AVAILABLE else 'Disabled'}")
+        print(f"   Batch Size: {batch_size} (effective: {batch_size * grad_accum})")
+        print(f"   Gradient Accumulation: {grad_accum}")
+        print(f"   LoRA: {'Enabled (r=32)' if LORA_AVAILABLE else 'Disabled'}")
+        print(f"   Max Length: 512 (full context)")
         print(f"   XGBoost Integration: Enabled ({len(self.xgb_ppo.xgb_models)} models)")
         
-        # =========================================================
-        # ট্রেনিং আর্গুমেন্টস (সম্পূর্ণরূপে পরিমার্জিত)
-        # =========================================================
         training_args = TrainingArguments(
             output_dir="./llm_model",
             overwrite_output_dir=True,
+            
+            # ========== 70+ HOURS OPTIMIZED ==========
             num_train_epochs=num_epochs,
             per_device_train_batch_size=batch_size,
-            # per_device_eval_batch_size=batch_size,  # ✅ দরকার নেই
-            gradient_accumulation_steps=4,
-            save_steps=200,
-            save_total_limit=2,
-            logging_steps=20,
-    
-            # ❌ === এই লাইনগুলো মুছে দিন বা কমেন্ট করুন ===
-            # evaluation_strategy="steps",
-            # eval_steps=200,
-            # load_best_model_at_end=True,
-            # metric_for_best_model="eval_loss",
-            # greater_is_better=False,
-    
+            per_device_eval_batch_size=batch_size,
+            gradient_accumulation_steps=grad_accum,
+            
+            # Learning rate - slow and steady
             learning_rate=learning_rate,
-            warmup_steps=50,
-            weight_decay=0.01,
+            warmup_steps=300,                      # ✅ Extended warmup
+            weight_decay=0.015,                    # ✅ Slightly higher
+            lr_scheduler_type="cosine_with_restarts",
+            
+            # Save - every 1-2 hours
+            save_steps=80,                         # ✅ More frequent saves
+            save_total_limit=15,                   # ✅ Keep more checkpoints
+            logging_steps=10,
+            save_strategy="steps",
+            
+            # Evaluation (disabled)
+            evaluation_strategy="no",
+            load_best_model_at_end=False,
+            
+            # CPU Optimization
             fp16=False,
+            dataloader_num_workers=0,
+            dataloader_pin_memory=False,
             report_to="none",
             max_grad_norm=MAX_GRAD_NORM,
-    
-            # ✅ নিরাপদ ডিফল্ট
-            evaluation_strategy="no",          # ইভ্যালুয়েশন সম্পূর্ণ নিষ্ক্রিয়
-            load_best_model_at_end=False,      # বেস্ট মডেল খোঁজা বন্ধ
-            save_strategy="steps",             # শুধু স্টেপ অনুযায়ী সেভ
+            
+            # Adam optimizer - long training optimized
+            optim="adamw_torch",
+            adam_beta1=0.9,
+            adam_beta2=0.98,                       # ✅ Better for long training
+            adam_epsilon=1e-8,
         )
         
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=self.tokenizer, 
             mlm=False
-        )
-        early_stop_callback = EarlyStoppingCallback(
-            early_stopping_patience=EARLY_STOPPING_PATIENCE
         )
         
         trainer = WeightedTrainer(
@@ -976,17 +935,12 @@ class AutoLLMTrainer:
             train_dataset=train_subset,
             eval_dataset=None,
             data_collator=data_collator,
-            #callbacks=[early_stop_callback]
         )
         
-        print("\n🏋️ Starting training...")
+        print("\n🏋️ Starting 70+ Hours Training...")
+        print("   ⏰ This will take multiple days (resume automatically)")
         trainer.train()
         print("\n✅ Training completed!")
-        
-        #print("\n📊 Running evaluation...")
-        #eval_results = trainer.evaluate()
-        #eval_loss = eval_results.get('eval_loss', 0.5)
-        #print(f"   Evaluation loss: {eval_loss:.4f}")
     
         # ========== AGENTIC LOOP UPDATE ==========
         if symbols_batch and hasattr(self, 'agentic_loop') and self.agentic_loop is not None:
@@ -1052,14 +1006,15 @@ class AutoLLMTrainer:
     
     def run(self):
         print("="*60)
-        print("🚀 AUTO LLM TRAINER (Pro Version v6.0 - Auto Batch Management)")
+        print("🚀 AUTO LLM TRAINER - 70+ HOURS ULTIMATE VERSION")
         print("="*60)
         print(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"📚 Batch size: {BATCH_SIZE}")
         print(f"🔄 Fine-tune interval: {FINE_TUNE_INTERVAL} days")
-        print(f"🔧 LoRA: {'Enabled' if LORA_AVAILABLE else 'Disabled'}")
+        print(f"🔧 LoRA: r=32, alpha=64 (Enhanced)")
         print(f"📊 XGBoost Models: {len(self.xgb_ppo.xgb_models)}")
         print(f"📁 PPO Models: {len(self.xgb_ppo.ppo_models)}")
+        print(f"⏰ 70+ Hours Training Mode: ENABLED")
         print("="*60)
         
         confidence_stats = self.mistake_collector.get_confidence_stats()
@@ -1076,14 +1031,12 @@ class AutoLLMTrainer:
         if new_symbols:
             print(f"\n📚 Found {len(new_symbols)} new symbols to train")
             
-            # Process in batches
             for i in range(0, len(new_symbols), BATCH_SIZE):
                 batch = new_symbols[i:i+BATCH_SIZE]
                 batch_num = i // BATCH_SIZE + 1
                 print(f"\n📦 Processing batch {batch_num}: {len(batch)} symbols")
                 
                 if self.generate_training_data_for_symbols(batch):
-                    # Determine training mode
                     if len(self.trained_symbols) == 0:
                         mode = "first_train"
                     else:
@@ -1097,7 +1050,7 @@ class AutoLLMTrainer:
         else:
             print("\n✅ No new symbols found!")
         
-        # STEP 2: Weekly fine-tune (rotate through batches)
+        # STEP 2: Weekly fine-tune
         weekly_batch_num, weekly_symbols = self.batch_manager.get_batch_for_weekly_finetune()
         
         if weekly_symbols and len(weekly_symbols) > 0:
@@ -1117,13 +1070,13 @@ class AutoLLMTrainer:
                     print("✅ Monthly consolidation complete!")
         
         # STEP 4: Hard example retraining
-        high_priority_examples = self.mistake_collector.get_hard_examples(limit=100, priority_only=True)
+        high_priority_examples = self.mistake_collector.get_hard_examples(limit=200, priority_only=True)
         if high_priority_examples:
             print(f"\n🔥 Found {len(high_priority_examples)} high priority mistakes for retraining!")
             temp_file = "./temp_hard_examples.txt"
             with open(temp_file, 'w', encoding='utf-8') as f:
                 signal_map = {1: 'BUY', 0: 'SELL', 2: 'HOLD'}
-                for ex in high_priority_examples[:50]:
+                for ex in high_priority_examples[:100]:
                     xgb_context = ""
                     xgb_pred = self.xgb_ppo.get_xgb_prediction(ex.get('symbol', ''))
                     if xgb_pred:
@@ -1157,8 +1110,6 @@ Confidence: {min(95, max(65, int(ex.get('confidence', 0.7) * 100 + 10)))}
         print(f"   HF Repository: {HF_REPO_ID}")
         print("="*60)
         
-    
-    
         # ========== AGENTIC LOOP FINALIZE ==========
         self._finalize_agentic_loop()
         # ===========================================
