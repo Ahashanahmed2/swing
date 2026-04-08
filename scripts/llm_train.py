@@ -974,18 +974,6 @@ class AutoLLMTrainer:
         
         print("\n📊 Running evaluation...")
         eval_results = trainer.evaluate()
-        print(f"   Evaluation loss: {eval_results.get('eval_loss', 0):.4f}")
-        
-        self.model.save_pretrained("./llm_model")
-        self.tokenizer.save_pretrained("./llm_model")
-        print("💾 Model saved locally")
-        
-        self.upload_to_huggingface(mode)
-        return Atr
-        print("\n✅ Training completed!")
-    
-        print("\n📊 Running evaluation...")
-        eval_results = trainer.evaluate()
         eval_loss = eval_results.get('eval_loss', 0.5)
         print(f"   Evaluation loss: {eval_loss:.4f}")
     
