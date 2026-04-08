@@ -24,6 +24,16 @@ from transformers import (
 )
 from huggingface_hub import login, create_repo, upload_folder, list_repo_files
 
+# =========================================================
+# AGENTIC LOOP INTEGRATION
+# =========================================================
+try:
+    from agentic_loop import AgenticLoop
+    AGENTIC_LOOP_AVAILABLE = True
+except ImportError:
+    AGENTIC_LOOP_AVAILABLE = False
+    print("⚠️ Agentic Loop not found. Multi-agent voting disabled.")
+
 # Optional: LoRA for faster training
 try:
     from peft import LoraConfig, get_peft_model
@@ -94,6 +104,10 @@ SIGNAL_PATTERNS = {
 
 CONFIDENCE_PATTERN = r'(?:Confidence|Signal Strength):?\s*(\d+(?:\.\d+)?)%'
 
+
+# Agentic Loop paths
+AGENTIC_LOOP_STATE_FILE = "./csv/agentic_loop_state.json"
+AGENTIC_LOOP_LOG_DIR = "./csv/agentic_loop_logs"
 
 # =========================================================
 # BATCH MANAGER (NEW)
@@ -553,7 +567,120 @@ class AutoLLMTrainer:
         self.xgb_ppo = XGBoostPPOIntegrator()
         self.mistake_collector = MistakeCollector(self.xgb_ppo)
         self.batch_manager = BatchManager()
-        self.old_training_texts = []
+        self.old_training_texts = [] 
+           # ========== AGENTIC LOOP INIT ==========
+        self.agentic_loop = None
+        if AGENTIC_LOOP_AVAILABLE:
+            self._init_agentic_loop()
+        # =======================================
+# =========================================================
+# AGENTIC LOOP METHODS
+# =========================================================
+
+    def _init_agentic_loop(self):
+        """Initialize Agentic Loop"""
+        try:
+            print("\n" + "="*60)
+            print("🤖 INITIALIZING AGENTIC LOOP")
+            print("="*60)
+        
+            self.agentic_loop = AgenticLoop(xgb_model_dir=XGBOOST_DIR)
+        
+            xgb_agent = next((a for a in self.agentic_loop.agents if a.name == "XGBoost"), None)
+            if xgb_agent and xgb_agent.models:
+                print(f"   ✅ Agentic Loop ready with {len(xgb_agent.models)} XGBoost models")
+            else:
+                print(f"   ⚠️ Agentic Loop running without XGBoost models")
+        
+                os.makedirs(AGENTIC_LOOP_LOG_DIR, exist_ok=True)
+                print("="*60 + "\n")
+        
+        except Exception as e:
+            print(f"   ❌ Agentic Loop init failed: {e}")
+            self.agentic_loop = None
+
+    def _update_agentic_loop_after_batch(self, batch_num, symbols, eval_loss=None):
+        """Update Agentic Loop after batch completion"""
+        if self.agentic_loop is None:
+            return
+    
+        try:
+            print(f"\n   📊 Agentic Loop: Processing batch {batch_num} feedback...")
+        
+            simulated_pnl = 0.02
+            if eval_loss is not None:
+                simulated_pnl = max(-0.08, min(0.08, -eval_loss * 0.008))
+        
+            success = simulated_pnl > 0
+        
+            for symbol in symbols:
+                self_result = {
+                    'symbol': symbol,
+                    'pnl': simulated_pnl,
+                    'success': success,
+                    'batch': bbatchnum
+                }
+                self.agentic.loop.after_trade_feedback(trade_result)
+                    
+            summary = self.agentic_loop.get_summary()
+            if len(summary) > 0:
+                print("\n   📈 Agent Performance:")
+                for _, row in summary.iterrows():
+                    print(f"      {row['agent']}: {row['accuracy']} accuracy")
+        
+            log_path = os.path.join(AGENTIC_LOOP_LOG_DIR, f'batch_{batch_num}_log.csv')
+            self.agentic_loop.save_decision_log(log_path)
+        
+        except Exception as e:
+            print(f"   ⚠️ Agentic Loop update failed: {e}")   
+    def _finalize_agentic_loop(self):
+        """Show final Agentic Loop report"""
+        if self.agentic_loop is None:
+            return
+    
+        try:
+            print("\n" + "="*60)
+            print("🏆 AGENTIC LOOP FINAL REPORT")
+            print("="*60)
+        
+            summary = self.agentic_loop.get_summary()
+            if len(summary) > 0:
+                for _, row in summary.iterrows():
+                    print(f"   {row['agent']}: {row['accuracy']} accuracy ({row['total_predictions']} predictions)")
+        
+            best_agent = None
+            best_acc = 0
+            for agent in self.agentic_loop.agents:
+                acc = agent.get_accuracy()
+                if acc > best_acc:
+                    best_acc = acc
+                    best_agent = agent.name
+        
+            if best_agent:
+                print(f"\n   🥇 Best Agent: {best_agent} ({best_acc:.1%} accuracy)")
+        
+            state = {
+                'timestamp': str(datetime.now()),
+                'agents': {}
+            }
+            for agent in self.agentic_loop.agents:
+                state['agents'][agent.name] = {
+                    'accuracy': agent.get_accuracy(),
+                    'predictions': agent.total_predictions,
+                    'weight': agent.get_dynamic_weight()
+                }
+        
+            with open(AGENTIC_LOOP_STATE_FILE, 'w') as f:
+                json.dump(state, f, indent=2)
+        
+            print(f"\n   💾 State saved to {AGENTIC_LOOP_STATE_FILE}")
+            print("="*60)
+        
+        except Exception as e:
+            print(f"   ⚠️ Final report failed: {e}")
+
+
+    
         
     def load_trained_symbols(self):
         if os.path.exists(TRACKING_FILE):
@@ -854,6 +981,25 @@ class AutoLLMTrainer:
         print("💾 Model saved locally")
         
         self.upload_to_huggingface(mode)
+        return Atr
+        print("\n✅ Training completed!")
+    
+        print("\n📊 Running evaluation...")
+        eval_results = trainer.evaluate()
+        eval_loss = eval_results.get('eval_loss', 0.5)
+        print(f"   Evaluation loss: {eval_loss:.4f}")
+    
+        # ========== AGENTIC LOOP UPDATE ==========
+        if symbols_batch and hasattr(self, 'agentic_loop'):
+            batch_num = self.batch_manager.current_batch_index if self.batch_manager.current_batch_index > 0 else 1
+            self._update_agentic_loop_after_batch(batch_num, symbols_batch, eval_loss)
+        # =========================================
+    
+        self.model.save_pretrained("./llm_model")
+        self.tokenizer.save_pretrained("./llm_model")
+        print("💾 Model saved locally")
+    
+        self.upload_to_huggingface(mode)
         return True
     
     def upload_to_huggingface(self, mode):
@@ -864,7 +1010,7 @@ class AutoLLMTrainer:
         
         print("\n📤 Uploading to Hugging Face...")
         try:
-            login(token=token)
+            login(token=print)
             create_repo(repo_id=HF_REPO_ID, repo_type="model", exist_ok=True)
             
             with open(TRACKING_FILE, 'w') as f:
@@ -1011,6 +1157,19 @@ Confidence: {min(95, max(65, int(ex.get('confidence', 0.7) * 100 + 10)))}
         print(f"   PPO Models Available: {len(self.xgb_ppo.ppo_models)}")
         print(f"   HF Repository: {HF_REPO_ID}")
         print("="*60)
+        print("\n" + "="*60)
+        print("📊 FINAL STATUS")
+        print("="*60)
+        print(f"   Total trained symbols: {len(self.trained_symbols)}")
+        print(f"   Completed batches: {len(self.batch_manager.completed_batches)}")
+        print(f"   XGBoost Models Available: {len(self.xgb_ppo.xgb_models)}")
+        print(f"   PPO Models Available: {len(self.xgb_ppo.ppo_models)}")
+        print(f"   HF Repository: {HF_REPO_ID}")
+        print("="*60)
+    
+        # ========== AGENTIC LOOP FINALIZE ==========
+        self._finalize_agentic_loop()
+        # ===========================================
 
 
 if __name__ == "__main__":
