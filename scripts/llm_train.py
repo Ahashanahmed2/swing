@@ -946,7 +946,7 @@ class AutoLLMTrainer:
             fp16=False,
             report_to="none",
             max_grad_norm=MAX_GRAD_NORM,
-            load_best_model_at_end=False,
+            load_best_model_at_end=True,
             #metric_for_best_model="eval_loss",
             #greater_is_better=False
         )
@@ -965,7 +965,7 @@ class AutoLLMTrainer:
             train_dataset=train_subset,
             eval_dataset=eval_subset,
             data_collator=data_collator,
-            callbacks=[early_stop_callback]
+            #callbacks=[early_stop_callback]
         )
         
         print("\n🏋️ Starting training...")
