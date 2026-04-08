@@ -50,9 +50,9 @@ warnings.filterwarnings('ignore')
 # =========================================================
 
 # Batch configuration for incremental training
-BATCH_SIZE = 40  # ✅ 100 → 40 (ছোট ব্যাচ, ধীরে ট্রেনিং)
+BATCH_SIZE = 1  # ✅ 1 → 40 (ছোট ব্যাচ, ধীরে ট্রেনিং)
 TOTAL_BATCHES = "auto"
-MAX_SYMBOLS_PER_BATCH = 40
+MAX_SYMBOLS_PER_BATCH = 1 # 1-> 40
 
 HF_REPO_ID = "ahashanahmed/llm-stock-model"
 BASE_MODEL = "distilgpt2"
