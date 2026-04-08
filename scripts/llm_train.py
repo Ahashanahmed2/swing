@@ -123,7 +123,7 @@ AGENTIC_LOOP_LOG_DIR = "./csv/agentic_loop_logs"
 # 70+ HOURS EPOCH CONFIGURATION
 # =========================================================
 EPOCHS_CONFIG = {
-    "first_train": 2,
+    "first_train": 1,
     "incremental": 1,
     "weekly_finetune": 1,
     "consolidate": 2,
