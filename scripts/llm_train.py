@@ -587,7 +587,7 @@ class MistakeCollector:
         return {
             'avg_confidence': df['confidence'].mean() if 'confidence' in df.columns else 0,
             'mistake_rate': (df['is_mistake'].mean() * 100) if 'is_mistake' in df.columns else 0,
-            'low_confidence_count': len(df[df['confidence'] < HARD_EXAMPLE_THRESHOLD]) if 'confidence' in df.columns else 0,
+            'low_confidence_count': len(df[df['confidence'] < aHARD_EXAMPLE_THRESHOLD]) if 'confidence' in df.columns else 0,
             'high_priority_count': len(df[df.get('is_high_priority', False)])
         }
 
