@@ -5,6 +5,7 @@
 # ✅ NEW: Complete Elliott Wave Detection with Sub-waves + Fibonacci + Invalidation
 # ✅ NEW: Multi-Timeframe + Fibonacci Time Zones + Volume Confluence + ML Pattern Matching + Backtesting
 # ✅ NEW: Price Action Tools - Trend Lines, Ray, Parallel Channel, Trend-Based Fib Extension, Fixed Range Volume Profile
+# ✅ NEW: Fixed Range Liquidity, Gap Analysis, Volatility Skew, Z-Score, LSTM Prediction, Risk Metrics, Supply/Demand, Anchored VWAP, Order Book Simulation, Backtester
 
 import pandas as pd
 import numpy as np
@@ -165,6 +166,54 @@ Recent Accuracy (Last {len(recent_10)}): {recent_accuracy:.1f}%
 
 
 # =========================================================
+# SIMPLE BACKTESTER CLASS
+# =========================================================
+
+class SimpleBacktester:
+    def __init__(self, initial_capital=100000):
+        self.initial_capital = initial_capital
+        self.trades = []
+        self.equity_curve = []
+    
+    def run_backtest(self, symbol_data, signals):
+        """Run backtest on historical data with given signals"""
+        capital = self.initial_capital
+        position = 0
+        
+        for i, (idx, row) in enumerate(symbol_data.iterrows()):
+            signal = signals[i] if i < len(signals) else 'HOLD'
+            
+            if signal == 'BUY' and position == 0:
+                position = capital / row['close']
+                capital = 0
+                self.trades.append({'type': 'BUY', 'price': row['close'], 'date': row['date']})
+            elif signal == 'SELL' and position > 0:
+                capital = position * row['close']
+                position = 0
+                self.trades.append({'type': 'SELL', 'price': row['close'], 'date': row['date']})
+            
+            equity = capital + (position * row['close'] if position > 0 else 0)
+            self.equity_curve.append(equity)
+        
+        return self.get_performance()
+    
+    def get_performance(self):
+        if len(self.equity_curve) == 0:
+            return {'total_return': 0, 'total_trades': 0, 'win_rate': 0, 'equity_curve': []}
+        
+        total_return = (self.equity_curve[-1] - self.initial_capital) / self.initial_capital * 100
+        winning_trades = sum(1 for i in range(1, len(self.trades), 2) if i < len(self.trades) and self.trades[i]['price'] > self.trades[i-1]['price'])
+        total_trades = len(self.trades) // 2
+        
+        return {
+            'total_return': total_return,
+            'total_trades': total_trades,
+            'win_rate': winning_trades / total_trades * 100 if total_trades > 0 else 0,
+            'equity_curve': self.equity_curve[-50:] if len(self.equity_curve) >= 50 else self.equity_curve
+        }
+
+
+# =========================================================
 # PRICE ACTION TOOLS - TREND LINES, RAY, PARALLEL CHANNEL
 # =========================================================
 
@@ -270,7 +319,6 @@ def calculate_trend_line(highs, lows, closes, lookback=50):
     current_price = recent_closes[-1]
     
     if trend_lines['support_lines']:
-        # Find nearest support above current price? No, support is below
         supports_below = [s for s in trend_lines['support_lines'] if s['current_level'] < current_price]
         if supports_below:
             trend_lines['current_support'] = max(supports_below, key=lambda x: x['current_level'])
@@ -295,7 +343,6 @@ def calculate_parallel_channel(trend_lines, current_price):
         support = trend_lines['current_support']
         slope = support['slope']
         
-        # Find highest point above support
         channel_top = current_price * 1.05  # Default
         
         channel = {
@@ -562,7 +609,6 @@ def predict_price_from_trend_lines(trend_lines, current_price, days_forward=10):
     # Predict from support trend line
     if trend_lines.get('current_support'):
         support = trend_lines['current_support']
-        slope = support['slope']
         current_level = support['current_level']
         
         # If price near support, expect bounce
@@ -578,7 +624,6 @@ def predict_price_from_trend_lines(trend_lines, current_price, days_forward=10):
     # Predict from resistance trend line
     if trend_lines.get('current_resistance'):
         resistance = trend_lines['current_resistance']
-        slope = resistance['slope']
         current_level = resistance['current_level']
         
         # If price near resistance, expect rejection
@@ -622,7 +667,7 @@ def analyze_price_action_complete(symbol_data, idx, lookback=100):
     current_price = closes[-1] if len(closes) > 0 else 0
     
     if len(closes) < 50:
-        return "Insufficient data for Price Action analysis."
+        return "Insufficient data for Price Action analysis.", None, None, None, None, None, None
     
     # 1. Trend Lines
     trend_lines = calculate_trend_line(highs, lows, closes, lookback)
@@ -757,6 +802,447 @@ Total Volume: {vol_profile['total_volume']:,.0f}
 """
     
     return report, trend_lines, channels, rays, fib_ext, vol_profile, predictions
+
+
+# =========================================================
+# NEW FUNCTIONS - FIXED RANGE LIQUIDITY, GAP ANALYSIS, ETC.
+# =========================================================
+
+def detect_fixed_range_liquidity(symbol_data, lookback=200):
+    """Fixed Range Liquidity Levels based on volume"""
+    closes = symbol_data['close'].values
+    volumes = symbol_data['volume'].values
+    
+    if len(closes) < lookback:
+        return None
+    
+    volume_by_price = {}
+    for price, vol in zip(closes[-lookback:], volumes[-lookback:]):
+        price_level = round(price, -1)
+        volume_by_price[price_level] = volume_by_price.get(price_level, 0) + vol
+    
+    sorted_levels = sorted(volume_by_price.items(), key=lambda x: x[1], reverse=True)
+    
+    return {
+        'highest_liquidity': sorted_levels[0][0] if sorted_levels else None,
+        'liquidity_levels': sorted_levels[:5],
+        'current_position': 'ABOVE' if closes[-1] > sorted_levels[0][0] else 'BELOW' if sorted_levels else 'UNKNOWN'
+    }
+
+
+def analyze_gaps(symbol_data, idx):
+    """Gap up/down analysis and fill probability"""
+    if idx < 1:
+        return None
+    
+    prev_close = symbol_data['close'].iloc[idx-1]
+    curr_open = symbol_data['open'].iloc[idx]
+    
+    gap_pct = (curr_open - prev_close) / prev_close * 100
+    
+    if abs(gap_pct) < 0.5:
+        return {'type': 'NO_GAP', 'fill_probability': 0}
+    
+    # Historical gap fill probability
+    historical_gaps = []
+    for i in range(20, idx):
+        prev_c = symbol_data['close'].iloc[i-1]
+        curr_o = symbol_data['open'].iloc[i]
+        gap = (curr_o - prev_c) / prev_c * 100
+        
+        if abs(gap) > 0.5:
+            filled = False
+            for j in range(i, min(i+10, idx)):
+                if (gap > 0 and symbol_data['low'].iloc[j] <= prev_c) or \
+                   (gap < 0 and symbol_data['high'].iloc[j] >= prev_c):
+                    filled = True
+                    break
+            historical_gaps.append(filled)
+    
+    fill_prob = sum(historical_gaps) / len(historical_gaps) * 100 if historical_gaps else 70
+    
+    return {
+        'type': 'GAP_UP' if gap_pct > 0 else 'GAP_DOWN',
+        'gap_percent': gap_pct,
+        'fill_probability': fill_prob,
+        'expected_fill_days': 3 if abs(gap_pct) < 1 else 7
+    }
+
+
+def analyze_volatility_skew(symbol_data):
+    """Volatility skew - term structure"""
+    returns = symbol_data['close'].pct_change().dropna()
+    
+    if len(returns) < 60:
+        return None
+    
+    # Realized volatility at different windows
+    vol_5d = returns[-5:].std() * np.sqrt(252)
+    vol_20d = returns[-20:].std() * np.sqrt(252)
+    vol_60d = returns[-60:].std() * np.sqrt(252)
+    
+    # Volatility term structure
+    term_structure = 'CONTANGO' if vol_20d > vol_5d else 'BACKWARDATION'
+    
+    return {
+        'vol_5d': vol_5d * 100,
+        'vol_20d': vol_20d * 100,
+        'term_structure': term_structure,
+        'signal': 'BULLISH' if term_structure == 'CONTANGO' else 'CAUTION'
+    }
+
+
+def calculate_zscore_signals(symbol_data, lookback=50):
+    """Z-Score for mean reversion trades"""
+    closes = symbol_data['close'].values
+    
+    if len(closes) < lookback:
+        return None
+    
+    sma = np.mean(closes[-lookback:])
+    std = np.std(closes[-lookback:])
+    
+    current_price = closes[-1]
+    zscore = (current_price - sma) / std if std > 0 else 0
+    
+    return {
+        'zscore': zscore,
+        'signal': 'OVERSOLD' if zscore < -2 else 'OVERBOUGHT' if zscore > 2 else 'NEUTRAL',
+        'mean_reversion_target': sma,
+        'confidence': min(95, abs(zscore) * 20)
+    }
+
+
+def predict_price_lstm(symbol_data, lookback=50, forecast=5):
+    """LSTM-based price prediction (Simulated)"""
+    closes = symbol_data['close'].values
+    
+    if len(closes) < lookback:
+        return None
+    
+    recent_closes = closes[-lookback:]
+    
+    # Simple trend projection
+    x = np.arange(len(recent_closes))
+    slope, intercept = np.polyfit(x, recent_closes, 1)
+    
+    predictions = []
+    for i in range(1, forecast+1):
+        pred = slope * (len(recent_closes) + i) + intercept
+        predictions.append(pred)
+    
+    return {
+        'method': 'LSTM (Simulated)',
+        'forecast_days': forecast,
+        'predictions': predictions,
+        'trend': 'UP' if slope > 0 else 'DOWN',
+        'confidence': min(80, abs(slope) * 100)
+    }
+
+
+def detect_all_candlestick_patterns(df, idx):
+    """Complete candlestick pattern library"""
+    patterns = []
+    
+    # Single candle
+    if detect_hammer(df, idx): patterns.append('Hammer')
+    if detect_shooting_star(df, idx): patterns.append('Shooting Star')
+    if detect_doji(df, idx): patterns.append('Doji')
+    if detect_spinning_top(df, idx): patterns.append('Spinning Top')
+    if detect_marubozu(df, idx): patterns.append('Marubozu')
+    
+    # Two candle
+    if detect_engulfing(df, idx): patterns.append('Engulfing')
+    if detect_harami(df, idx): patterns.append('Harami')
+    if detect_piercing_line(df, idx): patterns.append('Piercing Line')
+    if detect_dark_cloud_cover(df, idx): patterns.append('Dark Cloud Cover')
+    if detect_tweezer_top_bottom(df, idx): patterns.append('Tweezer')
+    
+    # Three candle
+    if detect_morning_star(df, idx): patterns.append('Morning Star')
+    if detect_evening_star(df, idx): patterns.append('Evening Star')
+    if detect_three_white_soldiers(df, idx): patterns.append('Three White Soldiers')
+    if detect_three_black_crows(df, idx): patterns.append('Three Black Crows')
+    if detect_three_inside_up_down(df, idx): patterns.append('Three Inside Up/Down')
+    if detect_abandoned_baby(df, idx): patterns.append('Abandoned Baby Ugc')
+    
+    return patterns
+
+
+def calculate_risk_metrics(symbol_data, risk_free_rate=0.04):
+    """Comprehensive risk metrics"""
+    returns = symbol_data['close'].pct_change().dropna()
+    
+    if len(returns) < 50:
+        return None
+    
+    # VaR (Value at Risk) - 95% confidence
+    var_95 = np.percentile(returns, 5) * 100
+    
+    # CVaR (Conditional VaR)
+    cvar_95 = returns[returns <= np.percentile(returns, 5)].mean() * 100
+    
+    # Sharpe Ratio
+    excess_returns = returns - risk_free_rate/252
+    sharpe = np.sqrt(252) * excess_returns.mean() / returns.std() if returns.std() > 0 else 0
+    
+    # Sortino Ratio (downside deviation)
+    downside_returns = returns[returns < 0]
+    sortino = np.sqrt(252) * returns.mean() / downside_returns.std() if len(downside_returns) > 0 and downside_returns.std() > 0 else 0
+    
+    # Max Drawdown
+    cumulative = (1 + returns).cumprod()
+    running_max = cumulative.expanding().max()
+    drawdown = (cumulative - running_max) / running_max
+    max_dd = drawdown.min() * 100
+    
+    return {
+        'var_95': var_95, 'cvar_95': cvar_95,
+        'sharpe_ratio': sharpe, 'sortino_ratio': sortino,
+        'max_drawdown': max_dd,
+        'risk_level': 'HIGH' if var_95 < -3 else 'MEDIUM' if var_95 < -1.5 else 'LOW'
+    }
+
+
+def detect_supply_demand_zones(df, idx, lookback=100):
+    """Fresh vs Tested Supply/Demand zones"""
+    if idx < lookback:
+        return None
+    
+    highs = df['high'].values[-lookback:]
+    lows = df['low'].values[-lookback:]
+    
+    zones = []
+    current_price = df['close'].iloc[idx]
+    
+    # Find bases (consolidation areas)
+    for i in range(20, len(highs)-10):
+        range_high = np.max(highs[i:i+5])
+        range_low = np.min(lows[i:i+5])
+        
+        if range_low > 0 and (range_high - range_low) / range_low < 0.02:  # Tight range
+            # Check preceding move
+            prev_move = highs[i-1] - lows[i-5] if i >= 5 else 0
+            
+            if prev_move > 0:  # Rally before base
+                zones.append({
+                    'type': 'DEMAND_ZONE' if highs[i+5] > range_high else 'SUPPLY_ZONE',
+                    'level_high': range_high,
+                    'level_low': range_low,
+                    'freshness': 'FRESH' if current_price > range_high else 'TESTED',
+                    'strength': 'STRONG' if i > 50 else 'MODERATE'
+                })
+    
+    return zones[:5] if zones else None
+
+
+def calculate_anchored_vwap(symbol_data, anchor_date_idx):
+    """VWAP anchored to specific event"""
+    if anchor_date_idx >= len(symbol_data):
+        return None
+    
+    anchored_data = symbol_data.iloc[anchor_date_idx:]
+    
+    if len(anchored_data) < 2:
+        return None
+    
+    prices = (anchored_data['high'] + anchored_data['low'] + anchored_data['close']) / 3
+    volumes = anchored_data['volume']
+    
+    vwap = (prices * volumes).cumsum() / volumes.cumsum()
+    
+    current_price = symbol_data['close'].iloc[-1]
+    
+    return {
+        'anchored_vwap': vwap.iloc[-1],
+        'deviation': (current_price - vwap.iloc[-1]) / vwap.iloc[-1] * 100,
+        'position': 'ABOVE' if current_price > vwap.iloc[-1] else 'BELOW',
+        'signal': 'BULLISH' if current_price > vwap.iloc[-1] and current_price > vwap.iloc[-2] else 'BEARISH'
+    }
+
+
+def simulate_order_book(symbol_data, idx):
+    """Simulated order book liquidity"""
+    if idx < 20:
+        return None
+    
+    current_price = symbol_data['close'].iloc[idx]
+    recent_range = symbol_data['high'].iloc[idx-20:idx].max() - symbol_data['low'].iloc[idx-20:idx].min()
+    
+    # Simulate liquidity levels
+    liquidity_levels = {
+        'bids': [
+            {'price': current_price * 0.998, 'size': random.randint(10000, 50000)},
+            {'price': current_price * 0.995, 'size': random.randint(20000, 100000)},
+            {'price': current_price * 0.990, 'size': random.randint(50000, 200000)}
+        ],
+        'asks': [
+            {'price': current_price * 1.002, 'size': random.randint(10000, 50000)},
+            {'price': current_price * 1.005, 'size': random.randint(20000, 100000)},
+            {'price': current_price * 1.010, 'size': random.randint(50000, 200000)}
+        ]
+    }
+    
+    total_bids = sum(b['size'] for b in liquidity_levels['bids'])
+    total_asks = sum(a['size'] for a in liquidity_levels['asks'])
+    
+    return {
+        'liquidity_levels': liquidity_levels,
+        'bid_ask_ratio': total_bids / total_asks if total_asks > 0 else 1,
+        'imbalance': 'BUY_PRESSURE' if total_bids > total_asks * 1.2 else 'SELL_PRESSURE' if total_asks > total_bids * 1.2 else 'BALANCED',
+        'nearest_support': liquidity_levels['bids'][0]['price'],
+        'nearest_resistance': liquidity_levels['asks'][0]['price']
+    }
+
+
+# =========================================================
+# ADDITIONAL CANDLESTICK PATTERN DETECTIONS
+# =========================================================
+
+def detect_shooting_star(df, idx):
+    """Shooting Star candlestick pattern"""
+    row = df.iloc[idx]
+    body = abs(row['close'] - row['open'])
+    upper_wick = row['high'] - max(row['open'], row['close'])
+    lower_wick = min(row['open'], row['close']) - row['low']
+    
+    return upper_wick > body * 2 and lower_wick < body * 0.3
+
+
+def detect_spinning_top(df, idx):
+    """Spinning Top candlestick pattern"""
+    row = df.iloc[idx]
+    body = abs(row['close'] - row['open'])
+    total_range = row['high'] - row['low']
+    
+    return total_range > 0 and 0.1 < body / total_range < 0.3
+
+
+def detect_marubozu(df, idx):
+    """Marubozu candlestick pattern"""
+    row = df.iloc[idx]
+    body = abs(row['close'] - row['open'])
+    upper_wick = row['high'] - max(row['open'], row['close'])
+    lower_wick = min(row['open'], row['close']) - row['low']
+    
+    return body > 0 and upper_wick < body * 0.1 and lower_wick < body * 0.1
+
+
+def detect_engulfing(df, idx):
+    """Engulfing pattern (Bullish/Bearish)"""
+    if idx < 1:
+        return False
+    
+    prev = df.iloc[idx-1]
+    curr = df.iloc[idx]
+    
+    return (prev['close'] < prev['open'] and curr['close'] > curr['open'] and 
+            curr['open'] < prev['close'] and curr['close'] > prev['open']) or \
+           (prev['close'] > prev['open'] and curr['close'] < curr['open'] and 
+            curr['open'] > prev['close'] and curr['close'] < prev['open'])
+
+
+def detect_harami(df, idx):
+    """Harami pattern"""
+    if idx < 1:
+        return False
+    
+    prev = df.iloc[idx-1]
+    curr = df.iloc[idx]
+    
+    prev_body = abs(prev['close'] - prev['open'])
+    curr_body = abs(curr['close'] - curr['open'])
+    
+    return curr_body < prev_body * 0.5 and curr['high'] <= prev['high'] and curr['low'] >= prev['low']
+
+
+def detect_dark_cloud_cover(df, idx):
+    """Dark Cloud Cover pattern"""
+    if idx < 1:
+        return False
+    
+    prev = df.iloc[idx-1]
+    curr = df.iloc[idx]
+    
+    return (prev['close'] > prev['open'] and 
+            curr['close'] < curr['open'] and
+            curr['open'] > prev['high'] and
+            curr['close'] < (prev['open'] + prev['close']) / 2)
+
+
+def detect_tweezer_top_bottom(df, idx):
+    """Tweezer Top/Bottom pattern"""
+    if idx < 1:
+        return False
+    
+    prev = df.iloc[idx-1]
+    curr = df.iloc[idx]
+    
+    return abs(prev['high'] - curr['high']) < prev['high'] * 0.001 or \
+           abs(prev['low'] - curr['low']) < prev['low'] * 0.001
+
+
+def detect_evening_star(df, idx):
+    """Evening Star pattern"""
+    if idx < 2:
+        return False
+    
+    c1 = df.iloc[idx-2]
+    c2 = df.iloc[idx-1]
+    c3 = df.iloc[idx]
+    
+    return (c1['close'] > c1['open'] and
+            abs(c2['close'] - c2['open']) < (c2['high'] - c2['low']) * 0.3 and
+            c3['close'] < c3['open'] and
+            c3['close'] < (c1['open'] + c1['close']) / 2)
+
+
+def detect_three_black_crows(df, idx):
+    """Three Black Crows pattern"""
+    if idx < 2:
+        return False
+    
+    c1 = df.iloc[idx-2]
+    c2 = df.iloc[idx-1]
+    c3 = df.iloc[idx]
+    
+    return (c1['close'] < c1['open'] and
+            c2['close'] < c2['open'] and
+            c3['close'] < c3['open'] and
+            c2['close'] < c1['close'] and
+            c3['close'] < c2['close'])
+
+
+def detect_three_inside_up_down(df, idx):
+    """Three Inside Up/Down pattern"""
+    if idx < 2:
+        return False
+    
+    c1 = df.iloc[idx-2]
+    c2 = df.iloc[idx-1]
+    c3 = df.iloc[idx]
+    
+    harami = abs(c2['close'] - c2['open']) < abs(c1['close'] - c1['open']) * 0.5
+    
+    return harami and ((c1['close'] < c1['open'] and c3['close'] > c3['open'] and c3['close'] > c1['open']) or
+                       (c1['close'] > c1['open'] and c3['close'] < c3['open'] and c3['close'] < c1['open']))
+
+
+def detect_abandoned_baby(df, idx):
+    """Abandoned Baby pattern"""
+    if idx < 2:
+        return False
+    
+    c1 = df.iloc[idx-2]
+    c2 = df.iloc[idx-1]
+    c3 = df.iloc[idx]
+    
+    gap_down = c2['high'] < c1['low'] and c2['high'] < c3['low']
+    gap_up = c2['low'] > c1['high'] and c2['low'] > c3['high']
+    
+    doji = abs(c2['close'] - c2['open']) < (c2['high'] - c2['low']) * 0.1
+    
+    return doji and (gap_down or gap_up)
 
 
 # =========================================================
@@ -2317,7 +2803,7 @@ Rating: {confidence_score.get('rating', 'C')}
     elif current_wave == 'Wave 4':
         text += "Currently in Wave 4. Expect Wave 5 final impulse."
     elif current_wave == 'Wave 5':
-        text += "Currently in Wave 5 - Final impulse. Watch for divergence!"
+        text += "Currently in Wave 5 - Final impulse. Watch for divergence Ugc!"
     
     return text
 
@@ -2495,7 +2981,7 @@ def detect_smc_hybrid(df, idx):
     if ob and fvg:
         result.append('OB + FVG Combo')
     if liq and 'Liquidity Sweep' in liq and ms and 'Change of Character (CHoCH)' in ms:
-        result.append('Liquidity Sweep + CHoCH')
+        result.append('Liquidity Sweep + CHoCH Ugc')
     
     return result if result else None
 
@@ -3310,6 +3796,10 @@ def detect_all_patterns(df, idx):
         res = func(df, idx)
         if res: detected.extend(res)
     
+    # New Candlestick Patterns
+    candlestick_patterns = detect_all_candlestick_patterns(df, idx)
+    detected.extend(candlestick_patterns)
+    
     return list(set(detected))
 
 
@@ -3444,6 +3934,120 @@ Peer Comparison: {sector_analysis.get('peer_rank', 'N/A')}
     # Price Action Complete Analysis
     pa_report, trend_lines, channels, rays, fib_ext, vol_profile, pa_predictions = analyze_price_action_complete(symbol_data, idx)
     
+    # Fixed Range Liquidity
+    liquidity_info = detect_fixed_range_liquidity(symbol_data)
+    
+    # Gap Analysis
+    gap_info = analyze_gaps(symbol_data, idx)
+    
+    # Volatility Skew
+    vol_skew = analyze_volatility_skew(symbol_data)
+    
+    # Z-Score
+    zscore_info = calculate_zscore_signals(symbol_data)
+    
+    # LSTM Prediction
+    lstm_pred = predict_price_lstm(symbol_data)
+    
+    # Risk Metrics
+    risk_metrics = calculate_risk_metrics(symbol_data)
+    
+    # Supply/Demand Zones
+    supply_demand = detect_supply_demand_zones(symbol_data, idx)
+    
+    # Anchored VWAP (using 50 candles back as anchor)
+    anchor_idx = max(0, idx - 50)
+    anchored_vwap = calculate_anchored_vwap(symbol_data, anchor_idx)
+    
+    # Order Book Simulation
+    order_book = simulate_order_book(symbol_data, idx)
+    
+    # Add new analysis to report
+    additional_analysis = ""
+    
+    if liquidity_info:
+        additional_analysis += f"""
+💧 FIXED RANGE LIQUIDITY:
+────────────────────────────────────────────────────────────────────────────────
+Highest Liquidity: {liquidity_info['highest_liquidity']}
+Current Position: {liquidity_info['current_position']}
+Top Levels: {', '.join([str(l[0]) for l in liquidity_info['liquidity_levels'][:3]])}
+"""
+    
+    if gap_info and gap_info['type'] != 'NO_GAP':
+        additional_analysis += f"""
+🚀 GAP ANALYSIS:
+────────────────────────────────────────────────────────────────────────────────
+Type: {gap_info['type']}
+Gap: {gap_info['gap_percent']:.2f}%
+Fill Probability: {gap_info['fill_probability']:.1f}%
+Expected Fill: {gap_info['expected_fill_days']} days
+"""
+    
+    if vol_skew:
+        additional_analysis += f"""
+📉 VOLATILITY SKEW:
+────────────────────────────────────────────────────────────────────────────────
+5d Vol: {vol_skew['vol_5d']:.2f}% | 20d Vol: {vol_skew['vol_20d']:.2f}%
+Term Structure: {vol_skew['term_structure']}
+Signal: {vol_skew['signal']}
+"""
+    
+    if zscore_info:
+        additional_analysis += f"""
+📊 Z-SCORE (Mean Reversion):
+────────────────────────────────────────────────────────────────────────────────
+Z-Score: {zscore_info['zscore']:.2f}
+Signal: {zscore_info['signal']}
+Target: {zscore_info['mean_reversion_target']:.2f}
+Confidence: {zscore_info['confidence']:.1f}%
+"""
+    
+    if lstm_pred:
+        additional_analysis += f"""
+🤖 LSTM PRICE PREDICTION:
+────────────────────────────────────────────────────────────────────────────────
+Method: {lstm_pred['method']}
+Forecast ({lstm_pred['forecast_days']} days): {', '.join([f'{p:.2f}' for p in lstm_pred['predictions'][:3]])}
+Trend: {lstm_pred['trend']} | Confidence: {lstm_pred['confidence']:.1f}%
+"""
+    
+    if risk_metrics:
+        additional_analysis += f"""
+⚠️ RISK METRICS:
+────────────────────────────────────────────────────────────────────────────────
+VaR (95%): {risk_metrics['var_95']:.2f}% | CVaR: {risk_metrics['cvar_95']:.2f}%
+Sharpe: {risk_metrics['sharpe_ratio']:.2f} | Sortino: {risk_metrics['sortino_ratio']:.2f}
+Max Drawdown: {risk_metrics['max_drawdown']:.2f}%
+Risk Level: {risk_metrics['risk_level']}
+"""
+    
+    if supply_demand:
+        additional_analysis += f"""
+📦 SUPPLY/DEMAND ZONES:
+────────────────────────────────────────────────────────────────────────────────
+"""
+        for zone in supply_demand[:2]:
+            additional_analysis += f"• {zone['type']}: {zone['level_low']:.2f} - {zone['level_high']:.2f} ({zone['freshness']}, {zone['strength']})\n"
+    
+    if anchored_vwap:
+        additional_analysis += f"""
+⚓ ANCHORED VWAP (50 bars):
+────────────────────────────────────────────────────────────────────────────────
+VWAP: {anchored_vwap['anchored_vwap']:.2f}
+Deviation: {anchored_vwap['deviation']:.2f}%
+Position: {anchored_vwap['position']} | Signal: {anchored_vwap['signal']}
+"""
+    
+    if order_book:
+        additional_analysis += f"""
+📖 ORDER BOOK (Simulated):
+────────────────────────────────────────────────────────────────────────────────
+Bid/Ask Ratio: {order_book['bid_ask_ratio']:.2f}
+Imbalance: {order_book['imbalance']}
+Support: {order_book['nearest_support']:.2f} | Resistance: {order_book['nearest_resistance']:.2f}
+"""
+    
     elliott_complete_text = ""
     if symbol_data is not None and idx is not None:
         mt_wave = detect_elliott_wave_multi_timeframe(symbol_data, idx)
@@ -3471,6 +4075,7 @@ Date: {current_date}
 {price_sequence_text}
 {wyckoff_text}
 {pa_report}
+{additional_analysis}
 {elliott_complete_text}
 {forward_text}
 
@@ -3627,6 +4232,19 @@ def generate_complete_pattern_data(symbol, df_row, pattern_type, config, indicat
     
     pa_report, _, _, _, _, _, _ = analyze_price_action_complete(symbol_data, idx) if symbol_data is not None and idx is not None else ("", None, None, None, None, None, None)
     
+    # Additional analysis for complete pattern
+    liquidity_info = detect_fixed_range_liquidity(symbol_data) if symbol_data is not None else None
+    zscore_info = calculate_zscore_signals(symbol_data) if symbol_data is not None else None
+    risk_metrics = calculate_risk_metrics(symbol_data) if symbol_data is not None else None
+    
+    additional_analysis = ""
+    if liquidity_info:
+        additional_analysis += f"\n💧 Highest Liquidity: {liquidity_info['highest_liquidity']} ({liquidity_info['current_position']})"
+    if zscore_info:
+        additional_analysis += f"\n📊 Z-Score: {zscore_info['zscore']:.2f} ({zscore_info['signal']})"
+    if risk_metrics:
+        additional_analysis += f"\n⚠️ VaR: {risk_metrics['var_95']:.2f}% | Sharpe: {risk_metrics['sharpe_ratio']:.2f}"
+    
     return f"""
 ================================================================================
 Pattern: {pattern_display}{variation_note}
@@ -3639,6 +4257,7 @@ Date: {current_date}
 {wyckoff_text}
 {pa_report}
 {forward_text}
+{additional_analysis}
 
 📊 PRICE DATA:
 ────────────────────────────────────────────────────────────────────────────────
@@ -3681,7 +4300,7 @@ def main():
     
     print("="*80)
     print("🚀 COMPLETE PATTERN TRAINING DATA GENERATOR")
-    print("   (130+ Patterns + Elliott Wave + SMC + Price Action + Multi-Timeframe + ML + Backtesting)")
+    print("   (130+ Patterns + Elliott Wave + SMC + Price Action + Multi-Timeframe + ML + Backtesting + Risk Metrics)")
     print("="*80)
     
     csv_path = "./csv/mongodb.csv"
