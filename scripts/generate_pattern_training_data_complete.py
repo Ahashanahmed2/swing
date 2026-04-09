@@ -3292,14 +3292,14 @@ def detect_mss(df, idx):
         if lows[i] == min(lows[i-5:i+6]):
             swing_lows.append(lows[i])
     
-    if len(swing_lows) >= 2 and len(swing_high) >=1:
+    if len(swing_lows) >= 2 and len(swing_highs) >=1:
         if swing_lows[-1] < swing_lows[-2] and current_price > swing_highs[-1]:
             if volumes[-1] > np.mean(volumes[-10:]) * 1.2:
                 result.append('MSS Bullish - STRONG Ugc')
             else:
                 result.append('MSS Bullish Ugc')
     
-    if len(swing_highs) >= 2 and len(swing_low) >=1:
+    if len(swing_highs) >= 2 and len(swing_lows) >=1:
         if swing_highs[-1] > swing_highs[-2] and current_price < swing_lows[-1]:
             if volumes[-1] > np.mean(volumes[-10:]) * 1.2:
                 result.append('MSS Bearish - STRONG Ugc')
