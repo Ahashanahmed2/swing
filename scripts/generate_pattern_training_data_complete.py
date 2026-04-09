@@ -4339,11 +4339,7 @@ def main():
         if len(symbol_data) < 100:
             continue
             
-        # main() ফাংশনে
-        for idx in range(50, len(symbol_data), step):
-            detected_patterns = detect_all_patterns(symbol_data, idx)
-            print(f"🔍 {symbol} at idx {idx}: {detected_patterns}")  # ← ডিবাগ লাইন
-
+        
         
         
         close_prices = symbol_data['close']
@@ -4378,6 +4374,12 @@ def main():
             detected_patterns = detect_all_patterns(symbol_data, idx)
             if not detected_patterns:
                 continue
+
+            # main() ফাংশনে
+            for idx in range(50, len(symbol_data), step):
+                detected_patterns = detect_all_patterns(symbol_data, idx)
+                print(f"🔍 {symbol} at idx {idx}: {detected_patterns}")  # ← ডিবাগ লাইন
+
             
             row = symbol_data.iloc[idx]
             indicator_values = {
