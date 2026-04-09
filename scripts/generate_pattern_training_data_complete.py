@@ -4333,6 +4333,17 @@ def main():
     NUM_VARIATIONS = 3
     training_data = []
     symbols_processed = 0
+
+
+    # main() ফাংশনে
+    symbols_processed = 0
+
+    for symbol in df['symbol'].unique():
+        # ... symbol প্রসেসিং ...
+    
+        symbols_processed += 1
+        if symbols_processed >= MAX_SYMBOLS:  # ← এই লাইন চেক করুন
+            break
     
     for symbol in df['symbol'].unique():
         symbol_data = df[df['symbol'] == symbol].sort_values('date').reset_index(drop=True)
