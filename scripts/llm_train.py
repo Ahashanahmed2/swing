@@ -946,16 +946,36 @@ class AutoLLMTrainer:
         print(f"   XGBoost Integration: Enabled ({len(self.xgb_ppo.xgb_models)} models)")
         print(f"   📤 HF Repo: {HF_DATASET_REPO}")
         import glob
-
-        # চেকপয়েন্ট চেক করুন
+    
+        # ✅ চেকপয়েন্ট চেক করুন - একাধিক জায়গায়
         last_checkpoint = None
-        if os.path.exists(LLM_MODEL_DIR):
-            checkpoints = glob.glob(os.path.join(LLM_MODEL_DIR, "checkpoint-*"))
-            if checkpoints:
-                # স্টেপ নাম্বার অনুযায়ী সর্বশেষ চেকপয়েন্ট নিন
-                last_checkpoint = sorted(checkpoints, key=lambda x: int(x.split('-')[-1]))[-1]
-                print(f"   📂 Resuming from checkpoint: {last_checkpoint}")
-
+    
+        # সম্ভাব্য চেকপয়েন্ট লোকেশন
+        checkpoint_locations = [
+            os.path.join(LLM_MODEL_DIR, "checkpoint-*"),           # ./csv/llm_model/checkpoint-*
+            "./csv/checkpoints/checkpoint-*",                      # ./csv/checkpoints/checkpoint-*
+            os.path.join(LLM_MODEL_DIR, "checkpoints/checkpoint-*") # ./csv/llm_model/checkpoints/checkpoint-*
+        ]
+    
+        all_checkpoints = []
+        for pattern in checkpoint_locations:
+            found = glob.glob(pattern)
+            if found:
+                print(f"   🔍 Found checkpoints in: {pattern}")
+                all_checkpoints.extend(found)
+    
+        if all_checkpoints:
+            # স্টেপ নাম্বার বের করার ফাংশন
+            def get_step_num(path):
+                import re
+                match = re.search(r'checkpoint-(\d+)', path)
+                return int(match.group(1)) if match else 0
+        
+            # সর্বশেষ চেকপয়েন্ট নিন
+            last_checkpoint = sorted(all_checkpoints, key=get_step_num)[-1]
+            print(f"   📂 Resuming from checkpoint: {last_checkpoint}")
+        else:
+            print(f"   ℹ️ No checkpoint found, starting fresh")
         training_args = TrainingArguments(
             output_dir=LLM_MODEL_DIR,
             overwrite_output_dir=False,
