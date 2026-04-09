@@ -1029,7 +1029,7 @@ class AutoLLMTrainer:
         # ... বাকি কোড ...
         print("   ⏰ This will take multiple days (resume automatically)")
         print(f"   📤 Checkpoints will be uploaded to: {HF_DATASET_REPO}/checkpoints/")
-        trainer.train()
+        trainer.train(resume_from_checkpoint=last_checkpoint)  # ✅ আগে: trainer.train()
         print("\n✅ Training completed!")
 
         # ========== AGENTIC LOOP UPDATE ==========
