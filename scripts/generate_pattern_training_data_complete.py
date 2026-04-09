@@ -4306,6 +4306,14 @@ Risk-Reward: {rr_ratio:.2f} | Confidence: {confidence:.1f}%
 # =========================================================
 
 def main():
+
+    
+    # main() ফাংশনে
+    for idx in range(50, len(symbol_data), step):
+    detected_patterns = detect_all_patterns(symbol_data, idx)
+    print(f"🔍 {symbol} at idx {idx}: {detected_patterns}")  # ← ডিবাগ লাইন
+
+    
     global elliott_backtester
     elliott_backtester = ElliottWaveBacktester()
     
