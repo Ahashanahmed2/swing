@@ -3119,6 +3119,9 @@ def detect_power_of_3(df, idx):
     
     result = []
     current_price = closes[-1]
+
+    if len(highs) < 20 or len(lows) < 20 :
+        return None
     
     asian_high = np.max(highs[:10])
     asian_low = np.min(lows[:10])
@@ -3289,14 +3292,14 @@ def detect_mss(df, idx):
         if lows[i] == min(lows[i-5:i+6]):
             swing_lows.append(lows[i])
     
-    if len(swing_lows) >= 2:
+    if len(swing_lows) >= 2 and len(swing_high) >=1:
         if swing_lows[-1] < swing_lows[-2] and current_price > swing_highs[-1]:
             if volumes[-1] > np.mean(volumes[-10:]) * 1.2:
                 result.append('MSS Bullish - STRONG Ugc')
             else:
                 result.append('MSS Bullish Ugc')
     
-    if len(swing_highs) >= 2:
+    if len(swing_highs) >= 2 and len(swing_low) >=1:
         if swing_highs[-1] > swing_highs[-2] and current_price < swing_lows[-1]:
             if volumes[-1] > np.mean(volumes[-10:]) * 1.2:
                 result.append('MSS Bearish - STRONG Ugc')
@@ -3315,6 +3318,9 @@ def detect_reaccumulation_range(df, idx):
     highs = recent['high'].values
     lows = recent['low'].values
     volumes = recent['volume'].values
+
+    if len(highs) < 50 or len(lows) < 50 or let(volumes) < 50 :
+        return  None
     
     range_high = np.percentile(highs, 85)
     range_low = np.percentile(lows, 15)
@@ -3417,7 +3423,7 @@ def detect_liquidity_sweep_detailed(df, idx):
                 result.append('Double Bottom Liquidity Sweep - Bullish Ugc')
     
     recent_highs = [highs[i] for i in range(len(highs)-5, len(highs)) if highs[i] == max(highs[max(0,i-2):min(len(highs),i+3)])]
-    if len(recent_highs) >= 3:
+    if len(recent_highs) >= 1:
         if current_price > max(recent_highs) * 1.002:
             result.append('Trendline Liquidity Sweep Ugc')
     
@@ -3520,6 +3526,9 @@ def detect_market_maker_model(df, idx):
     recent = df.iloc[idx-40:idx+1]
     highs = recent['high'].values
     lows = recent['low'].values
+
+    if len(highs) < 40 or len(lows) < 40 :
+        return None
     
     phase1_range = np.max(highs[:10]) - np.min(lows[:10])
     phase2_range = np.max(highs[10:20]) - np.min(lows[10:20])
@@ -3570,6 +3579,8 @@ def detect_smc_divergence(df, idx):
     recent = df.iloc[idx-20:idx+1]
     closes = recent['close'].values
     volumes = recent['volume'].values
+    if len(closes) <10 or len(volumes) < 10 :
+        return None
     
     result = []
     
