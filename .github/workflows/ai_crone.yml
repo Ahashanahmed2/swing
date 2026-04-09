@@ -24,6 +24,7 @@ jobs:
         python-version: '3.10'
     - name: Create necessary directories
       run: |
+        mkdir -p ./csv/llm_model
         mkdir -p ./csv/xgboost
         mkdir -p ./csv/ppo_models
         mkdir -p ./csv/ppo_models/per_symbol
