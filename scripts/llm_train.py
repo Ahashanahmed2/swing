@@ -945,10 +945,20 @@ class AutoLLMTrainer:
         print(f"   Max Length: 512 (full context)")
         print(f"   XGBoost Integration: Enabled ({len(self.xgb_ppo.xgb_models)} models)")
         print(f"   📤 HF Repo: {HF_DATASET_REPO}")
+        import glob
+
+        # চেকপয়েন্ট চেক করুন
+        last_checkpoint = None
+        if os.path.exists(LLM_MODEL_DIR):
+            checkpoints = glob.glob(os.path.join(LLM_MODEL_DIR, "checkpoint-*"))
+            if checkpoints:
+                # স্টেপ নাম্বার অনুযায়ী সর্বশেষ চেকপয়েন্ট নিন
+                last_checkpoint = sorted(checkpoints, key=lambda x: int(x.split('-')[-1]))[-1]
+                print(f"   📂 Resuming from checkpoint: {last_checkpoint}")
 
         training_args = TrainingArguments(
             output_dir=LLM_MODEL_DIR,
-            overwrite_output_dir=True,
+            overwrite_output_dir=False,
 
             num_train_epochs=num_epochs,
             per_device_train_batch_size=batch_size,
