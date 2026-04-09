@@ -1,5 +1,5 @@
 # scripts/hf_download.py
-# HF Dataset থেকে ডাউনলোড + পুরনো চেকপয়েন্ট ক্লিনআপ (শুধু শেষ ২টি রাখুন)
+# HF Dataset থেকে ডাউনলোড + পুরনো চেকপয়েন্ট ক্লিনআপ (শুধু শেষ ১টি রাখুন)
 
 import os
 import shutil
@@ -9,8 +9,8 @@ from huggingface_hub import snapshot_download, HfApi, login
 # HF Dataset-এ পুরনো চেকপয়েন্ট ডিলিট (ডাউনলোডের আগে)
 # =========================================================
 
-def cleanup_hf_checkpoints_before_download(keep_last=2):
-    """HF Dataset-এ শুধু শেষ ২টি চেকপয়েন্ট রাখুন, বাকি ডিলিট (ডাউনলোডের আগে)"""
+def cleanup_hf_checkpoints_before_download(keep_last=1):  # ✅ 2 → 1
+    """HF Dataset-এ শুধু শেষ ১টি চেকপয়েন্ট রাখুন, বাকি ডিলিট (ডাউনলোডের আগে)"""
     
     token = os.getenv("hf_token")
     if not token:
@@ -48,7 +48,7 @@ def cleanup_hf_checkpoints_before_download(keep_last=2):
             print(f"✅ Only {len(checkpoint_list)} checkpoints in HF, no cleanup needed")
             return
         
-        # শেষ ২টি বাদে বাকি ডিলিট
+        # শেষ ১টি বাদে বাকি ডিলিট
         to_delete = checkpoint_list[:-keep_last]
         to_keep = checkpoint_list[-keep_last:]
         
@@ -71,7 +71,7 @@ def cleanup_hf_checkpoints_before_download(keep_last=2):
             except Exception as e:
                 print(f"   ⚠️ Failed to delete HF {folder}: {e}")
         
-        print(f"✅ HF cleanup complete! Kept {len(to_keep)} checkpoints.")
+        print(f"✅ HF cleanup complete! Kept {len(to_keep)} checkpoint(s).")
         
     except Exception as e:
         print(f"⚠️ HF cleanup failed: {e}")
@@ -153,10 +153,10 @@ if __name__ == "__main__":
     print("="*60)
     
     # Step 1: HF-তে পুরনো চেকপয়েন্ট ডিলিট (ডাউনলোডের আগে)
-    # শেষ ২টি চেকপয়েন্ট রেখে বাকি ডিলিট
-    cleanup_hf_checkpoints_before_download(keep_last=2)
+    # শেষ ১টি চেকপয়েন্ট রেখে বাকি ডিলিট
+    cleanup_hf_checkpoints_before_download(keep_last=1)  # ✅ 1টি রাখুন
     
-    # Step 2: HF থেকে ডাউনলোড (এখন HF-তে শুধু ২টি চেকপয়েন্ট থাকবে)
+    # Step 2: HF থেকে ডাউনলোড (এখন HF-তে শুধু ১টি চেকপয়েন্ট থাকবে)
     download_from_hf()
     
     # Step 3: লোকালে পুরনো চেকপয়েন্ট ডিলিট (শুধু সর্বশেষ রাখুন)
