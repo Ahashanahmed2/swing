@@ -3319,7 +3319,7 @@ def detect_reaccumulation_range(df, idx):
     lows = recent['low'].values
     volumes = recent['volume'].values
 
-    if len(highs) < 50 or len(lows) < 50 or let(volumes) < 50 :
+    if len(highs) < 50 or len(lows) < 50 or lenw(volumes) < 50 :
         return  None
     
     range_high = np.percentile(highs, 85)
