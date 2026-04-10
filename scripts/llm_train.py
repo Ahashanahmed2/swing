@@ -4,6 +4,7 @@
 # ✅ CHECKPOINT + FINAL MODEL SAVE TO HF DATASET REPO: ahashanahmed/csv/
 # ✅ NO DOWNLOAD FROM HF - ALL LOCAL DATA FROM ./csv/
 # ✅ ALL LOCAL PATHS UPDATED TO ./csv/
+# ✅ TELEGRAM NOTIFICATIONS ADDED
 
 import os
 import torch
@@ -46,6 +47,31 @@ except ImportError:
     print("⚠️ PEFT not installed. Install with: pip install peft")
 
 warnings.filterwarnings('ignore')
+
+# =========================================================
+# TELEGRAM NOTIFICATION FUNCTION
+# =========================================================
+
+def send_telegram_message(message, token=None, chat_id=None):
+    """টেলিগ্রামে মেসেজ পাঠান"""
+    token = token or os.getenv("TELEGRAM_TOKEN")
+    chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
+    
+    if not token or not chat_id:
+        print("⚠️ Telegram credentials not found")
+        return
+    
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "HTML"
+        }
+        response = requests.post(url, json=payload, timeout=10)
+        return response.json()
+    except Exception as e:
+        print(f"⚠️ Telegram send failed: {e}")
 
 # =========================================================
 # CONFIGURATION - 70+ HOURS ULTIMATE TRAINING
@@ -644,6 +670,13 @@ class AutoLLMTrainer:
             self._init_agentic_loop()
         # =======================================
 
+        # ✅ টেলিগ্রাম কনফিগ
+        self.telegram_token = os.getenv("TELEGRAM_TOKEN")
+        self.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
+        
+        if self.telegram_token and self.telegram_chat_id:
+            print("✅ Telegram notifications enabled")
+
     # =========================================================
     # AGENTIC LOOP METHODS
     # =========================================================
@@ -899,6 +932,16 @@ class AutoLLMTrainer:
         print(f"   PPO Models Found: {len(self.xgb_ppo.ppo_models)}")
 
     def train(self, mode="incremental", symbols_batch=None):
+        # ✅ ট্রেনিং শুরু মেসেজ
+        start_msg = f"""
+🚀 <b>LLM Training Started</b>
+📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
+🎯 Mode: {mode.upper()}
+📚 Symbols: {len(symbols_batch) if symbols_batch else 'ALL'}
+⚙️ Epochs: {EPOCHS_CONFIG.get(mode, 10)}
+"""
+        send_telegram_message(start_msg, self.telegram_token, self.telegram_chat_id)
+
         print(f"\n{'='*60}")
         print(f"🎯 TRAINING MODE: {mode.upper()}")
         if symbols_batch:
@@ -974,8 +1017,18 @@ class AutoLLMTrainer:
             # সর্বশেষ চেকপয়েন্ট নিন
             last_checkpoint = sorted(all_checkpoints, key=get_step_num)[-1]
             print(f"   📂 Resuming from checkpoint: {last_checkpoint}")
+
+            # ✅ রিজিউম মেসেজ
+            if last_checkpoint:
+                resume_msg = f"""
+🔄 <b>Resuming from Checkpoint</b>
+📂 {last_checkpoint}
+📊 Progress: {int(last_checkpoint.split('-')[-1])} steps completed
+"""
+                send_telegram_message(resume_msg, self.telegram_token, self.telegram_chat_id)
         else:
             print(f"   ℹ️ No checkpoint found, starting fresh")
+            
         training_args = TrainingArguments(
             output_dir=LLM_MODEL_DIR,
             overwrite_output_dir=False,
@@ -1023,7 +1076,7 @@ class AutoLLMTrainer:
             data_collator=data_collator,
         )
         
-        #✅ ফিক্সড HF চেকপয়েন্ট কাস্টম আপলোডার
+        # ✅ ফিক্সড HF চেকপয়েন্ট কাস্টম আপলোডার
         class CustomHFCallback:
             def __init__(self, hf_uploader):
                 self.hf_uploader = hf_uploader
@@ -1046,10 +1099,21 @@ class AutoLLMTrainer:
         trainer.add_callback(CustomHFCallback(self.hf_uploader))
 
         print("\n🏋️ Starting 70+ Hours Training...")
-        # ... বাকি কোড ...
         print("   ⏰ This will take multiple days (resume automatically)")
         print(f"   📤 Checkpoints will be uploaded to: {HF_DATASET_REPO}/checkpoints/")
-        trainer.train(resume_from_checkpoint=last_checkpoint)  # ✅ আগে: trainer.train()
+        
+        try:
+            trainer.train(resume_from_checkpoint=last_checkpoint)
+        except Exception as e:
+            error_msg = f"""
+⚠️ <b>LLM Training Error</b>
+📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
+🎯 Mode: {mode.upper()}
+❌ Error: {str(e)[:200]}
+"""
+            send_telegram_message(error_msg, self.telegram_token, self.telegram_chat_id)
+            raise
+        
         print("\n✅ Training completed!")
 
         # ========== AGENTIC LOOP UPDATE ==========
@@ -1064,6 +1128,18 @@ class AutoLLMTrainer:
 
         # ✅ ফাইনাল মডেল HF Dataset Repo-তে আপলোড
         self.upload_final_model_to_hf(mode)
+        
+        # ✅ ট্রেনিং শেষ মেসেজ
+        complete_msg = f"""
+✅ <b>LLM Training Completed</b>
+📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
+🎯 Mode: {mode.upper()}
+📚 Symbols trained: {len(symbols_batch) if symbols_batch else 'ALL'}
+💾 Model saved: {LLM_MODEL_DIR}
+📤 Uploaded to: {HF_DATASET_REPO}/final_model/{mode}/
+"""
+        send_telegram_message(complete_msg, self.telegram_token, self.telegram_chat_id)
+        
         return True
 
     def upload_final_model_to_hf(self, mode):
@@ -1148,20 +1224,44 @@ class AutoLLMTrainer:
         weekly_batch_num, weekly_symbols = self.batch_manager.get_batch_for_weekly_finetune()
 
         if weekly_symbols and len(weekly_symbols) > 0:
+            # ✅ Weekly fine-tune start message
+            weekly_start = f"""
+📊 <b>Weekly Fine-tune Started</b>
+📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
+📚 Batch: {weekly_batch_num}
+📚 Symbols: {len(weekly_symbols)}
+"""
+            send_telegram_message(weekly_start, self.telegram_token, self.telegram_chat_id)
+            
             print(f"\n🔄 Weekly fine-tuning on Batch {weekly_batch_num} ({len(weekly_symbols)} symbols)")
             if self.generate_training_data_for_symbols(weekly_symbols):
                 self.train(mode="weekly_finetune", symbols_batch=weekly_symbols)
                 print("✅ Weekly fine-tune complete!")
+                
+                # ✅ Weekly fine-tune complete message
+                send_telegram_message("✅ Weekly fine-tune completed!", self.telegram_token, self.telegram_chat_id)
 
         # STEP 3: Monthly consolidation
         if self.batch_manager.should_consolidate():
-            print(f"\n🔄 Monthly consolidation - Training all symbols together")
             all_trained_symbols = self.batch_manager.get_all_batch_symbols()
+            
             if all_trained_symbols:
+                # ✅ Monthly consolidation start message
+                monthly_start = f"""
+📈 <b>Monthly Consolidation Started</b>
+📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
+📚 All symbols: {len(all_trained_symbols)}
+"""
+                send_telegram_message(monthly_start, self.telegram_token, self.telegram_chat_id)
+                
+                print(f"\n🔄 Monthly consolidation - Training all symbols together")
                 if self.generate_training_data_for_symbols(all_trained_symbols):
                     self.train(mode="consolidate", symbols_batch=all_trained_symbols)
                     self.batch_manager.mark_consolidated()
                     print("✅ Monthly consolidation complete!")
+                    
+                    # ✅ Monthly consolidation complete message
+                    send_telegram_message("✅ Monthly consolidation completed!", self.telegram_token, self.telegram_chat_id)
 
         # STEP 4: Hard example retraining
         high_priority_examples = self.mistake_collector.get_hard_examples(limit=200, priority_only=True)
