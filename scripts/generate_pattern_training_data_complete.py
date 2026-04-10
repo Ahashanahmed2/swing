@@ -520,7 +520,7 @@ def calculate_trend_based_fib_extension(symbol_data, lookback=100):
     if is_uptrend:
         # Retracement levels
         for fib in FIB_RETRACEMENT:
-            level = swing_95 - range_size * fib
+            level = swing_high - range_size * fib
             fib_levels['retracement'][f'{fib:.3f}'] = level
         
         # Extension levels (projecting beyond swing high)
