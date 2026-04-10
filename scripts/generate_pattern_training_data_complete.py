@@ -3804,14 +3804,23 @@ def detect_all_patterns(df, idx):
                  detect_liquidity_sweep_detailed, detect_ote_complete, detect_fvg_types,
                  detect_daily_bias, detect_market_maker_model, detect_institutional_candles,
                  detect_smc_divergence, detect_liquidity_void]:
+
+                     
         res = func(df, idx)
         if res: detected.extend(res)
     
-    # New Candlestick Patterns
-    candlestick_patterns = detect_all_candlestick_patterns(df, idx)
-    detected.extend(candlestick_patterns)
+        # New Candlestick Patterns
+        candlestick_patterns = detect_all_candlestick_patterns(df, idx)
+        detected.extend(candlestick_patterns)
+
+        final_patterns = list(set(detected))
+        if final_patterns and idx % 100 == 0:
+            symbol = df.iloc[idx].get('symbol', 'UNKNOWN') if 'symbol' in df.columns else 'UNKNOWN'
+            print(f"      ✅ {symbol}: Found {len(final_patterns)} patterns at idx {idx}")
     
-    return list(set(detected))
+        return final_patterns  # ← list(set(detected)) এর পরিবর্তে final_patterns রিটার্ন
+    
+
 
 
 # =========================================================
