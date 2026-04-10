@@ -112,23 +112,23 @@ FINE_TUNE_INTERVAL = 7
 CONSOLIDATE_INTERVAL = 30
 
 # Learning parameters - 70+ HOURS OPTIMIZED
-MAX_OLD_EXAMPLES = 5000
-HARD_EXAMPLE_THRESHOLD = 0.20
-HIGH_PRIORITY_THRESHOLD = 0.30
+MAX_OLD_EXAMPLES = 10000
+HARD_EXAMPLE_THRESHOLD = 0.25
+HIGH_PRIORITY_THRESHOLD = 0.35
 WEIGHTED_LOSS_ENABLED = True
-MAX_GRAD_NORM = 0.7
-EARLY_STOPPING_PATIENCE = 8
-VALIDATION_SPLIT_RATIO = 0.1
+MAX_GRAD_NORM = 0.5
+EARLY_STOPPING_PATIENCE = 15
+VALIDATION_SPLIT_RATIO = 0.15
 
 # Training mode flags
 FORCE_RETRAIN = False
 
 # LoRA config for distilgpt2 - 70+ HOURS OPTIMIZED
 LORA_CONFIG = {
-    'r': 32,
-    'lora_alpha': 64,
+    'r': 64,
+    'lora_alpha': 128,
     'target_modules': ['c_attn', 'c_proj', 'c_fc'],
-    'lora_dropout': 0.15,
+    'lora_dropout': 0.2,
     'bias': 'none',
 }
 
@@ -149,19 +149,19 @@ AGENTIC_LOOP_LOG_DIR = "./csv/agentic_loop_logs"
 # 70+ HOURS EPOCH CONFIGURATION
 # =========================================================
 EPOCHS_CONFIG = {
-    "first_train": 5,
-    "incremental": 3,
-    "weekly_finetune": 3,
-    "consolidate": 10,
-    "mistake_learning": 4,
+    "first_train": 12 ,
+    "incremental": 8,
+    "weekly_finetune": 6,
+    "consolidate": 20,
+    "mistake_learning": 10,
 }
 
 LR_CONFIG = {
-    "first_train": 1.5e-5,
-    "incremental": 1e-5,
-    "weekly_finetune":8e-6,
-    "consolidate": 8e-6,
-    "mistake_learning": 1.5e-5,
+    "first_train": 8e-6,
+    "incremental": 3e-6,
+    "weekly_finetune":2e-6,
+    "consolidate": 5e-6,
+    "mistake_learning": 5e-6,
 }
 
 BATCH_SIZE_CONFIG = {
@@ -173,11 +173,11 @@ BATCH_SIZE_CONFIG = {
 }
 
 GRAD_ACCUM_CONFIG = {
-    "first_train": 16,
-    "incremental": 16,
-    "weekly_finetune": 8,
-    "consolidate": 16,
-    "mistake_learning": 16,
+    "first_train": 32,
+    "incremental": 24,
+    "weekly_finetune": 16,
+    "consolidate": 32,
+    "mistake_learning": 24,
 }
 
 
