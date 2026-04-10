@@ -1,4 +1,4 @@
-# xgboost_scheduler.py - COMPLETE VERSION
+# xgboost_scheduler.py - COMPLETE VERSION with Sector Features & Telegram
 # Features:
 # 1. Only good models (AUC >= 0.55) are saved
 # 2. Bad models retry up to 3 times, then retry monthly
@@ -6,6 +6,9 @@
 # 4. Single commit upload to Hugging Face
 # 5. Monthly retry for permanently failed models
 # 6. Advanced features: Support/Resistance, RSI Divergence, EMA 200
+# 7. ✅ NEW: Sector momentum, relative strength, peer comparison
+# 8. ✅ NEW: Telegram notifications for training status
+# 9. ✅ NEW: Sector performance tracking
 
 import os
 import pandas as pd
@@ -13,9 +16,53 @@ import numpy as np
 import xgboost as xgb
 from sklearn.metrics import accuracy_score, roc_auc_score
 import joblib
+import requests
 from datetime import datetime, timedelta
+from collections import defaultdict
 import warnings
 warnings.filterwarnings('ignore')
+
+# =========================
+# TELEGRAM NOTIFICATION (NEW)
+# =========================
+
+def send_telegram_message(message, token=None, chat_id=None):
+    """Send message to Telegram"""
+    token = token or os.getenv("TELEGRAM_TOKEN")
+    chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
+    
+    if not token or not chat_id:
+        return False
+    
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
+        response = requests.post(url, json=payload, timeout=10)
+        return response.json()
+    except:
+        return False
+
+def send_training_summary(mode, trained_count, good_count, bad_count, monthly_retry_count, good_models_list):
+    """Send training summary to Telegram"""
+    if trained_count == 0:
+        return
+    
+    message = f"""
+🤖 <b>XGBoost {mode} Training Complete</b>
+📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
+──────────────────────────────
+📊 Models Trained: {trained_count}
+🟢 Good Models (saved): {good_count}
+🔴 Bad Models: {bad_count}
+📅 Monthly Retry: {monthly_retry_count}
+"""
+    
+    if good_models_list:
+        message += f"\n\n🏆 <b>Top 5 Good Models:</b>"
+        for model in good_models_list[:5]:
+            message += f"\n   • {model['symbol']}: AUC={model['auc']:.2%}"
+    
+    send_telegram_message(message)
 
 # =========================
 # CONFIG
@@ -25,6 +72,7 @@ MODEL_DIR = './csv/xgboost/'
 PREDICTION_LOG = './csv/prediction_log.csv'
 XGB_CONFIDENCE = './csv/xgb_confidence.csv'
 MODEL_METADATA = './csv/model_metadata.csv'
+SECTOR_PERFORMANCE_FILE = './csv/sector_performance.csv'  # ✅ NEW
 
 # Advanced features files
 SUPPORT_RESISTANCE_PATH = './csv/support_resistance.csv'
@@ -50,6 +98,96 @@ MIN_SAMPLES_PER_SYMBOL = 50
 AUC_THRESHOLD = 0.55  # AUC 0.55-এর নিচে হলে মডেল সেভ হবে না
 RETRAIN_ATTEMPTS = 3  # কতবার চেষ্টা করবে খারাপ মডেল রিট্রেন করতে
 MONTHLY_RETRY_AFTER = 30  # ব্যর্থ হওয়ার পর কত দিন পরে আবার চেষ্টা করবে
+
+# =========================
+# SECTOR ANALYZER (NEW)
+# =========================
+
+class SectorAnalyzer:
+    """Analyze sector performance and generate sector features"""
+    
+    def __init__(self, data: pd.DataFrame):
+        self.data = data
+        self.sector_stats = {}
+        self.sector_momentum = {}
+        self.sector_ranks = {}
+        self.symbol_sector_map = {}
+        self._calculate_sector_stats()
+    
+    def _calculate_sector_stats(self):
+        """Calculate sector-level statistics"""
+        if 'sector' not in self.data.columns:
+            return
+        
+        # Build symbol to sector mapping
+        for _, row in self.data[['symbol', 'sector']].drop_duplicates().iterrows():
+            self.symbol_sector_map[row['symbol']] = row['sector']
+        
+        for sector in self.data['sector'].unique():
+            if pd.isna(sector) or sector == 'Unknown':
+                continue
+            
+            sector_df = self.data[self.data['sector'] == sector]
+            
+            self.sector_stats[sector] = {
+                'avg_return_5d': sector_df.groupby('symbol')['close'].apply(
+                    lambda x: (x.iloc[-1] - x.iloc[-5]) / x.iloc[-5] if len(x) >= 5 else 0
+                ).mean(),
+                'avg_return_20d': sector_df.groupby('symbol')['close'].apply(
+                    lambda x: (x.iloc[-1] - x.iloc[-20]) / x.iloc[-20] if len(x) >= 20 else 0
+                ).mean(),
+                'symbol_count': sector_df['symbol'].nunique(),
+                'total_rows': len(sector_df)
+            }
+            
+            self.sector_momentum[sector] = self.sector_stats[sector]['avg_return_20d']
+        
+        # Calculate sector ranks
+        if self.sector_momentum:
+            sorted_sectors = sorted(self.sector_momentum.items(), key=lambda x: x[1], reverse=True)
+            for rank, (sector, _) in enumerate(sorted_sectors, 1):
+                self.sector_ranks[sector] = rank
+    
+    def get_sector_features(self, symbol):
+        """Get sector-based features for a symbol"""
+        if symbol not in self.symbol_sector_map:
+            return {
+                'sector_momentum': 0,
+                'sector_rank': 0.5,
+                'sector_trend': 0,
+                'sector': 'Unknown'
+            }
+        
+        sector = self.symbol_sector_map[symbol]
+        sector_momentum = self.sector_momentum.get(sector, 0)
+        
+        total_sectors = len(self.sector_ranks) if self.sector_ranks else 1
+        rank = self.sector_ranks.get(sector, total_sectors)
+        sector_rank_norm = 1 - (rank - 1) / total_sectors
+        
+        sector_trend = 1 if sector_momentum > 0.02 else -1 if sector_momentum < -0.02 else 0
+        
+        return {
+            'sector_momentum': np.clip(sector_momentum, -0.5, 0.5),
+            'sector_rank': sector_rank_norm,
+            'sector_trend': sector_trend,
+            'sector': sector
+        }
+    
+    def get_sector_rotation_signal(self):
+        """Detect sector rotation"""
+        if len(self.sector_momentum) < 2:
+            return {}
+        
+        sorted_sectors = sorted(self.sector_momentum.items(), key=lambda x: x[1], reverse=True)
+        top_3 = sorted_sectors[:3]
+        bottom_3 = sorted_sectors[-3:]
+        
+        return {
+            'top_sectors': [s[0] for s in top_3],
+            'bottom_sectors': [s[0] for s in bottom_3],
+            'rotation_strength': top_3[0][1] - bottom_3[0][1] if top_3 and bottom_3 else 0
+        }
 
 # =========================
 # MODEL PARAMETERS BY MODE
@@ -145,7 +283,7 @@ def load_model_metadata():
         return df
     else:
         return pd.DataFrame(columns=['symbol', 'last_trained', 'last_attempt', 'auc', 'acc', 
-                                      'failed_attempts', 'status', 'class_ratio'])
+                                      'failed_attempts', 'status', 'class_ratio', 'sector'])
 
 def save_model_metadata(df):
     """Save model metadata"""
@@ -155,33 +293,33 @@ def should_retrain(symbol, metadata, current_date=None):
     """Check if a symbol should be retrained"""
     if current_date is None:
         current_date = datetime.now()
-    
+
     if metadata.empty or symbol not in metadata['symbol'].values:
         return True, "new_symbol"
-    
+
     symbol_data = metadata[metadata['symbol'] == symbol].iloc[0]
-    
+
     if symbol_data['status'] == 'GOOD':
         return True, "good_model_update"
-    
+
     if symbol_data['status'] == 'BAD':
         failed_attempts = symbol_data['failed_attempts']
-        
+
         if failed_attempts < RETRAIN_ATTEMPTS:
             return True, f"bad_retry_{failed_attempts+1}"
-        
+
         last_attempt = symbol_data.get('last_attempt', symbol_data['last_trained'])
         if isinstance(last_attempt, str):
             last_attempt = pd.to_datetime(last_attempt)
-        
+
         days_since_last_attempt = (current_date - last_attempt).days
-        
+
         if days_since_last_attempt >= MONTHLY_RETRY_AFTER:
             return True, f"monthly_retry_after_{days_since_last_attempt}_days"
         else:
             days_left = MONTHLY_RETRY_AFTER - days_since_last_attempt
             return False, f"monthly_wait_{days_left}_days"
-    
+
     return True, "default"
 
 # =========================
@@ -191,45 +329,46 @@ def should_retrain(symbol, metadata, current_date=None):
 def load_data():
     """Load data with proper encoding"""
     if not os.path.exists(DATA_PATH):
-        #print(f"❌ Data file not found: {DATA_PATH}")
         return pd.DataFrame()
 
     df = pd.read_csv(DATA_PATH, encoding='utf-8-sig')
     df.columns = df.columns.str.replace('ï»¿', '').str.replace('\ufeff', '').str.strip()
     df['date'] = pd.to_datetime(df['date'])
-    return df
     
+    # ✅ NEW: Ensure sector column exists
+    if 'sector' not in df.columns:
+        df['sector'] = 'Unknown'
+    
+    return df
+
 def safe_parse_date(date_series):
     """Safely parse dates with multiple formats"""
     try:
-        # Try standard date format
         return pd.to_datetime(date_series, format='%Y-%m-%d', errors='coerce')
     except:
         pass
-    
+
     try:
-        # Try with time
         return pd.to_datetime(date_series, format='%Y-%m-%d %H:%M:%S', errors='coerce')
     except:
         pass
-    
+
     try:
-        # Try mixed format (pandas 2.0+)
         return pd.to_datetime(date_series, format='mixed', errors='coerce')
     except:
         pass
-    
-    # Let pandas infer
+
     return pd.to_datetime(date_series, errors='coerce')
+
 def engineer_features(df):
-    """Add engineered features including support/resistance, RSI divergence, and EMA 200"""
+    """Add engineered features including support/resistance, RSI divergence, EMA 200, and Sector features"""
     if df.empty:
         return df
 
     # =========================
     # BASE FEATURES (Price, Volume, Volatility)
     # =========================
-    
+
     # Price changes
     df['return_5d'] = df.groupby('symbol')['close'].pct_change(5)
     df['return_10d'] = df.groupby('symbol')['close'].pct_change(10)
@@ -248,56 +387,59 @@ def engineer_features(df):
         df['rsi_overbought'] = (df['rsi'] > 70).astype(int)
 
     # =========================
+    # ✅ NEW: SECTOR FEATURES
+    # =========================
+    sector_analyzer = SectorAnalyzer(df)
+    
+    # Add sector features to each row
+    df['sector_momentum'] = 0.0
+    df['sector_rank'] = 0.5
+    df['sector_trend'] = 0
+    
+    for symbol in df['symbol'].unique():
+        features = sector_analyzer.get_sector_features(symbol)
+        mask = df['symbol'] == symbol
+        df.loc[mask, 'sector_momentum'] = features['sector_momentum']
+        df.loc[mask, 'sector_rank'] = features['sector_rank']
+        df.loc[mask, 'sector_trend'] = features['sector_trend']
+
+    # =========================
     # 1. SUPPORT & RESISTANCE FEATURES
     # =========================
     try:
         if os.path.exists(SUPPORT_RESISTANCE_PATH):
             sr_df = pd.read_csv(SUPPORT_RESISTANCE_PATH, encoding='utf-8-sig')
             sr_df['current_date'] = pd.to_datetime(sr_df['current_date'])
-            
-            # Strength mapping: Weak=1, Moderate=2, Strong=3
+
             strength_map = {'Weak': 1, 'Moderate': 2, 'Strong': 3}
             sr_df['strength_score'] = sr_df['strength'].map(strength_map).fillna(1)
-            
-            # Merge on symbol and date
+
             df = df.merge(sr_df, left_on=['symbol', 'date'], 
                           right_on=['symbol', 'current_date'], how='left')
-            
-            # Distance from level (%)
+
             df['dist_from_sr'] = (df['close'] - df['level_price']) / df['level_price'] * 100
             df['dist_from_sr'] = df['dist_from_sr'].clip(-20, 20)
-            
-            # Type: support or resistance
+
             df['is_support'] = (df['type'] == 'support').astype(int)
             df['is_resistance'] = (df['type'] == 'resistance').astype(int)
-            
-            # Strength of the level
             df['sr_strength'] = df['strength_score']
-            
-            # Gap days feature (how recent the level is)
             df['sr_gap_days'] = df['gap_days'].fillna(999).clip(0, 100)
-            
-            # Drop unnecessary columns
+
             drop_cols = ['type', 'current_low', 'current_high', 'current_close', 
                          'level_date', 'strength', 'strength_score', 'current_date', 'gap_days']
             df.drop(drop_cols, axis=1, errors='ignore', inplace=True)
-            
-            # Fill NaN with 0 (no support/resistance near)
+
             for col in ['dist_from_sr', 'is_support', 'is_resistance', 'sr_strength', 'sr_gap_days']:
                 if col in df.columns:
                     df[col] = df[col].fillna(0)
-            
-            #print(f"   ✅ Added support/resistance features")
         else:
-            #print(f"   ⚠️ Support/Resistance file not found: {SUPPORT_RESISTANCE_PATH}")
             df['dist_from_sr'] = 0
             df['is_support'] = 0
             df['is_resistance'] = 0
             df['sr_strength'] = 0
             df['sr_gap_days'] = 0
-            
+
     except Exception as e:
-        #print(f"   ⚠️ Support/Resistance features failed: {e}")
         df['dist_from_sr'] = 0
         df['is_support'] = 0
         df['is_resistance'] = 0
@@ -311,32 +453,25 @@ def engineer_features(df):
         if os.path.exists(RSI_DIVERGENCE_PATH):
             div_df = pd.read_csv(RSI_DIVERGENCE_PATH, encoding='utf-8-sig')
             div_df['last_date'] = pd.to_datetime(div_df['last_date'])
-            
-            # One-hot encode divergence type and strength
+
             div_df['is_bullish_div'] = (div_df['divergence_type'] == 'Bullish').astype(int)
             div_df['is_bearish_div'] = (div_df['divergence_type'] == 'Bearish').astype(int)
             div_df['div_strength'] = div_df['strength'].map({'Strong': 2, 'Moderate': 1, 'Weak': 0}).fillna(0)
-            
-            # Merge on symbol and date
+
             df = df.merge(div_df[['symbol', 'last_date', 'is_bullish_div', 'is_bearish_div', 'div_strength']], 
                           left_on=['symbol', 'date'], right_on=['symbol', 'last_date'], how='left')
-            
-            # Fill NaN
+
             df['is_bullish_div'] = df['is_bullish_div'].fillna(0)
             df['is_bearish_div'] = df['is_bearish_div'].fillna(0)
             df['div_strength'] = df['div_strength'].fillna(0)
-            
+
             df.drop(['last_date'], axis=1, errors='ignore', inplace=True)
-            
-            #print(f"   ✅ Added RSI divergence features")
         else:
-            print(f"   ⚠️ RSI Divergence file not found: {RSI_DIVERGENCE_PATH}")
             df['is_bullish_div'] = 0
             df['is_bearish_div'] = 0
             df['div_strength'] = 0
-            
+
     except Exception as e:
-        print(f"   ⚠️ RSI Divergence features failed: {e}")
         df['is_bullish_div'] = 0
         df['is_bearish_div'] = 0
         df['div_strength'] = 0
@@ -347,44 +482,33 @@ def engineer_features(df):
     try:
         if os.path.exists(EMA_200_PATH):
             ema_df = pd.read_csv(EMA_200_PATH, encoding='utf-8-sig')
-            # Clean column names
             ema_df.columns = ema_df.columns.str.strip()
-            
-            # Find the column with EMA value (usually last column or 'close')
+
             if 'close' in ema_df.columns:
                 ema_df = ema_df.rename(columns={'close': 'ema_200'})
             else:
-                # Take the last numeric column as EMA value
                 numeric_cols = ema_df.select_dtypes(include=[np.number]).columns
                 if len(numeric_cols) > 0:
                     ema_df = ema_df.rename(columns={numeric_cols[-1]: 'ema_200'})
-            
+
             ema_df['date'] = pd.to_datetime(ema_df['date'])
-            
-            # Merge on symbol and date
+
             df = df.merge(ema_df[['symbol', 'date', 'ema_200']], on=['symbol', 'date'], how='left')
-            
-            # Calculate distance from EMA
+
             df['dist_from_ema'] = (df['close'] - df['ema_200']) / df['ema_200'] * 100
             df['dist_from_ema'] = df['dist_from_ema'].clip(-30, 30)
-            
-            # Above/below EMA
+
             df['above_ema'] = (df['close'] > df['ema_200']).astype(int)
-            
-            # Fill NaN with rolling EMA or close
+
             df['ema_200'] = df.groupby('symbol')['close'].transform(lambda x: x.rolling(200).mean())
             df['dist_from_ema'] = df['dist_from_ema'].fillna(0)
             df['above_ema'] = df['above_ema'].fillna(0)
             df['ema_200'] = df['ema_200'].fillna(df['close'])
-            
-            #print(f"   ✅ Added EMA200 features")
         else:
-            print(f"   ⚠️ EMA200 file not found: {EMA_200_PATH}")
             df['dist_from_ema'] = 0
             df['above_ema'] = 0
-            
+
     except Exception as e:
-        #print(f"   ⚠️ EMA200 features failed: {e}")
         df['dist_from_ema'] = 0
         df['above_ema'] = 0
 
@@ -397,28 +521,32 @@ def engineer_features(df):
     return df.dropna(subset=['target'])
 
 def get_features(df):
-    """Get list of all available features"""
+    """Get list of all available features including Sector features"""
     features = [
         'close', 'volume', 'return_5d', 'return_10d', 
         'volatility', 'volatility_5d', 'volume_ratio'
     ]
-    
+
     # Add RSI signals if available
     if 'rsi_oversold' in df.columns:
         features.extend(['rsi_oversold', 'rsi_overbought'])
-    
+
     # Add support/resistance features
     sr_features = ['dist_from_sr', 'is_support', 'is_resistance', 'sr_strength', 'sr_gap_days']
     features.extend([f for f in sr_features if f in df.columns])
-    
+
     # Add RSI divergence features
     div_features = ['is_bullish_div', 'is_bearish_div', 'div_strength']
     features.extend([f for f in div_features if f in df.columns])
-    
+
     # Add EMA features
     ema_features = ['dist_from_ema', 'above_ema']
     features.extend([f for f in ema_features if f in df.columns])
     
+    # ✅ NEW: Add Sector features
+    sector_features = ['sector_momentum', 'sector_rank', 'sector_trend']
+    features.extend([f for f in sector_features if f in df.columns])
+
     return features
 
 # =========================
@@ -431,8 +559,6 @@ def update_actual_results():
         return None
 
     log = pd.read_csv(PREDICTION_LOG)
-    
-    
     log['date'] = safe_parse_date(log['date'])
     df = load_data()
     if df.empty:
@@ -462,7 +588,6 @@ def update_actual_results():
 
     if updated > 0:
         log.to_csv(PREDICTION_LOG, index=False)
-        #print(f"🔄 Feedback updated: {updated} rows")
 
     return log
 
@@ -488,7 +613,6 @@ def get_sample_weights(df, log):
 
     if wrong.sum() > 0:
         weights[wrong.values] = 2.0
-        #print(f"⚖️ Wrong samples boosted: {wrong.sum()}")
 
     return weights
 
@@ -507,13 +631,12 @@ def save_prediction_log(df):
         df_log = df_log.drop_duplicates(subset=['symbol', 'date'], keep='last')
 
     df_log.to_csv(PREDICTION_LOG, index=False)
-    print(f"📝 Log saved: {len(df_log)} rows")
 
 # =========================
 # TRAINING FUNCTION
 # =========================
 
-def train_symbol(symbol, group, features, params, feedback_log, metadata):
+def train_symbol(symbol, group, features, params, feedback_log, metadata, sector_analyzer=None):
     """Train model - only saves if AUC >= threshold"""
     try:
         group = group.sort_values('date')
@@ -545,8 +668,6 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata):
         params_copy = params.copy()
         params_copy['scale_pos_weight'] = scale_pos
 
-        #print(f"   Class ratio: {target_ratio:.2%} → scale_pos_weight: {scale_pos:.2f}")
-
         weights = get_sample_weights(group.iloc[:split], feedback_log)
 
         model = xgb.XGBClassifier(**params_copy)
@@ -562,44 +683,45 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata):
         acc = accuracy_score(y_test, preds)
         auc = roc_auc_score(y_test, prob) if len(np.unique(y_test)) > 1 else 0.5
 
-        #print(f"   ✅ Acc: {acc:.2%}, AUC: {auc:.2%}")
-        
-        # Feature importance (optional, for debugging)
-        if auc >= AUC_THRESHOLD:
-            importance = model.feature_importances_
-            top_features = sorted(zip(features, importance), key=lambda x: x[1], reverse=True)[:5]
-            #print(f"   📊 Top features: {', '.join([f'{f}:{imp:.3f}' for f, imp in top_features])}")
+        # ✅ NEW: Get sector info
+        sector = 'Unknown'
+        if sector_analyzer and symbol in sector_analyzer.symbol_sector_map:
+            sector = sector_analyzer.symbol_sector_map[symbol]
 
         # Check if model is good enough
         if auc >= AUC_THRESHOLD:
             model_path = os.path.join(MODEL_DIR, f'{symbol}.joblib')
             joblib.dump(model, model_path)
-            print(f"   💾 GOOD MODEL saved: {model_path}")
-            
+
             group['confidence_score'] = model.predict_proba(X)[:, 1] * 100
-            group['prediction'] = (group['confidence_score'] > 50).astype(int)
             
+            # ✅ NEW: Adjust confidence by sector momentum
+            if 'sector_momentum' in group.columns:
+                sector_momentum = group['sector_momentum'].iloc[0]
+                if sector_momentum > 0.02:
+                    group['confidence_score'] = group['confidence_score'] * 1.1
+                elif sector_momentum < -0.02:
+                    group['confidence_score'] = group['confidence_score'] * 0.9
+                group['confidence_score'] = group['confidence_score'].clip(0, 100)
+            
+            group['prediction'] = (group['confidence_score'] > 50).astype(int)
+
             result = group[['symbol', 'date', 'close', 'confidence_score', 'prediction']]
             status = 'GOOD'
             failed_attempts = 0
-            
+
         else:
-            print(f"   ⚠️ BAD MODEL (AUC {auc:.2%} < {AUC_THRESHOLD}) - Not saving")
-            
+            group['confidence_score'] = 50
+            group['prediction'] = 0
+            result = group[['symbol', 'date', 'close', 'confidence_score', 'prediction']]
+            status = 'BAD'
+
             if not metadata.empty and symbol in metadata['symbol'].values:
                 prev_data = metadata[metadata['symbol'] == symbol].iloc[0]
                 failed_attempts = prev_data.get('failed_attempts', 0) + 1
             else:
                 failed_attempts = 1
-            
-            group['confidence_score'] = 50
-            group['prediction'] = 0
-            result = group[['symbol', 'date', 'close', 'confidence_score', 'prediction']]
-            status = 'BAD'
-            
-            if failed_attempts >= RETRAIN_ATTEMPTS:
-                print(f"   🔴 {symbol}: Failed {failed_attempts} times. Will retry monthly.")
-        
+
         return result, {
             'symbol': symbol,
             'last_trained': datetime.now(),
@@ -608,11 +730,11 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata):
             'acc': acc,
             'failed_attempts': failed_attempts if auc < AUC_THRESHOLD else 0,
             'status': status,
-            'class_ratio': target_ratio
+            'class_ratio': target_ratio,
+            'sector': sector  # ✅ NEW
         }
 
     except Exception as e:
-        #print(f"   ❌ Error: {e}")
         return None, None
 
 # =========================
@@ -624,21 +746,16 @@ def upload_to_huggingface():
     try:
         from huggingface_hub import HfApi
         from dotenv import load_dotenv
-        
+
         load_dotenv()
         hf_token = os.getenv("hf_token")
-        
+
         if not hf_token:
-            print("⚠️ No HF_TOKEN found")
             return False
-        
+
         api = HfApi()
         repo_id = "ahashanahmed/csv"
-        
-        #print("\n" + "="*70)
-        #print("📤 UPLOADING TO HUGGING FACE (SINGLE COMMIT)")
-        #print("="*70)
-        
+
         api.upload_folder(
             folder_path="./csv",
             repo_id=repo_id,
@@ -646,12 +763,10 @@ def upload_to_huggingface():
             commit_message=f"Auto-update: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
             ignore_patterns=["*.tmp", "*.log", "__pycache__", ".DS_Store"]
         )
-        
-        #print("✅ Upload complete! (single commit)")
+
         return True
-        
+
     except Exception as e:
-        #print(f"⚠️ HF upload failed: {e}")
         return False
 
 # =========================
@@ -662,25 +777,19 @@ def download_from_huggingface():
     """Download latest data from Hugging Face"""
     try:
         from huggingface_hub import snapshot_download
-        
-        #print("\n📥 Checking for existing data...")
-        
+
         if not os.path.exists(DATA_PATH) or os.path.getsize(DATA_PATH) < 1000:
-            print("   Downloading from Hugging Face...")
             snapshot_download(
                 repo_id="ahashanahmed/csv",
                 repo_type="dataset",
                 local_dir="./csv",
                 local_dir_use_symlinks=False
             )
-            #print("   ✅ Download complete!")
             return True
         else:
-            print(f"   ✅ Local data exists ({os.path.getsize(DATA_PATH)/1024:.1f} KB)")
             return True
-            
+
     except Exception as e:
-        print(f"   ⚠️ Download failed: {e}")
         return False
 
 # =========================
@@ -688,13 +797,11 @@ def download_from_huggingface():
 # =========================
 
 def main():
-    #print("="*70)
-    print("🚀 XGBOOST SCHEDULER (Advanced Features + Monthly Retry)")
-    #print("="*70)
-    
+    print("🚀 XGBOOST SCHEDULER (Sector Features + Telegram)")
+
     # Step 0: Download latest data from HF
     download_from_huggingface()
-    
+
     # Check schedule
     daily_needed, daily_days = check_last_run(LAST_DAILY_FILE, DAILY_INTERVAL)
     weekly_needed, weekly_days = check_last_run(LAST_WEEKLY_FILE, WEEKLY_INTERVAL)
@@ -704,63 +811,37 @@ def main():
     if monthly_needed:
         mode = "MONTHLY"
         params = MONTHLY_PARAMS
-        expected_time = "2-4 hours"
     elif weekly_needed:
         mode = "WEEKLY"
         params = WEEKLY_PARAMS
-        expected_time = "30-40 minutes"
     elif daily_needed:
         mode = "DAILY"
         params = DAILY_PARAMS
-        expected_time = "15 minutes"
     else:
-        print("\n✅ No training needed today!")
-        #print(f"   Next Daily: {(datetime.today() + timedelta(days=DAILY_INTERVAL - daily_days)).date()}")
-        #print(f"   Next Weekly: {(datetime.today() + timedelta(days=WEEKLY_INTERVAL - weekly_days)).date()}")
-        #print(f"   Next Monthly: {(datetime.today() + timedelta(days=MONTHLY_INTERVAL - monthly_days)).date()}")
-        
         upload_to_huggingface()
         return
 
-    #print(f"\n{'='*70}")
-    #print(f"🎯 RUNNING {mode} MODE")
-    #print(f"⏱️ Expected time: {expected_time}")
-    #print(f"📊 Parameters: n_estimators={params['n_estimators']}, depth={params['max_depth']}, lr={params['learning_rate']}")
-    #print(f"📈 Model threshold: AUC >= {AUC_THRESHOLD} to save")
-    #print(f"🔄 Bad models: {RETRAIN_ATTEMPTS} attempts, then monthly retry")
-    #print(f"📁 Advanced features: Support/Resistance, RSI Divergence, EMA200")
-    #print(f"{'='*70}\n")
-
     # Feedback update
-    #print("📊 Step 1: Updating feedback...")
     feedback_log = update_actual_results()
 
     # Load metadata
     metadata = load_model_metadata()
-    #print(f"📋 Loaded metadata: {len(metadata)} symbols tracked")
 
     # Load data
-    #print("\n📂 Step 2: Loading data...")
     df = load_data()
 
     if df.empty:
         print("❌ No data loaded. Exiting.")
         return
 
-    #print(f"   Loaded {len(df):,} rows, {df['symbol'].nunique()} symbols")
+    # Initialize Sector Analyzer
+    sector_analyzer = SectorAnalyzer(df)
 
     # Feature engineering
-    #print("\n🔧 Step 3: Feature engineering (with advanced features)...")
     df = engineer_features(df)
     features = get_features(df)
-    #print(f"   Using {len(features)} features: {features}")
 
     # Train models
-    #print("\n🏆 Step 4: Training models...")
-    #print("="*70)
-    #print(f"🎯 Target: Save only models with AUC >= {AUC_THRESHOLD}")
-    #print("="*70)
-
     results = []
     updated_metadata = []
     trained_count = 0
@@ -768,77 +849,64 @@ def main():
     bad_count = 0
     monthly_retry_count = 0
     skipped_count = 0
-    
-    retry_reasons = {
-        'new_symbol': [],
-        'good_model_update': [],
-        'bad_retry': [],
-        'monthly_retry': []
-    }
+    good_models_list = []
+
+    sector_performance = defaultdict(lambda: {'good': 0, 'bad': 0, 'total': 0})
 
     for symbol, group in df.groupby('symbol'):
         if len(group) < MIN_SAMPLES_PER_SYMBOL:
             skipped_count += 1
             continue
-        
+
         should_train, reason = should_retrain(symbol, metadata)
-        
+
         if not should_train:
-            print(f"\n🔸 {symbol} ({len(group)} rows) - SKIPPED: {reason}")
             skipped_count += 1
             continue
-        
-        if 'retry' in reason:
-            if 'monthly' in reason:
-                monthly_retry_count += 1
-                retry_reasons['monthly_retry'].append(symbol)
-            elif 'bad' in reason:
-                retry_reasons['bad_retry'].append(symbol)
-        elif reason == 'new_symbol':
-            retry_reasons['new_symbol'].append(symbol)
-        elif reason == 'good_model_update':
-            retry_reasons['good_model_update'].append(symbol)
 
-        #print(f"\n🔹 {symbol} ({len(group)} rows) - Reason: {reason}")
-        
-        result, model_info = train_symbol(symbol, group, features, params, feedback_log, metadata)
-        
+        if 'monthly' in reason:
+            monthly_retry_count += 1
+
+        result, model_info = train_symbol(symbol, group, features, params, feedback_log, metadata, sector_analyzer)
+
         if result is not None:
             results.append(result)
             trained_count += 1
-            
+
             if model_info:
                 updated_metadata.append(model_info)
                 if model_info['status'] == 'GOOD':
                     good_count += 1
+                    good_models_list.append({'symbol': symbol, 'auc': model_info['auc']})
+                    
+                    # ✅ NEW: Track sector performance
+                    sector = model_info.get('sector', 'Unknown')
+                    sector_performance[sector]['good'] += 1
+                    sector_performance[sector]['total'] += 1
                 else:
                     bad_count += 1
+                    sector = model_info.get('sector', 'Unknown')
+                    sector_performance[sector]['bad'] += 1
+                    sector_performance[sector]['total'] += 1
         else:
             skipped_count += 1
 
     # Save predictions
-    #print("\n💾 Step 5: Saving results...")
-    #print("="*70)
-
     if results:
         final = pd.concat(results, ignore_index=True)
         final.to_csv(XGB_CONFIDENCE, index=False)
-        #print(f"✅ Predictions saved: {len(final):,} rows")
         save_prediction_log(final)
 
     # Update metadata
     if updated_metadata:
         new_metadata = pd.DataFrame(updated_metadata)
-        
+
         if not metadata.empty:
             symbols_updated = new_metadata['symbol'].unique()
             metadata = metadata[~metadata['symbol'].isin(symbols_updated)]
-        
+
         final_metadata = pd.concat([metadata, new_metadata], ignore_index=True)
         save_model_metadata(final_metadata)
-        #print(f"✅ Metadata updated: {len(final_metadata)} symbols tracked")
-        #print(f"   🟢 Good models: {len(final_metadata[final_metadata['status'] == 'GOOD'])}")
-        #print(f"   🔴 Bad models: {len(final_metadata[final_metadata['status'] == 'BAD'])}")
 
     # Update schedule dates
     if daily_needed:
@@ -848,57 +916,30 @@ def main():
     if monthly_needed:
         update_last_run(LAST_MONTHLY_FILE, datetime.today())
 
-    # Summary
-    #print("\n" + "="*70)
-    #print(f"✅ {mode} MODE TRAINING COMPLETE!")
-    #print("="*70)
-    #print(f"📊 Models trained: {trained_count}")
-    #print(f"   🟢 Good models saved: {good_count} (AUC >= {AUC_THRESHOLD})")
-    #print(f"   🔴 Bad models (not saved): {bad_count}")
-    #print(f"   🔄 Monthly retry attempts: {monthly_retry_count}")
-    #print(f"⚠️ Symbols skipped: {skipped_count}")
-    
-    # Show retry statistics
-    if retry_reasons['new_symbol']:
-        print(f"\n🆕 New symbols trained: {len(retry_reasons['new_symbol'])}")
-    if retry_reasons['good_model_update']:
-        print(f"🟢 Good models updated: {len(retry_reasons['good_model_update'])}")
-    if retry_reasons['bad_retry']:
-        print(f"🔴 Bad models retrying: {len(retry_reasons['bad_retry'])}")
-    if retry_reasons['monthly_retry']:
-        print(f"📅 Monthly retry (failed models): {len(retry_reasons['monthly_retry'])}")
-        if retry_reasons['monthly_retry']:
-            print(f"   Symbols: {', '.join(retry_reasons['monthly_retry'][:10])}")
-            if len(retry_reasons['monthly_retry']) > 10:
-                print(f"   ... and {len(retry_reasons['monthly_retry'])-10} more")
+    # ✅ NEW: Save sector performance
+    if sector_performance:
+        sector_rows = []
+        for sector, perf in sector_performance.items():
+            if perf['total'] > 0:
+                sector_rows.append({
+                    'sector': sector,
+                    'good_models': perf['good'],
+                    'bad_models': perf['bad'],
+                    'total_models': perf['total'],
+                    'success_rate': perf['good'] / perf['total'] * 100 if perf['total'] > 0 else 0
+                })
+        
+        if sector_rows:
+            sector_df = pd.DataFrame(sector_rows)
+            sector_df.to_csv(SECTOR_PERFORMANCE_FILE, index=False)
 
-    # Show good models
-    if good_count > 0 and 'final_metadata' in locals():
-        good_models = final_metadata[final_metadata['status'] == 'GOOD'].sort_values('auc', ascending=False)
-        if len(good_models) > 0:
-            print(f"\n🟢 TOP 10 GOOD MODELS:")
-            for _, row in good_models.head(10).iterrows():
-                print(f"   {row['symbol']}: AUC={row['auc']:.2%}, Acc={row['acc']:.2%}")
-
-    # Show bad models status
-    if bad_count > 0 and 'final_metadata' in locals():
-        bad_models = final_metadata[final_metadata['status'] == 'BAD'].sort_values('failed_attempts', ascending=False)
-        if len(bad_models) > 0:
-            print(f"\n🔴 BAD MODELS STATUS:")
-            for _, row in bad_models.head(10).iterrows():
-                attempts = row['failed_attempts']
-                if attempts >= RETRAIN_ATTEMPTS:
-                    print(f"   {row['symbol']}: AUC={row['auc']:.2%}, Attempts={attempts} (Monthly retry mode)")
-                else:
-                    remaining = RETRAIN_ATTEMPTS - attempts
-                    print(f"   {row['symbol']}: AUC={row['auc']:.2%}, Attempts={attempts}, Remaining={remaining}")
+    # ✅ NEW: Send Telegram summary
+    send_training_summary(mode, trained_count, good_count, bad_count, monthly_retry_count, good_models_list)
 
     # Upload to Hugging Face
     upload_to_huggingface()
 
-    print("\n" + "="*70)
-    print("🎉 DONE!")
-    print("="*70)
+    print("\n🎉 DONE!")
 
 if __name__ == "__main__":
     main()
