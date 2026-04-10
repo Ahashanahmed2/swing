@@ -3199,7 +3199,7 @@ def detect_silver_bullet(df, idx):
     lows = recent['low'].values
     closes = recent['close'].values
     
-    result = Ugc
+    result = []
     current_price = closes[-1]
     
     swing_high = np.max(highs[:-1])
