@@ -1039,8 +1039,8 @@ class AutoLLMTrainer:
             gradient_accumulation_steps=grad_accum,
 
             learning_rate=learning_rate,
-            warmup_steps=300,
-            weight_decay=0.015,
+            warmup_steps=1000,
+            weight_decay=0.025,
             lr_scheduler_type="cosine_with_restarts",
 
             save_steps=80,
