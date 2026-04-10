@@ -1,6 +1,7 @@
 # nightly_trader.py - LLM + XGBoost + Agentic Loop + PPO Enhanced v5.0
 # একটাই স্ক্রিপ্ট, সব রাতে হয়
 # ✅ NEW: PPO Integration + Telegram Notifications
+# ✅ UPDATED: DSE Support - Reads sectors from CSV (No hardcoded US stocks)
 # স্ট্রাকচার অপরিবর্তিত, সব Critical + Hidden + New Issues ফিক্স করা হয়েছে
 
 import pandas as pd
@@ -991,36 +992,37 @@ class AgenticLoopScorer:
 
 
 # =========================================================
-# SECTOR CLASSIFIER
+# SECTOR CLASSIFIER (UPDATED FOR DSE - READS FROM CSV)
 # =========================================================
 
 class SectorClassifier:
-    """Sector classification for correlation control"""
-    
-    SECTOR_MAP = {
-        'TECH': ['AAPL', 'MSFT', 'GOOGL', 'META', 'NVDA', 'AMD', 'INTC', 'CRM', 'ADBE', 'ORCL'],
-        'FINANCE': ['JPM', 'BAC', 'WFC', 'C', 'GS', 'MS', 'V', 'MA', 'AXP', 'BLK'],
-        'HEALTHCARE': ['JNJ', 'PFE', 'MRK', 'ABBV', 'BMY', 'LLY', 'UNH', 'CVS', 'AMGN'],
-        'CONSUMER': ['AMZN', 'WMT', 'TGT', 'COST', 'HD', 'LOW', 'MCD', 'SBUX', 'NKE', 'DIS', 'TSLA'],
-        'ENERGY': ['XOM', 'CVX', 'COP', 'EOG', 'SLB', 'PSX', 'VLO', 'MPC', 'OXY'],
-        'INDUSTRIAL': ['BA', 'CAT', 'DE', 'GE', 'HON', 'LMT', 'MMM', 'RTX', 'UNP', 'UPS'],
-        'TELECOM': ['T', 'VZ', 'TMUS', 'CMCSA', 'CHTR'],
-        'PHARMACEUTICALS': ['RECKITTBEN', 'MARICO', 'EASTRNLUB', 'UNILEVERCL', 'BERGERPBL', 'LINDEBD']
-    }
+    """✅ UPDATED: Reads sector directly from market data CSV"""
     
     def __init__(self):
         self.symbol_to_sector = {}
-        self._build_mapping()
     
-    def _build_mapping(self):
-        for sector, symbols in self.SECTOR_MAP.items():
-            for symbol in symbols:
-                self.symbol_to_sector[symbol.upper()] = sector
+    def build_from_dataframe(self, market_df):
+        """Build symbol to sector mapping from market dataframe"""
+        if market_df is not None and 'symbol' in market_df.columns and 'sector' in market_df.columns:
+            try:
+                # Get latest sector for each symbol
+                latest_data = market_df.sort_values('date').groupby('symbol').last()
+                self.symbol_to_sector = latest_data['sector'].fillna('UNKNOWN').to_dict()
+                # Clean sector names
+                for sym, sec in self.symbol_to_sector.items():
+                    if isinstance(sec, str):
+                        self.symbol_to_sector[sym] = sec.strip().upper()
+                print(f"✅ Sector mapping built for {len(self.symbol_to_sector)} symbols from CSV")
+            except Exception as e:
+                print(f"   ⚠️ Could not build sector mapping: {e}")
     
     def get_sector(self, symbol):
-        return self.symbol_to_sector.get(symbol.upper(), 'UNKNOWN')
+        """Get sector for a symbol from CSV data"""
+        sector = self.symbol_to_sector.get(symbol.upper(), 'UNKNOWN')
+        return sector if sector else 'UNKNOWN'
     
     def get_sector_exposure(self, trades_df):
+        """Calculate sector-wise investment exposure"""
         if len(trades_df) == 0:
             return {}
         
@@ -1538,10 +1540,11 @@ def nightly_trading_system():
     """
     LLM + XGBoost + Agentic Loop + PPO - v5.0
     ✅ PPO Integration + Telegram Notifications
+    ✅ DSE Support - Reads sectors from CSV
     """
     
     print("="*70)
-    print("🌙 NIGHTLY TRADING SYSTEM (LLM + PPO + Agentic Loop v5.0)")
+    print("🌙 NIGHTLY TRADING SYSTEM (LLM + PPO + Agentic Loop v5.0 - DSE)")
     print("="*70)
     print(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("🎯 Generating decisions for TOMORROW's trading")
@@ -1567,13 +1570,18 @@ def nightly_trading_system():
     
     # Initialize components
     llm_predictor = LLMPredictor(model_path="./llm_model")
-    ppo_predictor = PPOPredictor(model_dir='./csv/ppo_models/')  # ✅ NEW
+    ppo_predictor = PPOPredictor(model_dir='./csv/ppo_models/')
     agentic_scorer = AgenticLoopScorer()
     xgb_predictor = XGBoostPredictor()
     stress_detector = MarketStressDetector()
     correlation_manager = CorrelationManager()
     portfolio_manager = PortfolioRiskManager(capital=500000, risk_per_trade=0.02, portfolio_state=portfolio_state)
     data_calculator = MarketDataCalculator()
+    
+    # ✅ Initialize sector classifier and build from CSV
+    sector_classifier = SectorClassifier()
+    sector_classifier.build_from_dataframe(market_df)
+    portfolio_manager.sector_classifier = sector_classifier
     
     update_llm_performance_from_trade_log(llm_predictor, ppo_predictor)
     
@@ -1619,7 +1627,7 @@ def nightly_trading_system():
                          ppo_signals={'BUY': 0, 'SELL': 0, 'HOLD': 0},
                          performance_metrics=performance_metrics, stress_metrics=stress_metrics)
         
-        # ✅ Send Telegram alert
+        # Send Telegram alert
         send_trade_alert(pd.DataFrame(), 'STRESS', {}, performance_metrics, stress_metrics)
         
         print("\n" + "="*70)
@@ -1651,15 +1659,15 @@ def nightly_trading_system():
     # =========================================================
     good_symbols = meta_df[meta_df['auc'] >= 0.55]['symbol'].unique()
     xgb_symbols = list(xgb_predictor.models.keys())
-    ppo_symbols = list(ppo_predictor.models.keys())  # ✅ NEW
+    ppo_symbols = list(ppo_predictor.models.keys())
     all_symbols = list(set(good_symbols) | set(xgb_symbols) | set(ppo_symbols))
     print(f"\n✅ Qualified Symbols: {len(all_symbols)}")
     
     llm_stats = llm_predictor.get_signal_counts()
     llm_accuracy = llm_predictor.get_accuracy()
-    ppo_accuracy = ppo_predictor.get_accuracy()  # ✅ NEW
+    ppo_accuracy = ppo_predictor.get_accuracy()
     print(f"🤖 LLM Accuracy: {llm_accuracy:.1%} (from {sum(llm_stats.values())} tracked predictions)")
-    print(f"🤖 PPO Accuracy: {ppo_accuracy:.1%}")  # ✅ NEW
+    print(f"🤖 PPO Accuracy: {ppo_accuracy:.1%}")
     
     risk_adj = portfolio_state.get_risk_adjustment_factor()
     if risk_adj < 1.0:
@@ -1672,13 +1680,13 @@ def nightly_trading_system():
     
     decisions = []
     llm_signals = {'BUY': 0, 'SELL': 0, 'HOLD': 0}
-    ppo_signals = {'BUY': 0, 'SELL': 0, 'HOLD': 0}  # ✅ NEW
+    ppo_signals = {'BUY': 0, 'SELL': 0, 'HOLD': 0}
     unstructured_count = 0
     unreliable_count = 0
     
-    dynamic_weights = agentic_scorer.get_dynamic_weights(llm_accuracy, ppo_accuracy)  # ✅ Updated
+    dynamic_weights = agentic_scorer.get_dynamic_weights(llm_accuracy, ppo_accuracy)
     current_capital = portfolio_state.get_current_capital()
-    print(f"   Dynamic Weights: Base={dynamic_weights['base']:.2f}, LLM={dynamic_weights['llm']:.2f}, XGB={dynamic_weights['xgb']:.2f}, PPO={dynamic_weights['ppo']:.2f}")  # ✅ NEW
+    print(f"   Dynamic Weights: Base={dynamic_weights['base']:.2f}, LLM={dynamic_weights['llm']:.2f}, XGB={dynamic_weights['xgb']:.2f}, PPO={dynamic_weights['ppo']:.2f}")
     print(f"   Available Capital: ${current_capital:,.0f}")
     
     for symbol in all_symbols[:150]:
@@ -1731,7 +1739,7 @@ def nightly_trading_system():
             llm_score = 0.5
             llm_conf = 0.3
         
-        # ✅ NEW: PPO signal
+        # PPO signal
         ppo_result = ppo_predictor.get_ppo_signal(symbol, market_data)
         ppo_signal = ppo_result['signal']
         ppo_score = ppo_result['score']
@@ -1746,12 +1754,12 @@ def nightly_trading_system():
         # Agentic boost
         agentic_boost = agentic_scorer.calculate_consensus_boost(symbol, base_score)
         
-        # ✅ Non-linear fusion with PPO
+        # Non-linear fusion with PPO
         combined_score = (
             base_score * dynamic_weights['base'] +
             (llm_score ** 1.2) * dynamic_weights['llm'] +
             (xgb_score ** 1.1) * dynamic_weights['xgb'] +
-            (ppo_score ** 1.1) * dynamic_weights['ppo']  # ✅ NEW
+            (ppo_score ** 1.1) * dynamic_weights['ppo']
         )
         combined_score += agentic_boost
         
@@ -1772,7 +1780,7 @@ def nightly_trading_system():
             base_conf * dynamic_weights['base'] +
             llm_conf * dynamic_weights['llm'] +
             xgb_conf * dynamic_weights['xgb'] +
-            ppo_conf * dynamic_weights['ppo']  # ✅ NEW
+            ppo_conf * dynamic_weights['ppo']
         )
         
         if 0.45 < combined_score < 0.65 and regime != 'BULL':
@@ -1816,9 +1824,9 @@ def nightly_trading_system():
             'llm_signal': llm_signal,
             'llm_score': round(llm_score, 3),
             'llm_reliable': is_reliable,
-            'ppo_signal': ppo_signal,  # ✅ NEW
-            'ppo_score': round(ppo_score, 3),  # ✅ NEW
-            'ppo_valid': ppo_valid,  # ✅ NEW
+            'ppo_signal': ppo_signal,
+            'ppo_score': round(ppo_score, 3),
+            'ppo_valid': ppo_valid,
             'base_score': round(base_score, 3),
             'xgb_score': round(xgb_score, 3),
             'agentic_boost': round(agentic_boost, 3),
@@ -1836,7 +1844,7 @@ def nightly_trading_system():
         })
     
     print(f"   LLM Stats: {unstructured_count} unstructured, {unreliable_count} unreliable")
-    print(f"   PPO Stats: BUY={ppo_signals['BUY']}, SELL={ppo_signals['SELL']}, HOLD={ppo_signals['HOLD']}")  # ✅ NEW
+    print(f"   PPO Stats: BUY={ppo_signals['BUY']}, SELL={ppo_signals['SELL']}, HOLD={ppo_signals['HOLD']}")
     
     # =========================================================
     # STEP 7: CREATE AND VALIDATE TRADE FILE
@@ -1882,8 +1890,8 @@ def nightly_trading_system():
             'risk_reward': row['risk_reward'],
             'llm_signal': row['llm_signal'],
             'llm_reliable': row['llm_reliable'],
-            'ppo_signal': row['ppo_signal'],  # ✅ NEW
-            'ppo_valid': row['ppo_valid'],  # ✅ NEW
+            'ppo_signal': row['ppo_signal'],
+            'ppo_valid': row['ppo_valid'],
             'shares': shares,
             'investment': investment,
             'rank': rank
@@ -1921,7 +1929,7 @@ def nightly_trading_system():
     portfolio_summary = portfolio_manager.get_portfolio_summary(final_trades, current_capital) if len(final_trades) > 0 else {}
     
     # =========================================================
-    # STEP 9: SEND TELEGRAM ALERT (NEW)
+    # STEP 9: SEND TELEGRAM ALERT
     # =========================================================
     if len(final_trades) > 0:
         send_trade_alert(final_trades, regime, portfolio_summary, performance_metrics, stress_metrics)
@@ -1942,8 +1950,8 @@ def nightly_trading_system():
     print(f"   HOLD: {len(decisions_df[decisions_df['decision'] == 'HOLD'])}")
     print(f"\n🤖 LLM Signals: BUY={llm_signals['BUY']}, SELL={llm_signals['SELL']}, HOLD={llm_signals['HOLD']}")
     print(f"   LLM Accuracy: {llm_accuracy:.1%} | Unreliable: {unreliable_count}")
-    print(f"🤖 PPO Signals: BUY={ppo_signals['BUY']}, SELL={ppo_signals['SELL']}, HOLD={ppo_signals['HOLD']}")  # ✅ NEW
-    print(f"   PPO Accuracy: {ppo_accuracy:.1%}")  # ✅ NEW
+    print(f"🤖 PPO Signals: BUY={ppo_signals['BUY']}, SELL={ppo_signals['SELL']}, HOLD={ppo_signals['HOLD']}")
+    print(f"   PPO Accuracy: {ppo_accuracy:.1%}")
     
     if portfolio_summary:
         print(f"\n💰 PORTFOLIO SUMMARY:")
@@ -1994,7 +2002,7 @@ def nightly_trading_system():
 def morning_check():
     """সকালে চেক করুন"""
     print("\n" + "="*70)
-    print("🌅 MORNING TRADING CHECK (LLM + PPO Enhanced v5.0)")
+    print("🌅 MORNING TRADING CHECK (LLM + PPO Enhanced v5.0 - DSE)")
     print("="*70)
     print(f"📅 {datetime.now().strftime('%Y-%m-%d')}")
     print("="*70)
@@ -2034,7 +2042,7 @@ def morning_check():
         print("   4. If gap down >2%, skip the trade")
         print("="*70)
         
-        # ✅ Send morning Telegram alert
+        # Send morning Telegram alert
         if len(trade_df) > 0:
             message = f"""
 🌅 <b>MORNING TRADING CHECK</b>
