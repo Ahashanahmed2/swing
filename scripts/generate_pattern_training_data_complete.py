@@ -37,7 +37,7 @@ except ImportError:
 # TRAINING CONFIGURATION
 # =========================================================
 
-MAX_SYMBOLS = 380
+MAX_SYMBOLS = 396
 MAX_PER_SYMBOL = 10
 MAX_EXAMPLES_PER_RUN = 5000
 
@@ -4347,7 +4347,7 @@ def main():
     
     for symbol in df['symbol'].unique():
         symbol_data = df[df['symbol'] == symbol].sort_values('date').reset_index(drop=True)
-        if len(symbol_data) < 100:
+        if len(symbol_data) < 20:
             continue
             
         
