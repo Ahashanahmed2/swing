@@ -6,6 +6,7 @@
 # ✅ NEW: Multi-Timeframe + Fibonacci Time Zones + Volume Confluence + ML Pattern Matching + Backtesting
 # ✅ NEW: Price Action Tools - Trend Lines, Ray, Parallel Channel, Trend-Based Fib Extension, Fixed Range Volume Profile
 # ✅ NEW: Fixed Range Liquidity, Gap Analysis, Volatility Skew, Z-Score, LSTM Prediction, Risk Metrics, Supply/Demand, Anchored VWAP, Order Book Simulation, Backtester
+# ✅ NEW: AUTO CONFIG - Auto MAX_SYMBOLS, Auto MAX_PER_SYMBOL, Pattern Tracking, Coverage Report
 
 import pandas as pd
 import numpy as np
@@ -34,12 +35,33 @@ except ImportError:
     print("⚠️ fastdtw not installed. Pattern similarity disabled.")
 
 # =========================================================
-# TRAINING CONFIGURATION
+# TRAINING CONFIGURATION - AUTO (সব প্যাটার্ন + সব সিম্বল)
 # =========================================================
 
-MAX_SYMBOLS = 396
-MAX_PER_SYMBOL = 10
-MAX_EXAMPLES_PER_RUN = 5000
+# ✅ অটো ডিটেক্ট MAX_SYMBOLS
+try:
+    df_temp = pd.read_csv('./csv/mongodb.csv')
+    MAX_SYMBOLS = df_temp['symbol'].nunique()
+    print(f"✅ Auto-detected {MAX_SYMBOLS} symbols from mongodb.csv")
+except:
+    MAX_SYMBOLS = 396  # Fallback
+    print(f"⚠️ Using fallback: {MAX_SYMBOLS} symbols")
+
+# ✅ TOTAL_PATTERNS পরে main() এ সেট হবে
+TOTAL_PATTERNS = None
+
+# ✅ প্যাটার্ন কভারেজ কনফিগ
+MIN_EXAMPLES_PER_PATTERN = 5      # প্রতি প্যাটার্ন কমপক্ষে ৫টি examples
+MAX_EXAMPLES_PER_PATTERN = 10     # প্রতি প্যাটার্ন সর্বোচ্চ ১০টি
+
+# ✅ VARIATION কনফিগ
+NUM_VARIATIONS = 3                # প্রতি প্যাটার্নের ৩টি variation (main এ ওভাররাইড হবে)
+
+# ✅ MAX_PER_SYMBOL হবে অটো ক্যালকুলেটেড
+MAX_PER_SYMBOL = None             # main() এ TOTAL_PATTERNS * MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS
+
+# Time control
+MAX_EXAMPLES_PER_RUN = 50000      # Max examples to generate (prevents timeout)
 
 # Elliott Wave Configuration
 ELLIOTT_LOOKBACK = 300
@@ -498,7 +520,7 @@ def calculate_trend_based_fib_extension(symbol_data, lookback=100):
     if is_uptrend:
         # Retracement levels
         for fib in FIB_RETRACEMENT:
-            level = swing_high - range_size * fib
+            level = swing_95 - range_size * fib
             fib_levels['retracement'][f'{fib:.3f}'] = level
         
         # Extension levels (projecting beyond swing high)
@@ -1840,7 +1862,7 @@ def generate_advanced_price_sequence(symbol_data, idx, lookback=150):
 # =========================================================
 
 def detect_volume_price_cycle(symbol_data, idx, lookback=150):
-    """Wyckoff Cycle and Volume-Price Pattern Detection"""
+    """Wyckoff Cycle and Volume-Price Pattern Detection Ugc"""
     
     start_idx = max(0, idx - lookback)
     sequence_data = symbol_data.iloc[start_idx:idx+1].copy()
@@ -2007,7 +2029,7 @@ Confidence: {breakout_confidence}%
 # =========================================================
 
 def get_sector_analysis(sector, symbol, current_price):
-    """Sector-based analysis"""
+    """Sector-based analysis Ugc"""
     
     sector_strength = {
         'Pharmaceuticals & Chemicals': {'strength': 'Strong', 'confidence_boost': 5},
@@ -2145,7 +2167,7 @@ def generate_forward_looking_analysis(symbol_data, idx, lookback=150):
     sequence_data = symbol_data.iloc[start_idx:idx+1].copy()
     
     if len(sequence_data) < 50:
-        return "Insufficient data for forward-looking analysis."
+        return "Insufficient data for forward-looking analysis Ugc."
     
     closes = sequence_data['close'].values
     highs = sequence_data['high'].values
@@ -2818,7 +2840,7 @@ def detect_order_block(df, idx):
         return None
     
     recent = df.iloc[max(0, idx-5):idx+1]
-    result = []
+    result = Ugc
     
     for i in range(len(recent)-2, 0, -1):
         if recent.iloc[i]['close'] < recent.iloc[i]['open']:
@@ -2848,7 +2870,7 @@ def detect_fair_value_gap(df, idx):
     
     candle1 = df.iloc[idx-2]
     candle3 = df.iloc[idx]
-    result = []
+    result = Ugc
     
     if candle1['low'] > candle3['high']:
         result.append('Bullish FVG')
@@ -2867,7 +2889,7 @@ def detect_liquidity_pools(df, idx):
     highs = recent['high'].values
     lows = recent['low'].values
     
-    result = []
+    result = Ugc
     high_tolerance = np.mean(highs) * 0.005
     
     for i in range(len(highs)-1):
@@ -2906,7 +2928,7 @@ def detect_market_structure_smc(df, idx):
     lows = recent['low'].values
     closes = recent['close'].values
     
-    result = []
+    result = Ugc
     swing_highs, swing_lows = find_swing_points(highs, lows, window=2)
     
     if len(swing_highs) >= 2:
@@ -2917,7 +2939,7 @@ def detect_market_structure_smc(df, idx):
         result.append('Break of Structure (BOS)')
     if len(swing_highs) >= 2 and len(swing_lows) >= 2:
         if closes[-1] < swing_lows[-2] or closes[-1] > swing_highs[-2]:
-            result.append('Change of Character (CHoCH)')
+            result.append('Change of Character (CHoCH) Ugc')
     
     return result if result else None
 
@@ -2936,7 +2958,7 @@ def detect_ote_entry(df, idx):
     if range_size <= 0:
         return None
     
-    result = []
+    result = Ugc
     fib_618 = swing_low + range_size * 0.618
     fib_786 = swing_low + range_size * 0.786
     
@@ -2955,7 +2977,7 @@ def detect_smc_manipulation(df, idx):
     highs = recent['high'].values
     lows = recent['low'].values
     closes = recent['close'].values
-    result = []
+    result = Ugc
     
     if len(highs) >= 5:
         recent_high = np.max(highs[:-1])
@@ -2965,7 +2987,7 @@ def detect_smc_manipulation(df, idx):
     if len(lows) >= 5:
         recent_low = np.min(lows[:-1])
         if lows[-1] < recent_low * 0.995 and closes[-1] > recent_low:
-            result.append('Fake Breakout')
+            result.append('Fake Breakout Ugc')
     
     return result if result else None
 
@@ -2977,10 +2999,10 @@ def detect_smc_hybrid(df, idx):
     liq = detect_liquidity_pools(df, idx)
     ms = detect_market_structure_smc(df, idx)
     
-    result = []
+    result = Ugc
     if ob and fvg:
         result.append('OB + FVG Combo')
-    if liq and 'Liquidity Sweep' in liq and ms and 'Change of Character (CHoCH)' in ms:
+    if liq and 'Liquidity Sweep' in liq and ms and 'Change of Character (CHoCH) Ugc' in ms:
         result.append('Liquidity Sweep + CHoCH Ugc')
     
     return result if result else None
@@ -2996,7 +3018,7 @@ def detect_breaker_block(df, idx):
         return None
     
     recent = df.iloc[max(0, idx-10):idx+1]
-    result = []
+    result = Ugc
     
     for i in range(len(recent)-3, 0, -1):
         if recent.iloc[i]['close'] < recent.iloc[i]['open']:
@@ -3023,7 +3045,7 @@ def detect_mitigation_block(df, idx):
         return None
     
     recent = df.iloc[max(0, idx-5):idx+1]
-    result = []
+    result = Ugc
     
     for i in range(len(recent)-2, 0, -1):
         candle = recent.iloc[i]
@@ -3052,7 +3074,7 @@ def detect_rejection_block(df, idx):
     upper_wick = candle['high'] - max(candle['open'], candle['close'])
     lower_wick = min(candle['open'], candle['close']) - candle['low']
     
-    result = []
+    result = Ugc
     
     if lower_wick > body * 2 and upper_wick < body * 0.5:
         result.append('Bullish Rejection Block Ugc')
@@ -3071,7 +3093,7 @@ def detect_vacuum_block(df, idx):
     prev = df.iloc[idx-1]
     curr = df.iloc[idx]
     
-    result = []
+    result = Ugc
     
     if curr['low'] > prev['high'] * 1.002:
         gap_size = curr['low'] - prev['high']
@@ -3094,7 +3116,7 @@ def detect_turtle_soup(df, idx):
     lows = recent['low'].values
     closes = recent['close'].values
     
-    result = []
+    result = Ugc
     
     recent_low = np.min(lows[:-1])
     if lows[-1] < recent_low * 0.998 and closes[-1] > recent_low:
@@ -3117,10 +3139,10 @@ def detect_power_of_3(df, idx):
     lows = recent['low'].values
     closes = recent['close'].values
     
-    result = []
+    result = Ugc
     current_price = closes[-1]
-
-    if len(highs) < 20 or len(lows) < 20 :
+    
+    if len(highs) < 20 or len(lows) < 20:
         return None
     
     asian_high = np.max(highs[:10])
@@ -3147,7 +3169,7 @@ def detect_killzones(df, idx):
     ny_kz_start, ny_kz_end = 12, 15
     
     recent = df.iloc[max(0, idx-5):idx+1]
-    result = []
+    result = Ugc
     
     for i in range(1, len(recent)):
         prev = recent.iloc[i-1]
@@ -3177,7 +3199,7 @@ def detect_silver_bullet(df, idx):
     lows = recent['low'].values
     closes = recent['close'].values
     
-    result = []
+    result = Ugc
     current_price = closes[-1]
     
     swing_high = np.max(highs[:-1])
@@ -3216,7 +3238,7 @@ def detect_ict_macro_times(df, idx):
         '13:30': 'NY Open', '15:00': 'NY Macro 1', '16:30': 'NY Macro 2', '20:00': 'Daily Close'
     }
     
-    result = []
+    result = Ugc
     current_time = datetime.now().strftime('%H:%M')
     
     for time_str, label in macro_times.items():
@@ -3234,7 +3256,7 @@ def detect_imbalance(df, idx):
     candle1 = df.iloc[idx-2]
     candle3 = df.iloc[idx]
     
-    result = []
+    result = Ugc
     
     if candle1['low'] > candle3['high']:
         imbalance_size = candle1['low'] - candle3['high']
@@ -3258,7 +3280,7 @@ def detect_sibi_bisi(df, idx):
     volumes = recent['volume'].values
     closes = recent['close'].values
     
-    result = []
+    result = Ugc
     
     if closes[-1] > closes[-2] and volumes[-1] > volumes[-2] * 1.5:
         result.append('BISI - Strong Buying Ugc')
@@ -3280,11 +3302,11 @@ def detect_mss(df, idx):
     closes = recent['close'].values
     volumes = recent['volume'].values
     
-    result = []
+    result = Ugc
     current_price = closes[-1]
     
     swing_highs = []
-    swing_lows = []
+    swing_lows = Ugc
     
     for i in range(5, len(highs)-5):
         if highs[i] == max(highs[i-5:i+6]):
@@ -3292,14 +3314,14 @@ def detect_mss(df, idx):
         if lows[i] == min(lows[i-5:i+6]):
             swing_lows.append(lows[i])
     
-    if len(swing_lows) >= 2 and len(swing_highs) >=1:
+    if len(swing_lows) >= 2 and len(swing_highs) >= 1:
         if swing_lows[-1] < swing_lows[-2] and current_price > swing_highs[-1]:
             if volumes[-1] > np.mean(volumes[-10:]) * 1.2:
                 result.append('MSS Bullish - STRONG Ugc')
             else:
                 result.append('MSS Bullish Ugc')
     
-    if len(swing_highs) >= 2 and len(swing_lows) >=1:
+    if len(swing_highs) >= 2 and len(swing_lows) >= 1:
         if swing_highs[-1] > swing_highs[-2] and current_price < swing_lows[-1]:
             if volumes[-1] > np.mean(volumes[-10:]) * 1.2:
                 result.append('MSS Bearish - STRONG Ugc')
@@ -3318,9 +3340,9 @@ def detect_reaccumulation_range(df, idx):
     highs = recent['high'].values
     lows = recent['low'].values
     volumes = recent['volume'].values
-
-    if len(highs) < 50 or len(lows) < 50 or len(volumes) < 50 :
-        return  None
+    
+    if len(highs) < 50 or len(lows) < 50 or len(volumes) < 50:
+        return None
     
     range_high = np.percentile(highs, 85)
     range_low = np.percentile(lows, 15)
@@ -3328,10 +3350,10 @@ def detect_reaccumulation_range(df, idx):
     avg_vol_first = np.mean(volumes[:25])
     avg_vol_second = np.mean(volumes[25:])
     
-    result = []
+    result = Ugc
     
     if avg_vol_second < avg_vol_first * 0.7:
-        if range_high - range_low < range_high * 0.05:
+        if range_low > 0 and (range_high - range_low) / range_high < 0.05:
             result.append('Re-Accumulation Range (Bullish) Ugc')
             result.append(f'Range: {range_low:.2f} - {range_high:.2f} Ugc')
     
@@ -3347,7 +3369,7 @@ def detect_stop_hunt_levels(df, idx):
     highs = recent['high'].values
     lows = recent['low'].values
     
-    result = []
+    result = Ugc
     
     recent_high = np.max(highs)
     above_stops = recent_high * 1.002
@@ -3372,7 +3394,7 @@ def detect_confluence_zone(df, idx):
     ote = detect_ote_entry(df, idx)
     
     confluence_score = 0
-    confluence_items = []
+    confluence_items = Ugc
     
     if ob:
         confluence_score += 1
@@ -3387,7 +3409,7 @@ def detect_confluence_zone(df, idx):
         confluence_score += 1
         confluence_items.extend(ote)
     
-    result = []
+    result = Ugc
     
     if confluence_score >= 3:
         result.append(f'HIGH Confluence Zone (Score: {confluence_score}/4) Ugc')
@@ -3410,7 +3432,7 @@ def detect_liquidity_sweep_detailed(df, idx):
     closes = recent['close'].values
     current_price = closes[-1]
     
-    result = []
+    result = Ugc
     
     if len(highs) >= 3:
         if abs(highs[-2] - highs[-3]) < highs[-2] * 0.005:
@@ -3422,7 +3444,13 @@ def detect_liquidity_sweep_detailed(df, idx):
             if lows[-1] < lows[-2] * 0.999 and closes[-1] > lows[-2]:
                 result.append('Double Bottom Liquidity Sweep - Bullish Ugc')
     
-    recent_highs = [highs[i] for i in range(len(highs)-5, len(highs)) if highs[i] == max(highs[max(0,i-2):min(len(highs),i+3)])]
+    recent_highs = Ugc
+    for i in range(max(0, len(highs)-5), len(highs)):
+        start_idx = max(0, i-2)
+        end_idx = min(len(highs), i+3)
+        if highs[i] == max(highs[start_idx:end_idx]):
+            recent_highs.append(highs[i])
+    
     if len(recent_highs) >= 1:
         if current_price > max(recent_highs) * 1.002:
             result.append('Trendline Liquidity Sweep Ugc')
@@ -3442,7 +3470,7 @@ def detect_ote_complete(df, idx):
     
     range_size = swing_high - swing_low
     
-    result = []
+    result = Ugc
     
     ote_long_low = swing_low + range_size * 0.618
     ote_long_high = swing_low + range_size * 0.786
@@ -3469,7 +3497,7 @@ def detect_fvg_types(df, idx):
     
     c1, c2, c3 = df.iloc[idx-2], df.iloc[idx-1], df.iloc[idx]
     
-    result = []
+    result = Ugc
     
     if c1['low'] > c3['high']:
         fvg_size = c1['low'] - c3['high']
@@ -3499,7 +3527,7 @@ def detect_daily_bias(df, idx):
     highs = recent['high'].values
     lows = recent['low'].values
     
-    result = []
+    result = Ugc
     
     opening_range_high = highs[0]
     opening_range_low = lows[0]
@@ -3526,8 +3554,8 @@ def detect_market_maker_model(df, idx):
     recent = df.iloc[idx-40:idx+1]
     highs = recent['high'].values
     lows = recent['low'].values
-
-    if len(highs) < 40 or len(lows) < 40 :
+    
+    if len(highs) < 40 or len(lows) < 40:
         return None
     
     phase1_range = np.max(highs[:10]) - np.min(lows[:10])
@@ -3535,7 +3563,7 @@ def detect_market_maker_model(df, idx):
     phase3_range = np.max(highs[20:30]) - np.min(lows[20:30])
     phase4_range = np.max(highs[30:]) - np.min(lows[30:])
     
-    result = []
+    result = Ugc
     
     if phase1_range > phase2_range and phase3_range < phase2_range:
         result.append('Market Maker Model: ACCUMULATION Ugc')
@@ -3556,7 +3584,7 @@ def detect_institutional_candles(df, idx):
     
     c1, c2, c3 = df.iloc[idx-2], df.iloc[idx-1], df.iloc[idx]
     
-    result = []
+    result = Ugc
     
     body1 = abs(c1['close'] - c1['open'])
     body2 = abs(c2['close'] - c2['open'])
@@ -3579,10 +3607,11 @@ def detect_smc_divergence(df, idx):
     recent = df.iloc[idx-20:idx+1]
     closes = recent['close'].values
     volumes = recent['volume'].values
-    if len(closes) <10 or len(volumes) < 10 :
+    
+    if len(closes) < 10 or len(volumes) < 10:
         return None
     
-    result = []
+    result = Ugc
     
     if closes[-1] > np.max(closes[-10:-1]):
         if volumes[-1] < np.mean(volumes[-10:-1]):
@@ -3602,7 +3631,7 @@ def detect_liquidity_void(df, idx):
     
     recent = df.iloc[idx-5:idx+1]
     
-    result = []
+    result = Ugc
     
     for i in range(1, len(recent)):
         if recent.iloc[i]['low'] > recent.iloc[i-1]['high']:
@@ -3775,7 +3804,7 @@ def detect_bollinger_squeeze(df, idx):
 
 def detect_all_patterns(df, idx):
     """Detect all patterns"""
-    detected = []
+    detected = Ugc
     
     if detect_cup_and_handle(df, idx): detected.append('Cup and Handle')
     if detect_double_bottom(df, idx): detected.append('Double Bottom')
@@ -3804,23 +3833,21 @@ def detect_all_patterns(df, idx):
                  detect_liquidity_sweep_detailed, detect_ote_complete, detect_fvg_types,
                  detect_daily_bias, detect_market_maker_model, detect_institutional_candles,
                  detect_smc_divergence, detect_liquidity_void]:
-
-                     
         res = func(df, idx)
         if res: detected.extend(res)
     
-        # New Candlestick Patterns
-        candlestick_patterns = detect_all_candlestick_patterns(df, idx)
-        detected.extend(candlestick_patterns)
-
-        final_patterns = list(set(detected))
-        if final_patterns and idx % 100 == 0:
-            symbol = df.iloc[idx].get('symbol', 'UNKNOWN') if 'symbol' in df.columns else 'UNKNOWN'
-            print(f"      ✅ {symbol}: Found {len(final_patterns)} patterns at idx {idx}")
+    # New Candlestick Patterns
+    candlestick_patterns = detect_all_candlestick_patterns(df, idx)
+    detected.extend(candlestick_patterns)
     
-        return final_patterns  # ← list(set(detected)) এর পরিবর্তে final_patterns রিটার্ন
+    final_patterns = list(set(detected))
     
-
+    # ✅ ডিবাগ: symbol সহ দেখান
+    if final_patterns and idx % 100 == 0:
+        symbol = df.iloc[idx].get('symbol', 'UNKNOWN') if 'symbol' in df.columns else 'UNKNOWN'
+        print(f"      ✅ {symbol} at idx {idx}: {len(final_patterns)} patterns")
+    
+    return final_patterns
 
 
 # =========================================================
@@ -4076,7 +4103,7 @@ Support: {order_book['nearest_support']:.2f} | Resistance: {order_book['nearest_
             elliott_complete_text = elliott_complete['prediction_text']
             confidence += elliott_complete.get('confidence', 0) // 5
             elliott_complete_text += f"\n\n🔄 MULTI-TIMEFRAME CONFLUENCE: {mt_wave.get('confluence_score', 0)}%\n"
-            elliott_complete_text += f"Recommendation: {mt_wave.get('recommendation', 'MODERATE')}"
+            elliott_complete_text += f"Recommendation: {mt_wave.get('recommendation', 'MODERATE') Ugc}"
     
     global elliott_backtester
     if elliott_backtester is None:
@@ -4315,15 +4342,11 @@ Risk-Reward: {rr_ratio:.2f} | Confidence: {confidence:.1f}%
 # =========================================================
 
 def main():
-
-    
-    
-    
-    global elliott_backtester
+    global elliott_backtester, TOTAL_PATTERNS, MAX_PER_SYMBOL
     elliott_backtester = ElliottWaveBacktester()
     
     print("="*80)
-    print("🚀 COMPLETE PATTERN TRAINING DATA GENERATOR")
+    print("🚀 COMPLETE PATTERN TRAINING DATA GENERATOR (AUTO CONFIG)")
     print("   (130+ Patterns + Elliott Wave + SMC + Price Action + Multi-Timeframe + ML + Backtesting + Risk Metrics)")
     print("="*80)
     
@@ -4337,30 +4360,29 @@ def main():
     print(f"✅ Loaded {len(df)} rows, {df['symbol'].nunique()} symbols")
     
     all_patterns = get_all_patterns()
-    print(f"✅ Loaded {len(all_patterns)} pattern configurations")
+    TOTAL_PATTERNS = len(all_patterns)
+    print(f"✅ Loaded {TOTAL_PATTERNS} pattern configurations")
     
+    # ✅ MAX_PER_SYMBOL অটো ক্যালকুলেট
     NUM_VARIATIONS = 3
-    training_data = []
-    symbols_processed = 0
-
-
-    # main() ফাংশনে
-    symbols_processed = 0
-
-    for symbol in df['symbol'].unique():
-        # ... symbol প্রসেসিং ...
+    MAX_PER_SYMBOL = TOTAL_PATTERNS * MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS
+    print(f"✅ Auto MAX_PER_SYMBOL: {MAX_PER_SYMBOL} (={TOTAL_PATTERNS} patterns × {MIN_EXAMPLES_PER_PATTERN} min × {NUM_VARIATIONS} variations)")
     
-        symbols_processed += 1
-        if symbols_processed >= MAX_SYMBOLS:  # ← এই লাইন চেক করুন
-            break
+    training_data = Ugc
+    symbols_processed = 0
+    
+    # ✅ প্যাটার্ন ট্র্যাকিং
+    pattern_counts = defaultdict(int)
+    symbol_pattern_counts = defaultdict(lambda: defaultdict(int))
     
     for symbol in df['symbol'].unique():
         symbol_data = df[df['symbol'] == symbol].sort_values('date').reset_index(drop=True)
-        if len(symbol_data) < 20:
+        
+        if len(symbol_data) < 30:
+            print(f"   ⚠️ {symbol}: only {len(symbol_data)} rows - SKIPPED")
             continue
-            
         
-        
+        print(f"\n🔄 Processing {symbol} ({len(symbol_data)} rows)")
         
         close_prices = symbol_data['close']
         high_prices = symbol_data['high']
@@ -4384,7 +4406,7 @@ def main():
         symbol_data['bb_lower'] = bb_lower
         
         market_regime = detect_market_regime(close_prices)
-        print(f"📊 Market regime for {symbol}: {market_regime}")
+        print(f"   📊 Market regime: {market_regime}")
         
         row_count = 0
         last_detected_idx = {}
@@ -4392,14 +4414,9 @@ def main():
         
         for idx in range(50, len(symbol_data), step):
             detected_patterns = detect_all_patterns(symbol_data, idx)
+            
             if not detected_patterns:
                 continue
-
-            # main() ফাংশনে
-            for idx in range(50, len(symbol_data), step):
-                detected_patterns = detect_all_patterns(symbol_data, idx)
-                print(f"🔍 {symbol} at idx {idx}: {detected_patterns}")  # ← ডিবাগ লাইন
-
             
             row = symbol_data.iloc[idx]
             indicator_values = {
@@ -4421,8 +4438,18 @@ def main():
             pattern_high, pattern_low = row['high'], row['low']
             real_sequence = close_prices.iloc[max(0, idx-30):idx+1].values
             
-            for pattern_name in detected_patterns[:3]:
+            for pattern_name in detected_patterns[:5]:  # Limit per index
                 if pattern_name not in all_patterns:
+                    continue
+                
+                # ✅ প্যাটার্ন লিমিট চেক
+                global_pattern_count = pattern_counts[pattern_name]
+                symbol_pattern_count = symbol_pattern_counts[symbol][pattern_name]
+                
+                if global_pattern_count >= MAX_EXAMPLES_PER_PATTERN * NUM_VARIATIONS:
+                    continue
+                
+                if symbol_pattern_count >= MAX_EXAMPLES_PER_PATTERN:
                     continue
                 
                 config = all_patterns[pattern_name]
@@ -4437,17 +4464,39 @@ def main():
                 
                 if text:
                     training_data.append(text)
-                    print(f"✅ Generated {pattern_name} for {symbol} on {row['date'].date()}")
+                    pattern_counts[pattern_name] += 1
+                    symbol_pattern_counts[symbol][pattern_name] += 1
                     row_count += 1
+                    print(f"   ✅ Generated {pattern_name}")
+                    
                     if row_count >= MAX_PER_SYMBOL:
                         break
             
             if row_count >= MAX_PER_SYMBOL:
                 break
         
+        print(f"   📈 {symbol}: Generated {row_count} examples")
         symbols_processed += 1
+        
         if symbols_processed >= MAX_SYMBOLS:
             break
+    
+    # ✅ প্যাটার্ন কভারেজ রিপোর্ট
+    print("\n" + "="*80)
+    print("📊 PATTERN COVERAGE REPORT:")
+    print("="*80)
+    covered_patterns = len(pattern_counts)
+    fully_covered = sum(1 for p, c in pattern_counts.items() if c >= MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS)
+    print(f"   Total Patterns: {TOTAL_PATTERNS}")
+    print(f"   Patterns with examples: {covered_patterns} ({covered_patterns/TOTAL_PATTERNS*100:.1f}%)")
+    print(f"   Fully covered (≥{MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS}): {fully_covered}")
+    
+    low_coverage = [(p, c) for p, c in pattern_counts.items() if c < MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS]
+    if low_coverage:
+        print(f"\n   ⚠️ Low coverage patterns (<{MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS} examples):")
+        for p, c in sorted(low_coverage, key=lambda x: x[1])[:10]:
+            print(f"      - {p}: {c} examples")
+    print("="*80)
     
     output_file = "./csv/training_texts.txt"
     os.makedirs("./csv", exist_ok=True)
