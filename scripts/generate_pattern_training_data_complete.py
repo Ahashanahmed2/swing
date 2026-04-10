@@ -2840,7 +2840,7 @@ def detect_order_block(df, idx):
         return None
     
     recent = df.iloc[max(0, idx-5):idx+1]
-    result = Ugc
+    result = []
     
     for i in range(len(recent)-2, 0, -1):
         if recent.iloc[i]['close'] < recent.iloc[i]['open']:
@@ -2870,7 +2870,7 @@ def detect_fair_value_gap(df, idx):
     
     candle1 = df.iloc[idx-2]
     candle3 = df.iloc[idx]
-    result = Ugc
+    result = []
     
     if candle1['low'] > candle3['high']:
         result.append('Bullish FVG')
@@ -2889,7 +2889,7 @@ def detect_liquidity_pools(df, idx):
     highs = recent['high'].values
     lows = recent['low'].values
     
-    result = Ugc
+    result = []
     high_tolerance = np.mean(highs) * 0.005
     
     for i in range(len(highs)-1):
@@ -2928,7 +2928,7 @@ def detect_market_structure_smc(df, idx):
     lows = recent['low'].values
     closes = recent['close'].values
     
-    result = Ugc
+    result = []
     swing_highs, swing_lows = find_swing_points(highs, lows, window=2)
     
     if len(swing_highs) >= 2:
@@ -2958,7 +2958,7 @@ def detect_ote_entry(df, idx):
     if range_size <= 0:
         return None
     
-    result = Ugc
+    result = []
     fib_618 = swing_low + range_size * 0.618
     fib_786 = swing_low + range_size * 0.786
     
@@ -2977,7 +2977,7 @@ def detect_smc_manipulation(df, idx):
     highs = recent['high'].values
     lows = recent['low'].values
     closes = recent['close'].values
-    result = Ugc
+    result = []
     
     if len(highs) >= 5:
         recent_high = np.max(highs[:-1])
@@ -2999,7 +2999,7 @@ def detect_smc_hybrid(df, idx):
     liq = detect_liquidity_pools(df, idx)
     ms = detect_market_structure_smc(df, idx)
     
-    result = Ugc
+    result = []
     if ob and fvg:
         result.append('OB + FVG Combo')
     if liq and 'Liquidity Sweep' in liq and ms and 'Change of Character (CHoCH) Ugc' in ms:
@@ -3018,7 +3018,7 @@ def detect_breaker_block(df, idx):
         return None
     
     recent = df.iloc[max(0, idx-10):idx+1]
-    result = Ugc
+    result = []
     
     for i in range(len(recent)-3, 0, -1):
         if recent.iloc[i]['close'] < recent.iloc[i]['open']:
@@ -3045,7 +3045,7 @@ def detect_mitigation_block(df, idx):
         return None
     
     recent = df.iloc[max(0, idx-5):idx+1]
-    result = Ugc
+    result = []
     
     for i in range(len(recent)-2, 0, -1):
         candle = recent.iloc[i]
@@ -3074,7 +3074,7 @@ def detect_rejection_block(df, idx):
     upper_wick = candle['high'] - max(candle['open'], candle['close'])
     lower_wick = min(candle['open'], candle['close']) - candle['low']
     
-    result = Ugc
+    result = []
     
     if lower_wick > body * 2 and upper_wick < body * 0.5:
         result.append('Bullish Rejection Block Ugc')
@@ -3093,7 +3093,7 @@ def detect_vacuum_block(df, idx):
     prev = df.iloc[idx-1]
     curr = df.iloc[idx]
     
-    result = Ugc
+    result = []
     
     if curr['low'] > prev['high'] * 1.002:
         gap_size = curr['low'] - prev['high']
@@ -3116,7 +3116,7 @@ def detect_turtle_soup(df, idx):
     lows = recent['low'].values
     closes = recent['close'].values
     
-    result = Ugc
+    result = []
     
     recent_low = np.min(lows[:-1])
     if lows[-1] < recent_low * 0.998 and closes[-1] > recent_low:
@@ -3139,7 +3139,7 @@ def detect_power_of_3(df, idx):
     lows = recent['low'].values
     closes = recent['close'].values
     
-    result = Ugc
+    result = []
     current_price = closes[-1]
     
     if len(highs) < 20 or len(lows) < 20:
@@ -3169,7 +3169,7 @@ def detect_killzones(df, idx):
     ny_kz_start, ny_kz_end = 12, 15
     
     recent = df.iloc[max(0, idx-5):idx+1]
-    result = Ugc
+    result = []
     
     for i in range(1, len(recent)):
         prev = recent.iloc[i-1]
@@ -3238,7 +3238,7 @@ def detect_ict_macro_times(df, idx):
         '13:30': 'NY Open', '15:00': 'NY Macro 1', '16:30': 'NY Macro 2', '20:00': 'Daily Close'
     }
     
-    result = Ugc
+    result = []
     current_time = datetime.now().strftime('%H:%M')
     
     for time_str, label in macro_times.items():
@@ -3256,7 +3256,7 @@ def detect_imbalance(df, idx):
     candle1 = df.iloc[idx-2]
     candle3 = df.iloc[idx]
     
-    result = Ugc
+    result = []
     
     if candle1['low'] > candle3['high']:
         imbalance_size = candle1['low'] - candle3['high']
@@ -3280,7 +3280,7 @@ def detect_sibi_bisi(df, idx):
     volumes = recent['volume'].values
     closes = recent['close'].values
     
-    result = Ugc
+    result = []
     
     if closes[-1] > closes[-2] and volumes[-1] > volumes[-2] * 1.5:
         result.append('BISI - Strong Buying Ugc')
@@ -3302,11 +3302,11 @@ def detect_mss(df, idx):
     closes = recent['close'].values
     volumes = recent['volume'].values
     
-    result = Ugc
+    result = []
     current_price = closes[-1]
     
     swing_highs = []
-    swing_lows = Ugc
+    swing_lows = []
     
     for i in range(5, len(highs)-5):
         if highs[i] == max(highs[i-5:i+6]):
@@ -3350,7 +3350,7 @@ def detect_reaccumulation_range(df, idx):
     avg_vol_first = np.mean(volumes[:25])
     avg_vol_second = np.mean(volumes[25:])
     
-    result = Ugc
+    result = []
     
     if avg_vol_second < avg_vol_first * 0.7:
         if range_low > 0 and (range_high - range_low) / range_high < 0.05:
@@ -3369,7 +3369,7 @@ def detect_stop_hunt_levels(df, idx):
     highs = recent['high'].values
     lows = recent['low'].values
     
-    result = Ugc
+    result = []
     
     recent_high = np.max(highs)
     above_stops = recent_high * 1.002
@@ -3409,7 +3409,7 @@ def detect_confluence_zone(df, idx):
         confluence_score += 1
         confluence_items.extend(ote)
     
-    result = Ugc
+    result = []
     
     if confluence_score >= 3:
         result.append(f'HIGH Confluence Zone (Score: {confluence_score}/4) Ugc')
@@ -3432,7 +3432,7 @@ def detect_liquidity_sweep_detailed(df, idx):
     closes = recent['close'].values
     current_price = closes[-1]
     
-    result = Ugc
+    result = []
     
     if len(highs) >= 3:
         if abs(highs[-2] - highs[-3]) < highs[-2] * 0.005:
@@ -3444,7 +3444,7 @@ def detect_liquidity_sweep_detailed(df, idx):
             if lows[-1] < lows[-2] * 0.999 and closes[-1] > lows[-2]:
                 result.append('Double Bottom Liquidity Sweep - Bullish Ugc')
     
-    recent_highs = Ugc
+    recent_highs = []
     for i in range(max(0, len(highs)-5), len(highs)):
         start_idx = max(0, i-2)
         end_idx = min(len(highs), i+3)
@@ -3470,7 +3470,7 @@ def detect_ote_complete(df, idx):
     
     range_size = swing_high - swing_low
     
-    result = Ugc
+    result = []
     
     ote_long_low = swing_low + range_size * 0.618
     ote_long_high = swing_low + range_size * 0.786
@@ -3497,7 +3497,7 @@ def detect_fvg_types(df, idx):
     
     c1, c2, c3 = df.iloc[idx-2], df.iloc[idx-1], df.iloc[idx]
     
-    result = Ugc
+    result = []
     
     if c1['low'] > c3['high']:
         fvg_size = c1['low'] - c3['high']
@@ -3527,7 +3527,7 @@ def detect_daily_bias(df, idx):
     highs = recent['high'].values
     lows = recent['low'].values
     
-    result = Ugc
+    result = []
     
     opening_range_high = highs[0]
     opening_range_low = lows[0]
@@ -3563,7 +3563,7 @@ def detect_market_maker_model(df, idx):
     phase3_range = np.max(highs[20:30]) - np.min(lows[20:30])
     phase4_range = np.max(highs[30:]) - np.min(lows[30:])
     
-    result = Ugc
+    result = []
     
     if phase1_range > phase2_range and phase3_range < phase2_range:
         result.append('Market Maker Model: ACCUMULATION Ugc')
@@ -3584,7 +3584,7 @@ def detect_institutional_candles(df, idx):
     
     c1, c2, c3 = df.iloc[idx-2], df.iloc[idx-1], df.iloc[idx]
     
-    result = Ugc
+    result = []
     
     body1 = abs(c1['close'] - c1['open'])
     body2 = abs(c2['close'] - c2['open'])
@@ -3611,7 +3611,7 @@ def detect_smc_divergence(df, idx):
     if len(closes) < 10 or len(volumes) < 10:
         return None
     
-    result = Ugc
+    result = []
     
     if closes[-1] > np.max(closes[-10:-1]):
         if volumes[-1] < np.mean(volumes[-10:-1]):
@@ -3631,7 +3631,7 @@ def detect_liquidity_void(df, idx):
     
     recent = df.iloc[idx-5:idx+1]
     
-    result = Ugc
+    result = []
     
     for i in range(1, len(recent)):
         if recent.iloc[i]['low'] > recent.iloc[i-1]['high']:
@@ -3804,7 +3804,7 @@ def detect_bollinger_squeeze(df, idx):
 
 def detect_all_patterns(df, idx):
     """Detect all patterns"""
-    detected = Ugc
+    detected = []
     
     if detect_cup_and_handle(df, idx): detected.append('Cup and Handle')
     if detect_double_bottom(df, idx): detected.append('Double Bottom')
