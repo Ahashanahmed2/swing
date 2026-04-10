@@ -1,5 +1,6 @@
-# nightly_trader.py - LLM + XGBoost + Agentic Loop Enhanced v4.0
+# nightly_trader.py - LLM + XGBoost + Agentic Loop + PPO Enhanced v5.0
 # একটাই স্ক্রিপ্ট, সব রাতে হয়
+# ✅ NEW: PPO Integration + Telegram Notifications
 # স্ট্রাকচার অপরিবর্তিত, সব Critical + Hidden + New Issues ফিক্স করা হয়েছে
 
 import pandas as pd
@@ -8,6 +9,7 @@ import os
 import json
 import re
 import joblib
+import requests
 from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
@@ -21,9 +23,88 @@ except ImportError:
     LLM_AVAILABLE = False
     print("⚠️ Transformers not installed. LLM features disabled.")
 
+try:
+    from stable_baselines3 import PPO
+    PPO_AVAILABLE = True
+except ImportError:
+    PPO_AVAILABLE = False
+    print("⚠️ Stable-Baselines3 not installed. PPO features disabled.")
 
 # =========================================================
-# PORTFOLIO STATE MANAGER (NEW - Drawdown Tracking)
+# TELEGRAM NOTIFICATION (NEW)
+# =========================================================
+
+def send_telegram_message(message, token=None, chat_id=None, parse_mode='HTML'):
+    """Send message to Telegram"""
+    token = token or os.getenv("TELEGRAM_TOKEN")
+    chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
+    
+    if not token or not chat_id:
+        return False
+    
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {"chat_id": chat_id, "text": message, "parse_mode": parse_mode}
+        response = requests.post(url, json=payload, timeout=10)
+        return response.json()
+    except Exception as e:
+        print(f"   ⚠️ Telegram send failed: {e}")
+        return False
+
+
+def send_trade_alert(trades_df, regime, portfolio_summary, performance_metrics=None, stress_metrics=None):
+    """Send trade alert to Telegram"""
+    if len(trades_df) == 0:
+        message = f"""
+💤 <b>NO TRADES TODAY</b>
+📅 {datetime.now().strftime('%Y-%m-%d')}
+📊 Regime: {regime}
+"""
+        if stress_metrics:
+            message += f"\n🚨 Stress Level: {stress_metrics.get('stress_level', 'NORMAL')}"
+        send_telegram_message(message)
+        return False
+    
+    message = f"""
+🔥 <b>TRADING SIGNALS FOR TODAY</b>
+📅 {datetime.now().strftime('%Y-%m-%d')}
+📊 Regime: {regime}
+💰 Available Capital: ${portfolio_summary.get('capital_remaining', 0):,.0f}
+📈 Total Investment: ${portfolio_summary.get('total_investment', 0):,.0f}
+🎯 Exposure: {portfolio_summary.get('exposure_pct', 0):.1%}
+──────────────────────────────
+"""
+    
+    for _, row in trades_df.head(10).iterrows():
+        reliable_mark = "✅" if row.get('llm_reliable', True) else "⚠️"
+        ppo_mark = "🤖" if row.get('ppo_valid', False) else ""
+        
+        message += f"""
+<b>{row['rank']}. {row['symbol']}</b> {reliable_mark}{ppo_mark}
+   🤖 LLM: {row.get('llm_signal', 'N/A')} | PPO: {row.get('ppo_signal', 'N/A')}
+   📌 Buy: ${row['entry_price']:.2f}
+   🛑 SL: ${row['stop_loss']:.2f}
+   🎯 TP: ${row['take_profit']:.2f}
+   📊 R:R = 1:{row['risk_reward']:.2f}
+   💰 Shares: {row['shares']} | ${row['investment']:,.0f}
+   ⭐ Quality: {row['quality_score']:.3f}
+"""
+    
+    if performance_metrics:
+        message += f"""
+──────────────────────────────
+📊 <b>Performance:</b>
+   Win Rate: {performance_metrics.get('win_rate', 0):.1%}
+   Sharpe: {performance_metrics.get('sharpe_ratio', 0):.2f}
+   Max DD: {performance_metrics.get('max_drawdown', 0):.1%}
+"""
+    
+    send_telegram_message(message)
+    return True
+
+
+# =========================================================
+# PORTFOLIO STATE MANAGER (Drawdown Tracking)
 # =========================================================
 
 class PortfolioStateManager:
@@ -56,7 +137,7 @@ class PortfolioStateManager:
             state = {
                 'current_equity': self.current_equity,
                 'peak_equity': self.peak_equity,
-                'trade_history': self.trade_history[-50:],  # Keep last 50 trades
+                'trade_history': self.trade_history[-50:],
                 'last_updated': str(datetime.now())
             }
             with open(self.state_file, 'w') as f:
@@ -75,13 +156,11 @@ class PortfolioStateManager:
             if len(trade_df) == 0:
                 return
             
-            # Calculate cumulative PnL
             if 'pnl' in trade_df.columns:
                 total_pnl = trade_df['pnl'].sum()
                 self.current_equity = self.initial_capital + total_pnl
                 self.peak_equity = max(self.peak_equity, self.current_equity)
                 
-                # Store recent trades
                 recent = trade_df.tail(20)
                 self.trade_history = recent.to_dict('records')
                 self.save_state()
@@ -102,15 +181,15 @@ class PortfolioStateManager:
         dd = self.get_drawdown_ratio()
         
         if dd > 0.25:
-            return 0.3  # Severe drawdown - cut risk to 30%
+            return 0.3
         elif dd > 0.20:
-            return 0.5  # Significant drawdown - 50% risk
+            return 0.5
         elif dd > 0.15:
-            return 0.7  # Moderate drawdown - 70% risk
+            return 0.7
         elif dd > 0.10:
-            return 0.85  # Mild drawdown - 85% risk
+            return 0.85
         else:
-            return 1.0  # Normal risk
+            return 1.0
     
     def get_current_capital(self):
         """Get current available capital"""
@@ -123,22 +202,18 @@ class PortfolioStateManager:
         
         trades = pd.DataFrame(self.trade_history)
         
-        # Win rate
         if 'pnl' in trades.columns:
             wins = (trades['pnl'] > 0).sum()
             total = len(trades)
             win_rate = wins / total if total > 0 else 0
             
-            # Last 20 trades win rate
             last_20 = trades.tail(20)
             wins_20 = (last_20['pnl'] > 0).sum()
             win_rate_20 = wins_20 / len(last_20) if len(last_20) > 0 else 0
             
-            # Sharpe ratio (simplified)
             returns = trades['pnl'].values / self.initial_capital
             sharpe = np.mean(returns) / (np.std(returns) + 1e-10) * np.sqrt(252) if len(returns) > 1 else 0
             
-            # Max drawdown from trades
             cumulative = trades['pnl'].cumsum()
             running_max = cumulative.cummax()
             drawdown = (cumulative - running_max) / self.initial_capital
@@ -157,7 +232,7 @@ class PortfolioStateManager:
 
 
 # =========================================================
-# LLM PREDICTOR CLASS (FIXED - Reliability Enhanced)
+# LLM PREDICTOR CLASS
 # =========================================================
 
 class LLMPredictor:
@@ -168,7 +243,7 @@ class LLMPredictor:
         self.tokenizer = None
         self.model_path = model_path
         self.performance_history = {'BUY': [], 'SELL': [], 'HOLD': []}
-        self.signal_history = {}  # Store signal dates for decay
+        self.signal_history = {}
         self.trade_history_file = './csv/llm_trade_history.json'
         self.load_model()
         self.load_performance_history()
@@ -215,7 +290,7 @@ class LLMPredictor:
             pass
     
     def get_llm_signal(self, symbol, market_data, pattern_data=None, regime='UNKNOWN'):
-        """LLM থেকে BUY/SELL/HOLD সিগন্যাল নিন - ✅ UPGRADE 8: Enhanced prompt"""
+        """LLM থেকে BUY/SELL/HOLD সিগন্যাল নিন"""
         if self.model is None:
             return {'signal': 'HOLD', 'confidence': 0.5, 'score': 0.5, 'structured': False, 'reliable': False}
         
@@ -253,13 +328,10 @@ class LLMPredictor:
                 signal = 'HOLD'
                 confidence = 0.3
             
-            # ✅ UPGRADE 9: Confidence decay for old signals
             confidence = self._apply_confidence_decay(symbol, confidence)
-            
             score = self._calculate_score(signal, confidence)
             reliable = self._check_reliability(generated, signal, market_data)
             
-            # Store signal date
             self.signal_history[symbol] = str(datetime.now())
             
             return {
@@ -276,7 +348,7 @@ class LLMPredictor:
             return {'signal': 'HOLD', 'confidence': 0.3, 'score': 0.5, 'structured': False, 'reliable': False}
     
     def _create_enhanced_prompt(self, symbol, market_data, pattern_data, regime):
-        """✅ UPGRADE 8: Enhanced prompt with market context"""
+        """Enhanced prompt with market context"""
         pattern_info = ""
         if pattern_data and pattern_data.get('pattern') != 'Unknown':
             pattern_info = f"""
@@ -286,14 +358,11 @@ Strength: {pattern_data.get('strength', 'Medium')}
 Breakout: {pattern_data.get('breakout', 'Pending')}
 """
         
-        # ✅ UPGRADE: Microstructure signals
         micro_info = ""
         if market_data.get('volume_spike', False):
             micro_info += "⚠️ VOLUME SPIKE detected - potential breakout\n"
         if abs(market_data.get('change_1d', 0)) > 3:
             micro_info += f"⚠️ GAP detected: {market_data.get('change_1d', 0):.1f}% move\n"
-        if market_data.get('liquidity_warning', False):
-            micro_info += "⚠️ Low liquidity warning\n"
         
         return f"""You are a professional stock analyst. Analyze this data and provide structured response.
 
@@ -323,8 +392,6 @@ ATR: {market_data.get('atr', 0):.2f}
 - Avoid buying when RSI > 70 (overbought)
 - Avoid selling when RSI < 30 (oversold)
 - Prefer trend continuation in strong trends
-- Avoid low volume breakouts
-- Be cautious in SIDEWAYS regime
 
 Respond EXACTLY in this format:
 SIGNAL: [BUY/SELL/HOLD]
@@ -370,23 +437,22 @@ Your response:
         
         is_structured = signal_found and conf_found
         
-        # Anti-hallucination check
         text_lower = text.lower()
-        if signal == 'BUY' and any(p in text_lower for p in ['not a buy', 'not buy', 'avoid buy', 'no buy', "don't buy"]):
+        if signal == 'BUY' and any(p in text_lower for p in ['not a buy', 'not buy', 'avoid buy']):
             signal, confidence, is_structured = 'HOLD', 0.3, False
-        if signal == 'SELL' and any(p in text_lower for p in ['not a sell', 'not sell', 'avoid sell', 'no sell', "don't sell"]):
+        if signal == 'SELL' and any(p in text_lower for p in ['not a sell', 'not sell', 'avoid sell']):
             signal, confidence, is_structured = 'HOLD', 0.3, False
         
         return signal, confidence, reasoning, is_structured
     
     def _apply_confidence_decay(self, symbol, confidence):
-        """✅ UPGRADE 9: Confidence decay for old signals"""
+        """Confidence decay for old signals"""
         if symbol in self.signal_history:
             try:
                 signal_date = datetime.fromisoformat(self.signal_history[symbol])
                 days_old = (datetime.now() - signal_date).days
                 if days_old > 0:
-                    decay = np.exp(-days_old / 5)  # Exponential decay
+                    decay = np.exp(-days_old / 5)
                     confidence = confidence * decay
             except:
                 pass
@@ -396,7 +462,7 @@ Your response:
         """Additional reliability checks"""
         generated_lower = generated.lower()
         
-        hallucination_keywords = ['i think', 'maybe', 'possibly', 'could be', 'might be', 'not sure', 'uncertain']
+        hallucination_keywords = ['i think', 'maybe', 'possibly', 'could be', 'not sure', 'uncertain']
         for kw in hallucination_keywords:
             if kw in generated_lower:
                 return False
@@ -448,7 +514,126 @@ Your response:
 
 
 # =========================================================
-# MARKET STRESS DETECTOR (NEW - Crash Protection)
+# PPO PREDICTOR CLASS (NEW)
+# =========================================================
+
+class PPOPredictor:
+    """PPO model predictions for trading signals"""
+    
+    def __init__(self, model_dir='./csv/ppo_models/'):
+        self.model_dir = model_dir
+        self.models = {}
+        self.performance_history = {'BUY': [], 'SELL': [], 'HOLD': []}
+        self.load_models()
+    
+    def load_models(self):
+        """Load PPO models from directory"""
+        if not PPO_AVAILABLE:
+            print("⚠️ PPO not available")
+            return
+        
+        if os.path.exists(self.model_dir):
+            model_files = [f for f in os.listdir(self.model_dir) if f.endswith('.zip') and f.startswith('ppo_')]
+            
+            for file in model_files:
+                symbol = file.replace('ppo_', '').replace('.zip', '')
+                try:
+                    model_path = os.path.join(self.model_dir, file)
+                    self.models[symbol] = PPO.load(model_path)
+                except Exception as e:
+                    print(f"   ⚠️ Failed to load PPO model for {symbol}: {e}")
+            
+            if self.models:
+                print(f"✅ PPO Predictor loaded {len(self.models)} models")
+            else:
+                print(f"⚠️ No PPO models found in {self.model_dir}")
+        else:
+            print(f"⚠️ PPO model directory not found: {self.model_dir}")
+    
+    def get_ppo_signal(self, symbol, market_data):
+        """Get PPO prediction for a symbol"""
+        if not PPO_AVAILABLE or symbol not in self.models:
+            return {'signal': 'HOLD', 'confidence': 0.5, 'score': 0.5, 'valid': False}
+        
+        try:
+            model = self.models[symbol]
+            
+            # Build observation features
+            obs = self._build_observation(market_data)
+            
+            # Get action from model
+            action, _states = model.predict(obs, deterministic=True)
+            
+            # Convert action to signal
+            # Action space: 0=Hold, 1=Buy, 2=Sell
+            if action == 1:
+                signal = 'BUY'
+                score = 0.75
+                confidence = 0.7
+            elif action == 2:
+                signal = 'SELL'
+                score = 0.25
+                confidence = 0.7
+            else:
+                signal = 'HOLD'
+                score = 0.5
+                confidence = 0.5
+            
+            return {
+                'signal': signal,
+                'confidence': confidence,
+                'score': score,
+                'valid': True,
+                'action': int(action)
+            }
+            
+        except Exception as e:
+            return {'signal': 'HOLD', 'confidence': 0.5, 'score': 0.5, 'valid': False}
+    
+    def _build_observation(self, market_data, obs_dim=15):
+        """Build observation vector for PPO model"""
+        obs = []
+        
+        # Price features
+        obs.append(market_data.get('close', 0) / 1000)
+        obs.append(market_data.get('volume', 0) / 1e6)
+        obs.append(market_data.get('rsi', 50) / 100)
+        obs.append(market_data.get('macd', 0) / 10)
+        obs.append(market_data.get('xgb_confidence', 50) / 100 if 'xgb_confidence' in market_data else 0.5)
+        obs.append(market_data.get('xgb_prediction', 0))
+        obs.append(1.0)  # Balance ratio
+        obs.append(0.0)  # Position
+        obs.append(market_data.get('change_5d', 0) / 100)
+        obs.append(market_data.get('change_10d', 0) / 100 if 'change_10d' in market_data else 0)
+        obs.append(market_data.get('volatility', 0.02))
+        obs.append(market_data.get('volume_ratio', 1.0))
+        obs.append(market_data.get('bb_position', 0.5))
+        obs.append(market_data.get('atr_pct', 2.0) / 100 if 'atr_pct' in market_data else 0.02)
+        obs.append(0.0)  # Reward
+        
+        # Ensure correct dimension
+        while len(obs) < obs_dim:
+            obs.append(0.0)
+        
+        return np.array(obs[:obs_dim], dtype=np.float32).reshape(1, -1)
+    
+    def update_performance(self, signal, was_correct):
+        """Update PPO performance history"""
+        if signal in self.performance_history:
+            self.performance_history[signal].append(1 if was_correct else 0)
+    
+    def get_accuracy(self):
+        """Get PPO accuracy"""
+        history = []
+        for h in self.performance_history.values():
+            history.extend(h)
+        if not history:
+            return 0.5
+        return sum(history) / len(history)
+
+
+# =========================================================
+# MARKET STRESS DETECTOR
 # =========================================================
 
 class MarketStressDetector:
@@ -466,37 +651,32 @@ class MarketStressDetector:
         volume_spikes = []
         below_sma50 = []
         
-        for symbol in symbols[:100]:  # Sample top 100 symbols
+        for symbol in symbols[:100]:
             sym_data = market_df[market_df['symbol'] == symbol].sort_values('date')
             if len(sym_data) >= 10:
                 current = sym_data.iloc[-1]['close']
                 
-                # 5-day return
                 if len(sym_data) >= 6:
                     close_5d_ago = sym_data.iloc[-6]['close']
                     ret_5d = (current - close_5d_ago) / close_5d_ago if close_5d_ago > 0 else 0
                     returns_5d.append(ret_5d)
                 
-                # 1-day return
                 if len(sym_data) >= 2:
                     prev = sym_data.iloc[-2]['close']
                     ret_1d = (current - prev) / prev if prev > 0 else 0
                     returns_1d.append(ret_1d)
                 
-                # Volume spike check
                 if len(sym_data) >= 20:
                     avg_vol = sym_data['volume'].iloc[-20:].mean()
                     current_vol = sym_data.iloc[-1]['volume']
                     if current_vol > avg_vol * 3:
                         volume_spikes.append(symbol)
                 
-                # Below SMA50 check
                 if len(sym_data) >= 50:
                     sma50 = sym_data['close'].rolling(50).mean().iloc[-1]
                     if current < sma50 * 0.95:
                         below_sma50.append(symbol)
         
-        # Stress indicators
         crash_ratio_5d = (np.array(returns_5d) < -0.05).mean() if returns_5d else 0
         crash_ratio_1d = (np.array(returns_1d) < -0.03).mean() if returns_1d else 0
         panic_volume = len(volume_spikes) > len(symbols) * 0.3
@@ -528,17 +708,14 @@ class MarketStressDetector:
         
         recent = sym_data.iloc[-20:]
         
-        # Low volume check
         avg_volume = recent['volume'].mean()
         if avg_volume < 100000:
             return True
         
-        # Volume inconsistency
         volume_std = recent['volume'].std()
         if volume_std / avg_volume > 1.5:
             return True
         
-        # Price gaps
         gaps = 0
         for i in range(1, min(10, len(recent))):
             prev_close = recent.iloc[i-1]['close']
@@ -552,7 +729,7 @@ class MarketStressDetector:
 
 
 # =========================================================
-# CORRELATION MANAGER (NEW - Advanced Correlation Control)
+# CORRELATION MANAGER
 # =========================================================
 
 class CorrelationManager:
@@ -560,7 +737,6 @@ class CorrelationManager:
     
     def __init__(self):
         self.correlation_matrix = None
-        self.price_cache = {}
         self.max_correlation = 0.70
     
     def build_correlation_matrix(self, market_df, symbols):
@@ -569,14 +745,12 @@ class CorrelationManager:
             return None
         
         try:
-            # Get price data for symbols
             price_data = {}
             latest_date = market_df['date'].max()
             
-            for symbol in symbols[:50]:  # Limit to 50 symbols
+            for symbol in symbols[:50]:
                 sym_data = market_df[market_df['symbol'] == symbol].sort_values('date')
                 if len(sym_data) >= 20:
-                    # Get last 20 days of returns
                     sym_data = sym_data[sym_data['date'] <= latest_date].tail(20)
                     returns = sym_data['close'].pct_change().dropna()
                     if len(returns) >= 15:
@@ -617,7 +791,6 @@ class CorrelationManager:
                     continue
                 corr = self.get_correlation(sym1, sym2)
                 if abs(corr) > self.max_correlation:
-                    # Keep the one with higher quality score
                     score1 = trades_df[trades_df['symbol'] == sym1]['quality_score'].values[0]
                     score2 = trades_df[trades_df['symbol'] == sym2]['quality_score'].values[0]
                     if score1 >= score2:
@@ -794,19 +967,25 @@ class AgenticLoopScorer:
         
         return boost
     
-    def get_dynamic_weights(self, llm_accuracy=None):
+    def get_dynamic_weights(self, llm_accuracy=None, ppo_accuracy=None):
         """Dynamic weighting based on actual performance"""
-        weights = {'base': 0.25, 'llm': 0.35, 'xgb': 0.25, 'agentic': 0.15}
+        weights = {'base': 0.20, 'llm': 0.25, 'xgb': 0.20, 'ppo': 0.20, 'agentic': 0.15}
         
         if llm_accuracy is not None:
             if llm_accuracy > 0.65:
-                weights = {'base': 0.18, 'llm': 0.42, 'xgb': 0.25, 'agentic': 0.15}
-            elif llm_accuracy > 0.55:
-                weights = {'base': 0.22, 'llm': 0.38, 'xgb': 0.25, 'agentic': 0.15}
+                weights['llm'] = 0.35
+                weights['base'] = 0.15
             elif llm_accuracy < 0.45:
-                weights = {'base': 0.30, 'llm': 0.20, 'xgb': 0.35, 'agentic': 0.15}
-            elif llm_accuracy < 0.50:
-                weights = {'base': 0.28, 'llm': 0.22, 'xgb': 0.35, 'agentic': 0.15}
+                weights['llm'] = 0.15
+                weights['xgb'] = 0.25
+        
+        if ppo_accuracy is not None:
+            if ppo_accuracy > 0.65:
+                weights['ppo'] = 0.30
+                weights['base'] = max(0.10, weights['base'] - 0.05)
+            elif ppo_accuracy < 0.45:
+                weights['ppo'] = 0.10
+                weights['xgb'] = 0.25
         
         return weights
 
@@ -819,16 +998,14 @@ class SectorClassifier:
     """Sector classification for correlation control"""
     
     SECTOR_MAP = {
-        'TECH': ['AAPL', 'MSFT', 'GOOGL', 'META', 'NVDA', 'AMD', 'INTC', 'CRM', 'ADBE', 'ORCL', 'IBM', 'CSCO', 'TSM', 'AVGO', 'TXN', 'QCOM'],
-        'FINANCE': ['JPM', 'BAC', 'WFC', 'C', 'GS', 'MS', 'V', 'MA', 'AXP', 'BLK', 'SCHW'],
-        'HEALTHCARE': ['JNJ', 'PFE', 'MRK', 'ABBV', 'BMY', 'LLY', 'UNH', 'CVS', 'AMGN', 'GILD'],
+        'TECH': ['AAPL', 'MSFT', 'GOOGL', 'META', 'NVDA', 'AMD', 'INTC', 'CRM', 'ADBE', 'ORCL'],
+        'FINANCE': ['JPM', 'BAC', 'WFC', 'C', 'GS', 'MS', 'V', 'MA', 'AXP', 'BLK'],
+        'HEALTHCARE': ['JNJ', 'PFE', 'MRK', 'ABBV', 'BMY', 'LLY', 'UNH', 'CVS', 'AMGN'],
         'CONSUMER': ['AMZN', 'WMT', 'TGT', 'COST', 'HD', 'LOW', 'MCD', 'SBUX', 'NKE', 'DIS', 'TSLA'],
         'ENERGY': ['XOM', 'CVX', 'COP', 'EOG', 'SLB', 'PSX', 'VLO', 'MPC', 'OXY'],
         'INDUSTRIAL': ['BA', 'CAT', 'DE', 'GE', 'HON', 'LMT', 'MMM', 'RTX', 'UNP', 'UPS'],
-        'TELECOM': ['T', 'VZ', 'TMUS', 'CMCSA', 'CHTR', 'DISH'],
-        'REAL_ESTATE': ['PLD', 'AMT', 'CCI', 'EQIX', 'SPG', 'WELL', 'AVB', 'EQR'],
-        'MATERIALS': ['LIN', 'APD', 'ECL', 'SHW', 'FCX', 'NEM', 'DOW', 'DD'],
-        'UTILITIES': ['NEE', 'DUK', 'SO', 'D', 'AEP', 'EXC', 'SRE', 'PEG']
+        'TELECOM': ['T', 'VZ', 'TMUS', 'CMCSA', 'CHTR'],
+        'PHARMACEUTICALS': ['RECKITTBEN', 'MARICO', 'EASTRNLUB', 'UNILEVERCL', 'BERGERPBL', 'LINDEBD']
     }
     
     def __init__(self):
@@ -857,7 +1034,7 @@ class SectorClassifier:
 
 
 # =========================================================
-# PORTFOLIO RISK MANAGER CLASS (ENHANCED)
+# PORTFOLIO RISK MANAGER CLASS
 # =========================================================
 
 class PortfolioRiskManager:
@@ -897,7 +1074,6 @@ class PortfolioRiskManager:
         confidence_multiplier = 0.5 + (confidence * 0.5)
         adjusted_risk = risk_amount * confidence_multiplier
         
-        # ✅ FIX 5: Apply slippage to entry and stop
         entry_with_slippage = entry_price * (1 + self.slippage)
         stop_with_slippage = stop_loss * (1 - self.slippage)
         
@@ -960,11 +1136,10 @@ class PortfolioRiskManager:
         
         quality = combined_score * confidence * (1 + risk_reward) if risk_reward > 0 else combined_score * confidence
         
-        # ✅ UPGRADE: Microstructure boost
         if volume_spike and combined_score > 0.6:
-            quality *= 1.05  # 5% boost for volume confirmation
+            quality *= 1.05
         if gap and abs(gap) > 2:
-            quality *= 0.95  # 5% penalty for gap risk
+            quality *= 0.95
         
         return quality
     
@@ -978,7 +1153,6 @@ class PortfolioRiskManager:
         
         issues = []
         
-        # ✅ FIX 3: Correlation filter
         if correlation_manager is not None:
             trades_df = correlation_manager.filter_highly_correlated(trades_df)
         
@@ -1072,7 +1246,6 @@ class MarketDataCalculator:
         
         close_prices = sym_data['close']
         
-        # Returns
         if len(close_prices) >= 2:
             features['change_1d'] = ((current_price - close_prices.iloc[-2]) / close_prices.iloc[-2] * 100) if close_prices.iloc[-2] > 0 else 0
         else:
@@ -1093,7 +1266,6 @@ class MarketDataCalculator:
         else:
             features['change_20d'] = 0
         
-        # Volume features
         if len(sym_data) >= 20:
             avg_volume = sym_data['volume'].iloc[-20:].mean()
             features['volume_change'] = ((features['volume'] - avg_volume) / avg_volume * 100) if avg_volume > 0 else 0
@@ -1104,7 +1276,6 @@ class MarketDataCalculator:
             features['volume_ratio'] = 1.0
             features['volume_spike'] = False
         
-        # Gap detection
         if len(sym_data) >= 2:
             prev_close = sym_data.iloc[-2]['close']
             curr_open = features['open']
@@ -1115,13 +1286,11 @@ class MarketDataCalculator:
         else:
             features['gap_pct'] = 0
         
-        # Liquidity check
         if stress_detector:
             features['liquidity_warning'] = stress_detector.detect_liquidity_issues(symbol, market_df)
         else:
             features['liquidity_warning'] = False
         
-        # Moving Averages
         features['sma_20'] = close_prices.rolling(20).mean().iloc[-1] if len(close_prices) >= 20 else current_price
         features['sma_50'] = close_prices.rolling(50).mean().iloc[-1] if len(close_prices) >= 50 else current_price
         features['ema_20'] = close_prices.ewm(span=20, adjust=False).mean().iloc[-1] if len(close_prices) >= 20 else current_price
@@ -1140,17 +1309,14 @@ class MarketDataCalculator:
         features['above_sma50'] = current_price > features['sma_50']
         features['golden_cross'] = features['sma_20'] > features['sma_50'] if features['sma_20'] > 0 else False
         
-        # RSI
         features['rsi'] = MarketDataCalculator._calculate_rsi(close_prices)
         
-        # MACD
         macd, signal, hist = MarketDataCalculator._calculate_macd(close_prices)
         features['macd'] = macd
         features['macd_signal'] = signal
         features['macd_hist'] = hist
         features['macd_bullish'] = macd > signal
         
-        # Stochastic
         if 'high' in sym_data.columns and 'low' in sym_data.columns:
             stoch_k, stoch_d = MarketDataCalculator._calculate_stochastic(sym_data)
             features['stoch_k'] = stoch_k
@@ -1159,7 +1325,6 @@ class MarketDataCalculator:
             features['stoch_k'] = 50
             features['stoch_d'] = 50
         
-        # ATR
         if 'high' in sym_data.columns and 'low' in sym_data.columns:
             features['atr'] = MarketDataCalculator._calculate_atr(sym_data)
             features['atr_pct'] = (features['atr'] / current_price * 100) if current_price > 0 else 0
@@ -1167,26 +1332,22 @@ class MarketDataCalculator:
             features['atr'] = current_price * 0.02
             features['atr_pct'] = 2.0
         
-        # Volatility
         if len(close_prices) >= 20:
             returns = close_prices.pct_change().dropna()
             features['volatility'] = returns.rolling(20).std().iloc[-1] if len(returns) >= 20 else 0.02
         else:
             features['volatility'] = 0.02
         
-        # Momentum
         if len(close_prices) >= 10:
             features['momentum'] = (close_prices.iloc[-1] - close_prices.iloc[-10]) / close_prices.iloc[-10]
         else:
             features['momentum'] = 0
         
-        # Trend strength
         if features['sma_20'] > 0 and features['sma_50'] > 0:
             features['trend_strength'] = abs(features['sma_20'] - features['sma_50']) / features['sma_50']
         else:
             features['trend_strength'] = 0
         
-        # Bollinger Bands
         if len(close_prices) >= 20:
             sma20 = close_prices.rolling(20).mean()
             std20 = close_prices.rolling(20).std()
@@ -1285,8 +1446,8 @@ def detect_market_regime(market_df):
     return 'SIDEWAYS'
 
 
-def save_decision_log(decisions, regime, llm_signals, portfolio_summary=None, performance_metrics=None, stress_metrics=None):
-    """✅ UPGRADE 10: Enhanced logging with performance metrics"""
+def save_decision_log(decisions, regime, llm_signals, ppo_signals=None, portfolio_summary=None, performance_metrics=None, stress_metrics=None):
+    """✅ UPGRADE: Enhanced logging with PPO stats"""
     log_file = './csv/trading_decisions_enhanced.csv'
     
     log_entry = {
@@ -1298,6 +1459,11 @@ def save_decision_log(decisions, regime, llm_signals, portfolio_summary=None, pe
         'llm_hold': llm_signals.get('HOLD', 0),
         'symbols': ', '.join(decisions['symbol'].head(5).tolist()) if len(decisions) > 0 else 'None'
     }
+    
+    if ppo_signals:
+        log_entry['ppo_buy'] = ppo_signals.get('BUY', 0)
+        log_entry['ppo_sell'] = ppo_signals.get('SELL', 0)
+        log_entry['ppo_hold'] = ppo_signals.get('HOLD', 0)
     
     if portfolio_summary:
         log_entry.update({
@@ -1330,8 +1496,8 @@ def save_decision_log(decisions, regime, llm_signals, portfolio_summary=None, pe
     updated.to_csv(log_file, index=False)
 
 
-def update_llm_performance_from_trade_log(llm_predictor):
-    """Update LLM performance from historical trade log"""
+def update_llm_performance_from_trade_log(llm_predictor, ppo_predictor=None):
+    """Update LLM and PPO performance from historical trade log"""
     trade_log_file = './csv/trade_log.csv'
     
     if not os.path.exists(trade_log_file):
@@ -1353,11 +1519,15 @@ def update_llm_performance_from_trade_log(llm_predictor):
             if 'llm_signal' in trade.index:
                 signal = trade['llm_signal']
                 llm_predictor.update_performance(signal, was_win)
+            
+            if ppo_predictor and 'ppo_signal' in trade.index:
+                signal = trade['ppo_signal']
+                ppo_predictor.update_performance(signal, was_win)
         
-        print(f"✅ LLM performance updated from {len(recent_trades)} historical trades")
+        print(f"✅ Performance updated from {len(recent_trades)} historical trades")
         
     except Exception as e:
-        print(f"   ⚠️ Could not update LLM from trade log: {e}")
+        print(f"   ⚠️ Could not update from trade log: {e}")
 
 
 # =========================================================
@@ -1366,12 +1536,12 @@ def update_llm_performance_from_trade_log(llm_predictor):
 
 def nightly_trading_system():
     """
-    LLM + XGBoost + Agentic Loop - v4.0
-    All Critical + Hidden + New Issues Fixed
+    LLM + XGBoost + Agentic Loop + PPO - v5.0
+    ✅ PPO Integration + Telegram Notifications
     """
     
     print("="*70)
-    print("🌙 NIGHTLY TRADING SYSTEM (LLM + Agentic Loop Enhanced v4.0)")
+    print("🌙 NIGHTLY TRADING SYSTEM (LLM + PPO + Agentic Loop v5.0)")
     print("="*70)
     print(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("🎯 Generating decisions for TOMORROW's trading")
@@ -1397,6 +1567,7 @@ def nightly_trading_system():
     
     # Initialize components
     llm_predictor = LLMPredictor(model_path="./llm_model")
+    ppo_predictor = PPOPredictor(model_dir='./csv/ppo_models/')  # ✅ NEW
     agentic_scorer = AgenticLoopScorer()
     xgb_predictor = XGBoostPredictor()
     stress_detector = MarketStressDetector()
@@ -1404,7 +1575,7 @@ def nightly_trading_system():
     portfolio_manager = PortfolioRiskManager(capital=500000, risk_per_trade=0.02, portfolio_state=portfolio_state)
     data_calculator = MarketDataCalculator()
     
-    update_llm_performance_from_trade_log(llm_predictor)
+    update_llm_performance_from_trade_log(llm_predictor, ppo_predictor)
     
     # Get performance metrics
     performance_metrics = portfolio_state.get_performance_metrics()
@@ -1441,12 +1612,15 @@ def nightly_trading_system():
         print(f"   Reason: High probability of market crash/panic")
         print(f"   Action: Wait for market stabilization")
         
-        # Save empty trade file
         empty_df = pd.DataFrame(columns=['symbol', 'date', 'buy', 'SL', 'tp', 'confidence', 'RRR', 'shares'])
         empty_df.to_csv('./csv/trade_stock.csv', index=False)
         
         save_decision_log(pd.DataFrame(), 'STRESS', {'BUY': 0, 'SELL': 0, 'HOLD': 0}, 
+                         ppo_signals={'BUY': 0, 'SELL': 0, 'HOLD': 0},
                          performance_metrics=performance_metrics, stress_metrics=stress_metrics)
+        
+        # ✅ Send Telegram alert
+        send_trade_alert(pd.DataFrame(), 'STRESS', {}, performance_metrics, stress_metrics)
         
         print("\n" + "="*70)
         print("✅ NIGHTLY DECISION COMPLETE (NO TRADES - MARKET STRESS)")
@@ -1477,14 +1651,16 @@ def nightly_trading_system():
     # =========================================================
     good_symbols = meta_df[meta_df['auc'] >= 0.55]['symbol'].unique()
     xgb_symbols = list(xgb_predictor.models.keys())
-    all_symbols = list(set(good_symbols) | set(xgb_symbols))
+    ppo_symbols = list(ppo_predictor.models.keys())  # ✅ NEW
+    all_symbols = list(set(good_symbols) | set(xgb_symbols) | set(ppo_symbols))
     print(f"\n✅ Qualified Symbols: {len(all_symbols)}")
     
     llm_stats = llm_predictor.get_signal_counts()
     llm_accuracy = llm_predictor.get_accuracy()
+    ppo_accuracy = ppo_predictor.get_accuracy()  # ✅ NEW
     print(f"🤖 LLM Accuracy: {llm_accuracy:.1%} (from {sum(llm_stats.values())} tracked predictions)")
+    print(f"🤖 PPO Accuracy: {ppo_accuracy:.1%}")  # ✅ NEW
     
-    # Show drawdown-adjusted risk
     risk_adj = portfolio_state.get_risk_adjustment_factor()
     if risk_adj < 1.0:
         print(f"⚠️ Risk Reduced to {risk_adj:.0%} due to {portfolio_state.get_drawdown_ratio():.1%} drawdown")
@@ -1496,12 +1672,13 @@ def nightly_trading_system():
     
     decisions = []
     llm_signals = {'BUY': 0, 'SELL': 0, 'HOLD': 0}
+    ppo_signals = {'BUY': 0, 'SELL': 0, 'HOLD': 0}  # ✅ NEW
     unstructured_count = 0
     unreliable_count = 0
     
-    dynamic_weights = agentic_scorer.get_dynamic_weights(llm_accuracy)
+    dynamic_weights = agentic_scorer.get_dynamic_weights(llm_accuracy, ppo_accuracy)  # ✅ Updated
     current_capital = portfolio_state.get_current_capital()
-    print(f"   Dynamic Weights: Base={dynamic_weights['base']:.2f}, LLM={dynamic_weights['llm']:.2f}, XGB={dynamic_weights['xgb']:.2f}")
+    print(f"   Dynamic Weights: Base={dynamic_weights['base']:.2f}, LLM={dynamic_weights['llm']:.2f}, XGB={dynamic_weights['xgb']:.2f}, PPO={dynamic_weights['ppo']:.2f}")  # ✅ NEW
     print(f"   Available Capital: ${current_capital:,.0f}")
     
     for symbol in all_symbols[:150]:
@@ -1513,7 +1690,6 @@ def nightly_trading_system():
         row = symbol_today.iloc[0]
         current_price = row['close']
         
-        # Enhanced market data with microstructure
         market_data = data_calculator.calculate_enhanced_features(symbol, market_df, row, stress_detector)
         
         pattern_data = {
@@ -1522,11 +1698,9 @@ def nightly_trading_system():
             'breakout': 'Pending'
         }
         
-        # Skip if liquidity warning
         if market_data.get('liquidity_warning', False):
             continue
         
-        # Base score
         symbol_pred = pred_df[pred_df['symbol'] == symbol]
         if len(symbol_pred) > 0:
             symbol_pred = symbol_pred[symbol_pred['date'] <= latest_date]
@@ -1557,9 +1731,14 @@ def nightly_trading_system():
             llm_score = 0.5
             llm_conf = 0.3
         
-        # LLM as filter
-        if llm_signal == 'SELL' and is_reliable:
-            base_score = base_score * 0.7
+        # ✅ NEW: PPO signal
+        ppo_result = ppo_predictor.get_ppo_signal(symbol, market_data)
+        ppo_signal = ppo_result['signal']
+        ppo_score = ppo_result['score']
+        ppo_conf = ppo_result['confidence']
+        ppo_valid = ppo_result['valid']
+        
+        ppo_signals[ppo_signal] += 1
         
         # XGBoost signal
         xgb_score, xgb_conf, xgb_valid = xgb_predictor.get_xgb_score(symbol, market_data)
@@ -1567,15 +1746,15 @@ def nightly_trading_system():
         # Agentic boost
         agentic_boost = agentic_scorer.calculate_consensus_boost(symbol, base_score)
         
-        # Non-linear fusion
+        # ✅ Non-linear fusion with PPO
         combined_score = (
             base_score * dynamic_weights['base'] +
             (llm_score ** 1.2) * dynamic_weights['llm'] +
-            (xgb_score ** 1.1) * dynamic_weights['xgb']
+            (xgb_score ** 1.1) * dynamic_weights['xgb'] +
+            (ppo_score ** 1.1) * dynamic_weights['ppo']  # ✅ NEW
         )
         combined_score += agentic_boost
         
-        # Microstructure boost
         if market_data.get('volume_spike', False) and combined_score > 0.6:
             combined_score += 0.02
         if abs(market_data.get('gap_pct', 0)) > 3:
@@ -1592,10 +1771,10 @@ def nightly_trading_system():
         combined_conf = (
             base_conf * dynamic_weights['base'] +
             llm_conf * dynamic_weights['llm'] +
-            xgb_conf * dynamic_weights['xgb']
+            xgb_conf * dynamic_weights['xgb'] +
+            ppo_conf * dynamic_weights['ppo']  # ✅ NEW
         )
         
-        # ✅ UPGRADE 6: NO TRADE ZONE
         if 0.45 < combined_score < 0.65 and regime != 'BULL':
             decision = "SKIP"
             stop_loss = take_profit = 0
@@ -1637,6 +1816,9 @@ def nightly_trading_system():
             'llm_signal': llm_signal,
             'llm_score': round(llm_score, 3),
             'llm_reliable': is_reliable,
+            'ppo_signal': ppo_signal,  # ✅ NEW
+            'ppo_score': round(ppo_score, 3),  # ✅ NEW
+            'ppo_valid': ppo_valid,  # ✅ NEW
             'base_score': round(base_score, 3),
             'xgb_score': round(xgb_score, 3),
             'agentic_boost': round(agentic_boost, 3),
@@ -1654,6 +1836,7 @@ def nightly_trading_system():
         })
     
     print(f"   LLM Stats: {unstructured_count} unstructured, {unreliable_count} unreliable")
+    print(f"   PPO Stats: BUY={ppo_signals['BUY']}, SELL={ppo_signals['SELL']}, HOLD={ppo_signals['HOLD']}")  # ✅ NEW
     
     # =========================================================
     # STEP 7: CREATE AND VALIDATE TRADE FILE
@@ -1690,8 +1873,8 @@ def nightly_trading_system():
         
         final_trades_list.append({
             'symbol': row['symbol'],
-            'entry_price': entry_slip,  # With slippage
-            'stop_loss': stop_slip,      # With slippage
+            'entry_price': entry_slip,
+            'stop_loss': stop_slip,
             'take_profit': row['take_profit'],
             'combined_score': row['combined_score'],
             'quality_score': round(row['quality_score'], 3),
@@ -1699,6 +1882,8 @@ def nightly_trading_system():
             'risk_reward': row['risk_reward'],
             'llm_signal': row['llm_signal'],
             'llm_reliable': row['llm_reliable'],
+            'ppo_signal': row['ppo_signal'],  # ✅ NEW
+            'ppo_valid': row['ppo_valid'],  # ✅ NEW
             'shares': shares,
             'investment': investment,
             'rank': rank
@@ -1736,7 +1921,14 @@ def nightly_trading_system():
     portfolio_summary = portfolio_manager.get_portfolio_summary(final_trades, current_capital) if len(final_trades) > 0 else {}
     
     # =========================================================
-    # STEP 9: PRINT SUMMARY
+    # STEP 9: SEND TELEGRAM ALERT (NEW)
+    # =========================================================
+    if len(final_trades) > 0:
+        send_trade_alert(final_trades, regime, portfolio_summary, performance_metrics, stress_metrics)
+        print(f"\n📱 Telegram alert sent!")
+    
+    # =========================================================
+    # STEP 10: PRINT SUMMARY
     # =========================================================
     print("\n" + "="*70)
     print("📊 TOMORROW'S TRADING DECISIONS")
@@ -1750,6 +1942,8 @@ def nightly_trading_system():
     print(f"   HOLD: {len(decisions_df[decisions_df['decision'] == 'HOLD'])}")
     print(f"\n🤖 LLM Signals: BUY={llm_signals['BUY']}, SELL={llm_signals['SELL']}, HOLD={llm_signals['HOLD']}")
     print(f"   LLM Accuracy: {llm_accuracy:.1%} | Unreliable: {unreliable_count}")
+    print(f"🤖 PPO Signals: BUY={ppo_signals['BUY']}, SELL={ppo_signals['SELL']}, HOLD={ppo_signals['HOLD']}")  # ✅ NEW
+    print(f"   PPO Accuracy: {ppo_accuracy:.1%}")  # ✅ NEW
     
     if portfolio_summary:
         print(f"\n💰 PORTFOLIO SUMMARY:")
@@ -1772,8 +1966,9 @@ def nightly_trading_system():
         
         for _, row in final_trades.iterrows():
             reliable_mark = "✅" if row['llm_reliable'] else "⚠️"
-            print(f"\n{row['rank']}. {row['symbol']} {reliable_mark}")
-            print(f"   🤖 LLM: {row['llm_signal']} | Quality: {row['quality_score']:.3f}")
+            ppo_mark = "🤖" if row.get('ppo_valid', False) else ""
+            print(f"\n{row['rank']}. {row['symbol']} {reliable_mark}{ppo_mark}")
+            print(f"   🤖 LLM: {row['llm_signal']} | PPO: {row.get('ppo_signal', 'N/A')} | Quality: {row['quality_score']:.3f}")
             print(f"   📌 BUY at ${row['entry_price']:.2f} (incl. slippage)")
             print(f"   🛑 SL: ${row['stop_loss']:.2f} | 🎯 TP: ${row['take_profit']:.2f}")
             print(f"   📊 R:R = 1:{row['risk_reward']:.2f}")
@@ -1785,11 +1980,12 @@ def nightly_trading_system():
         print("💤"*35)
     
     save_decision_log(final_trades if len(final_trades) > 0 else pd.DataFrame(), 
-                     regime, llm_signals, portfolio_summary, performance_metrics, stress_metrics)
+                     regime, llm_signals, ppo_signals, portfolio_summary, performance_metrics, stress_metrics)
     
     print("\n" + "="*70)
     print("✅ NIGHTLY DECISION COMPLETE")
     print("📁 Check trade_stock.csv for broker orders")
+    print("📱 Telegram alert sent" if len(final_trades) > 0 else "")
     print("="*70)
     
     return True
@@ -1798,7 +1994,7 @@ def nightly_trading_system():
 def morning_check():
     """সকালে চেক করুন"""
     print("\n" + "="*70)
-    print("🌅 MORNING TRADING CHECK (LLM Enhanced v4.0)")
+    print("🌅 MORNING TRADING CHECK (LLM + PPO Enhanced v5.0)")
     print("="*70)
     print(f"📅 {datetime.now().strftime('%Y-%m-%d')}")
     print("="*70)
@@ -1823,9 +2019,10 @@ def morning_check():
             if len(se) > 0:
                 s = se.iloc[0]
                 reliable_mark = "✅" if s.get('llm_reliable', True) else "⚠️"
-                print(f"\n   {symbol} {reliable_mark}")
+                ppo_mark = "🤖" if s.get('ppo_valid', False) else ""
+                print(f"\n   {symbol} {reliable_mark}{ppo_mark}")
                 print(f"      Buy: ${row['buy']:.2f} | SL: ${row['SL']:.2f} | TP: ${row['tp']:.2f}")
-                print(f"      LLM: {s['llm_signal']} | Quality: {row['confidence']:.3f}")
+                print(f"      LLM: {s['llm_signal']} | PPO: {s.get('ppo_signal', 'N/A')} | Quality: {row['confidence']:.3f}")
                 print(f"      Shares: {row['shares']} | R:R = 1:{row['RRR']:.2f}")
         
         print("\n" + "="*70)
@@ -1836,6 +2033,16 @@ def morning_check():
         print("   3. Set TAKE PROFIT at TP price")
         print("   4. If gap down >2%, skip the trade")
         print("="*70)
+        
+        # ✅ Send morning Telegram alert
+        if len(trade_df) > 0:
+            message = f"""
+🌅 <b>MORNING TRADING CHECK</b>
+📅 {datetime.now().strftime('%Y-%m-%d')}
+💰 Total Investment: ${total_investment:,.0f}
+📊 Trades: {len(trade_df)}
+"""
+            send_telegram_message(message)
         
     except Exception as e:
         print(f"\n❌ Error: {e}")
