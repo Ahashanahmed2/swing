@@ -4103,7 +4103,7 @@ Support: {order_book['nearest_support']:.2f} | Resistance: {order_book['nearest_
             elliott_complete_text = elliott_complete['prediction_text']
             confidence += elliott_complete.get('confidence', 0) // 5
             elliott_complete_text += f"\n\n🔄 MULTI-TIMEFRAME CONFLUENCE: {mt_wave.get('confluence_score', 0)}%\n"
-            elliott_complete_text += f"Recommendation: {mt_wave.get('recommendation', 'MODERATE') Ugc}"
+            elliott_complete_text += f"Recommendation: {mt_wave.get('recommendation', 'MODERATE')} Ugc"
     
     global elliott_backtester
     if elliott_backtester is None:
