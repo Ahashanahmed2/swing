@@ -1,4 +1,4 @@
-# xgboost_ppo_env.py - HEDGE FUND LEVEL v3.1 (Observation Space Fixed)
+# xgboost_ppo_env.py - HEDGE FUND LEVEL v4.0 (Sector Features + Advanced Analytics)
 # Fixed Issues:
 # ✅ 1. XGBoost per-step dynamic signal (no data leakage)
 # ✅ 2. Feature matching with training data
@@ -6,10 +6,15 @@
 # ✅ 4. Reward clipping to prevent explosion
 # ✅ 5. Fixed equity curve double append bug
 # ✅ 6. Episode randomization for better generalization
-# ✅ 7. FIXED: Observation space dimension (43 instead of 44)
-# ✅ 8. FIXED: step() method undefined variables (current_date, current_price)
+# ✅ 7. FIXED: Observation space dimension
+# ✅ 8. FIXED: step() method undefined variables
 # ✅ 9. FIXED: Complete step() method with proper returns
 # ✅ 10. ADDED: Agentic Loop integration
+# ✅ 11. ADDED: Sector-based features and analysis
+# ✅ 12. ADDED: Sector rotation detection
+# ✅ 13. ADDED: Peer comparison metrics
+# ✅ 14. ADDED: Sector momentum tracking
+# ✅ 15. ADDED: Telegram notifications for important events
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -17,8 +22,10 @@ import numpy as np
 import pandas as pd
 import joblib
 import os
+import requests
 from datetime import datetime
 from sklearn.preprocessing import StandardScaler
+from collections import defaultdict
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -32,6 +39,26 @@ try:
     AGENTIC_LOOP_AVAILABLE = True
 except ImportError:
     pass
+
+# =========================================================
+# TELEGRAM NOTIFICATION (NEW)
+# =========================================================
+
+def send_telegram_message(message, token=None, chat_id=None):
+    """Send message to Telegram"""
+    token = token or os.getenv("TELEGRAM_TOKEN")
+    chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
+    
+    if not token or not chat_id:
+        return False
+    
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
+        response = requests.post(url, json=payload, timeout=10)
+        return response.json()
+    except:
+        return False
 
 # =========================================================
 # HEDGE FUND LEVEL CONFIGURATION
@@ -55,6 +82,7 @@ class HedgeFundConfig:
     SHARPE_WEIGHT = 0.5
     PROFIT_WEIGHT = 0.3
     DRAWDOWN_PENALTY = 1.0
+    SECTOR_ALIGNMENT_BONUS = 0.1  # ✅ NEW: Bonus for trading with sector trend
     REWARD_CLIP_MIN = -1.0
     REWARD_CLIP_MAX = 1.0
 
@@ -83,6 +111,12 @@ class HedgeFundConfig:
         'dist_from_ema', 'above_ema'
     ]
 
+    # ✅ NEW: Sector feature columns
+    SECTOR_FEATURE_COLS = [
+        'sector_momentum', 'sector_relative_strength', 
+        'sector_rank', 'sector_trend'
+    ]
+
     # All available columns from mongodb.csv
     ALL_FEATURE_COLS = [
         'open', 'high', 'low', 'close', 'volume',
@@ -90,7 +124,8 @@ class HedgeFundConfig:
         'macd', 'macd_signal', 'macd_hist',
         'rsi', 'atr', 'ema_200',
         'zigzag', 'Hammer', 'BullishEngulfing',
-        'MorningStar', 'Doji', 'PiercingLine', 'ThreeWhiteSoldiers'
+        'MorningStar', 'Doji', 'PiercingLine', 'ThreeWhiteSoldiers',
+        'sector'  # ✅ NEW: Sector column
     ]
 
 # =========================================================
@@ -122,12 +157,119 @@ class FeatureScaler:
         return self._scaler.fit_transform(data)
 
 # =========================================================
+# SECTOR ANALYZER (NEW)
+# =========================================================
+
+class SectorAnalyzer:
+    """Analyze sector performance and trends"""
+    
+    def __init__(self, data: pd.DataFrame):
+        self.data = data
+        self.sector_data = {}
+        self.sector_momentum = {}
+        self.sector_ranks = {}
+        self._preprocess_sectors()
+    
+    def _preprocess_sectors(self):
+        """Pre-calculate sector statistics"""
+        if 'sector' not in self.data.columns:
+            print("   ⚠️ Sector column not found, sector features disabled")
+            return
+        
+        # Group by sector
+        for sector in self.data['sector'].unique():
+            if pd.isna(sector) or sector == 'Unknown':
+                continue
+            
+            sector_df = self.data[self.data['sector'] == sector]
+            self.sector_data[sector] = sector_df
+            
+            # Calculate sector momentum
+            if len(sector_df) > 20:
+                avg_return = sector_df.groupby('symbol')['close'].apply(
+                    lambda x: (x.iloc[-1] - x.iloc[-20]) / x.iloc[-20] if len(x) >= 20 else 0
+                ).mean()
+                self.sector_momentum[sector] = avg_return
+        
+        # Calculate sector ranks
+        if self.sector_momentum:
+            sorted_sectors = sorted(self.sector_momentum.items(), key=lambda x: x[1], reverse=True)
+            for rank, (sector, _) in enumerate(sorted_sectors, 1):
+                self.sector_ranks[sector] = rank
+    
+    def get_sector_features(self, symbol, current_price):
+        """Get sector-based features for a symbol"""
+        if 'sector' not in self.data.columns:
+            return {
+                'sector_momentum': 0,
+                'sector_relative_strength': 0,
+                'sector_rank': 0.5,
+                'sector_trend': 0
+            }
+        
+        # Get symbol's sector
+        symbol_data = self.data[self.data['symbol'] == symbol]
+        if len(symbol_data) == 0:
+            return {'sector_momentum': 0, 'sector_relative_strength': 0, 'sector_rank': 0.5, 'sector_trend': 0}
+        
+        sector = symbol_data.iloc[0].get('sector', 'Unknown')
+        if pd.isna(sector) or sector == 'Unknown':
+            return {'sector_momentum': 0, 'sector_relative_strength': 0, 'sector_rank': 0.5, 'sector_trend': 0}
+        
+        # Get sector momentum
+        sector_momentum = self.sector_momentum.get(sector, 0)
+        
+        # Calculate relative strength (symbol vs sector)
+        if sector in self.sector_data:
+            sector_df = self.sector_data[sector]
+            sector_avg_price = sector_df['close'].mean()
+            relative_strength = (current_price / sector_avg_price - 1) if sector_avg_price > 0 else 0
+        else:
+            relative_strength = 0
+        
+        # Get sector rank (normalized 0-1)
+        total_sectors = len(self.sector_ranks) if self.sector_ranks else 1
+        rank = self.sector_ranks.get(sector, total_sectors)
+        sector_rank_norm = 1 - (rank - 1) / total_sectors  # Higher is better
+        
+        # Sector trend (1=uptrend, -1=downtrend, 0=neutral)
+        sector_trend = 1 if sector_momentum > 0.02 else -1 if sector_momentum < -0.02 else 0
+        
+        return {
+            'sector_momentum': np.clip(sector_momentum, -0.5, 0.5),
+            'sector_relative_strength': np.clip(relative_strength, -0.5, 0.5),
+            'sector_rank': sector_rank_norm,
+            'sector_trend': sector_trend
+        }
+    
+    def get_sector_alignment_score(self, symbol, trade_direction):
+        """Calculate how well a trade aligns with sector trend"""
+        if 'sector' not in self.data.columns:
+            return 0.5
+        
+        symbol_data = self.data[self.data['symbol'] == symbol]
+        if len(symbol_data) == 0:
+            return 0.5
+        
+        sector = symbol_data.iloc[0].get('sector', 'Unknown')
+        sector_momentum = self.sector_momentum.get(sector, 0)
+        
+        # Alignment score: 1 if trading with trend, 0 if against
+        if trade_direction == 'BUY' and sector_momentum > 0:
+            return 0.8 + min(sector_momentum * 2, 0.2)
+        elif trade_direction == 'SELL' and sector_momentum < 0:
+            return 0.8 + min(abs(sector_momentum) * 2, 0.2)
+        elif abs(sector_momentum) < 0.01:
+            return 0.5  # Neutral
+        else:
+            return 0.3  # Against trend
+# =========================================================
 # HEDGE FUND TRADING ENVIRONMENT (FIXED OBSERVATION SPACE)
 # =========================================================
 
 class HedgeFundTradingEnv(gym.Env):
     """
-    Professional Hedge Fund Level Trading Environment - v3.1 (Observation Space Fixed)
+    Professional Hedge Fund Level Trading Environment - v4.0 (Sector Features)
     """
 
     def __init__(self, 
@@ -145,6 +287,10 @@ class HedgeFundTradingEnv(gym.Env):
         self.raw_data = data.copy()
         self.xgb_model_dir = xgb_model_dir
 
+        # ✅ NEW: Initialize Sector Analyzer
+        self.sector_analyzer = SectorAnalyzer(self.raw_data)
+        print(f"   📊 Sector Analyzer initialized with {len(self.sector_analyzer.sector_ranks)} sectors")
+
         # Load XGBoost models
         self.xgb_models = self._load_xgb_models()
 
@@ -158,7 +304,7 @@ class HedgeFundTradingEnv(gym.Env):
         # Feature scaler
         self.scaler = scaler or FeatureScaler()
 
-        # ✅ FIXED: Calculate observation dimension correctly
+        # ✅ FIXED: Calculate observation dimension correctly (now +4 for sector)
         self.obs_dim = self._calculate_obs_dim()
 
         # Action space: 0=Hold, 1=Buy, 2=Sell, 3=Add, 4=Reduce
@@ -178,6 +324,13 @@ class HedgeFundTradingEnv(gym.Env):
             except Exception as e:
                 print(f"   ⚠️ Agentic Loop init failed: {e}")
 
+        # ✅ NEW: Performance tracking
+        self.sector_performance = defaultdict(lambda: {'trades': 0, 'wins': 0, 'pnl': 0})
+        self.best_trade = {'pnl': -np.inf}
+        self.worst_trade = {'pnl': np.inf}
+        self.consecutive_wins = 0
+        self.consecutive_losses = 0
+
         # Tracking variables
         self.reset()
 
@@ -193,7 +346,6 @@ class HedgeFundTradingEnv(gym.Env):
 
         # ✅ FALLBACK: Generate synthetic signal based on price movement
         try:
-            # Get current price and previous price
             if hasattr(self, 'symbol_data') and self.symbol_data is not None:
                 current_idx = self.symbol_data[self.symbol_data['date'] == date].index
                 if len(current_idx) > 0:
@@ -204,12 +356,12 @@ class HedgeFundTradingEnv(gym.Env):
                         price_change = (current_price - prev_price) / prev_price
 
                         # Generate signal based on recent price movement
-                        if price_change > 0.005:  # Up 0.5%
+                        if price_change > 0.005:
                             buy_signal = current_price * 0.99
                             sl = buy_signal * 0.98
                             tp = buy_signal * 1.04
                             return {'buy': buy_signal, 'SL': sl, 'tp': tp, 'RRR': 2.0}
-                        elif price_change < -0.005:  # Down 0.5%
+                        elif price_change < -0.005:
                             buy_signal = current_price * 0.98
                             sl = buy_signal * 0.97
                             tp = buy_signal * 1.03
@@ -287,9 +439,33 @@ class HedgeFundTradingEnv(gym.Env):
             # Calculate XGBoost features
             symbol_data = self._calculate_xgb_features(symbol_data)
 
+            # ✅ NEW: Add sector features to each row
+            symbol_data = self._add_sector_features(symbol_data, symbol)
+
             self.symbol_data_cache[symbol] = symbol_data
 
         print(f"   ✅ Preprocessed {len(self.symbol_data_cache)} symbols")
+
+    def _add_sector_features(self, df, symbol):
+        """✅ NEW: Add sector-based features to dataframe"""
+        if 'sector' not in self.raw_data.columns:
+            df['sector_momentum'] = 0
+            df['sector_relative_strength'] = 0
+            df['sector_rank'] = 0.5
+            df['sector_trend'] = 0
+            return df
+        
+        # Get sector features for each row
+        for idx in range(len(df)):
+            current_price = df.iloc[idx]['close']
+            features = self.sector_analyzer.get_sector_features(symbol, current_price)
+            
+            df.loc[idx, 'sector_momentum'] = features['sector_momentum']
+            df.loc[idx, 'sector_relative_strength'] = features['sector_relative_strength']
+            df.loc[idx, 'sector_rank'] = features['sector_rank']
+            df.loc[idx, 'sector_trend'] = features['sector_trend']
+        
+        return df
 
     def _calculate_technical_features(self, df):
         """Calculate all technical indicators"""
@@ -438,14 +614,15 @@ class HedgeFundTradingEnv(gym.Env):
     def _calculate_obs_dim(self):
         """
         ✅ FIXED: Calculate observation dimension correctly
-        Returns: 43 (consistent with actual observation)
+        Returns: 47 (43 original + 4 sector features)
         """
         base_count = 20
-        mtf_count = len(self.config.MTF_PERIODS) * 4
+        mtf_count = len(self.config.MTF_PERIODS) * 4  # 16
         xgb_count = 2
+        sector_count = 4  # ✅ NEW: Sector features
         position_count = 5
-        obs_dim = base_count + mtf_count + xgb_count + position_count
-        return obs_dim
+        obs_dim = base_count + mtf_count + xgb_count + sector_count + position_count
+        return obs_dim  # 20 + 16 + 2 + 4 + 5 = 47
 
     def _calculate_mtf_features(self, df, current_idx):
         """Multi-timeframe analysis"""
@@ -572,6 +749,7 @@ class HedgeFundTradingEnv(gym.Env):
 
         # Get preprocessed symbol data
         self.symbol_data = self.symbol_data_cache[self.current_symbol].copy()
+        self.current_sector = self.symbol_data.iloc[0].get('sector', 'Unknown') if 'sector' in self.symbol_data.columns else 'Unknown'
 
         # Random start position (not fixed)
         min_start = max(50, len(self.symbol_data) // 10)
@@ -597,7 +775,7 @@ class HedgeFundTradingEnv(gym.Env):
         return self._get_obs(), {}
 
     def _get_obs(self):
-        """Get current observation with single equity curve update"""
+        """Get current observation with single equity curve update + sector features"""
         if self.current_step >= len(self.symbol_data):
             return np.zeros(self.obs_dim, dtype=np.float32)
 
@@ -622,6 +800,14 @@ class HedgeFundTradingEnv(gym.Env):
         # XGBoost features (2 items)
         xgb_features = [xgb_conf / 100, xgb_pred]
 
+        # ✅ NEW: Sector features (4 items)
+        sector_features = [
+            row.get('sector_momentum', 0),
+            row.get('sector_relative_strength', 0),
+            row.get('sector_rank', 0.5),
+            row.get('sector_trend', 0)
+        ]
+
         # Calculate metrics from trades
         current_equity = self.balance + (self.position * row['close'] if self.position > 0 else 0)
         sharpe = self._calculate_sharpe_ratio(self.returns)
@@ -637,15 +823,15 @@ class HedgeFundTradingEnv(gym.Env):
             volatility
         ]
 
-        # Combine all features: 20 + 16 + 2 + 5 = 43
-        obs = base_features + mtf_values + xgb_features + position_features
+        # Combine all features: 20 + 16 + 2 + 4 + 5 = 47
+        obs = base_features + mtf_values + xgb_features + sector_features + position_features
         obs = np.array(obs, dtype=np.float32)
         obs = np.nan_to_num(obs, nan=0.0, posinf=1.0, neginf=-1.0)
 
         return obs
 
     def step(self, action):
-        """Execute action with proper reward scaling and Agentic Loop feedback"""
+        """Execute action with proper reward scaling, sector bonus, and Agentic Loop feedback"""
 
         if self.current_step >= len(self.symbol_data) - 1:
             return self._get_obs(), 0, True, False, {}
@@ -667,11 +853,16 @@ class HedgeFundTradingEnv(gym.Env):
         xgb_conf, xgb_pred = self._get_xgb_signal_dynamic(self.current_symbol, current_features)
         xgb_conf_norm = xgb_conf / 100
 
+        # ✅ NEW: Get sector features for this step
+        sector_momentum = row.get('sector_momentum', 0)
+        sector_trend = row.get('sector_trend', 0)
+
         reward = 0
         terminated = False
         trade_closed = False
         pnl = 0
         trade_result = None
+        trade_direction = None
 
         # Get trade signal
         signal = self._get_trade_signal(self.current_symbol, current_date, current_price)
@@ -685,7 +876,10 @@ class HedgeFundTradingEnv(gym.Env):
         # Execute action
         if action == 1:  # BUY
             if self.position == 0:
-                buy_amount = self.balance * self.config.MAX_POSITION
+                # ✅ NEW: Sector alignment bonus for entry
+                sector_alignment = self.sector_analyzer.get_sector_alignment_score(self.current_symbol, 'BUY')
+                
+                buy_amount = self.balance * self.config.MAX_POSITION * (0.8 + 0.4 * sector_alignment)  # Adjust position by sector alignment
                 shares = buy_amount / price
                 self.position = shares
                 self.entry_price = price
@@ -693,8 +887,11 @@ class HedgeFundTradingEnv(gym.Env):
                 self.balance -= buy_amount
                 reward -= self.config.TRADING_FEE
 
+                # Bonus for strong XGBoost + Sector alignment
                 if xgb_conf_norm > 0.7 and xgb_pred == 1:
-                    reward += 0.05
+                    reward += 0.05 * (1 + sector_alignment)
+                
+                trade_direction = 'BUY'
 
         elif action == 2:  # SELL
             if self.position > 0:
@@ -707,25 +904,53 @@ class HedgeFundTradingEnv(gym.Env):
                 self.returns.append(pnl)
                 self.equity_curve.append(self.balance)
 
-                # Clipped reward
+                # ✅ NEW: Update sector performance
+                if self.current_sector != 'Unknown':
+                    self.sector_performance[self.current_sector]['trades'] += 1
+                    if pnl > 0:
+                        self.sector_performance[self.current_sector]['wins'] += 1
+                    self.sector_performance[self.current_sector]['pnl'] += pnl
+
+                # Update streak
+                if pnl > 0:
+                    self.consecutive_wins += 1
+                    self.consecutive_losses = 0
+                else:
+                    self.consecutive_losses += 1
+                    self.consecutive_wins = 0
+
+                # Track best/worst trades
+                if pnl > self.best_trade['pnl']:
+                    self.best_trade = {'pnl': pnl, 'symbol': self.current_symbol, 'step': self.current_step}
+                if pnl < self.worst_trade['pnl']:
+                    self.worst_trade = {'pnl': pnl, 'symbol': self.current_symbol, 'step': self.current_step}
+
+                # ✅ NEW: Sector alignment bonus for exit
+                sector_alignment = self.sector_analyzer.get_sector_alignment_score(self.current_symbol, 'SELL' if pnl < 0 else 'BUY')
+                
+                # Clipped reward with sector bonus
                 sharpe_reward = self._calculate_sharpe_ratio(self.returns) * self.config.SHARPE_WEIGHT
                 profit_reward = pnl * 5 * self.config.PROFIT_WEIGHT
-                reward = profit_reward + sharpe_reward
+                sector_bonus = sector_alignment * self.config.SECTOR_ALIGNMENT_BONUS * (1 if pnl > 0 else -0.5)
+                reward = profit_reward + sharpe_reward + sector_bonus
                 reward = np.clip(reward, self.config.REWARD_CLIP_MIN, self.config.REWARD_CLIP_MAX)
 
                 self.position = 0
                 self.entry_price = 0
                 self.highest_price = 0
+                
+                trade_direction = 'SELL'
 
         elif action == 3:  # ADD to position
             if self.position > 0:
-                add_amount = self.balance * (self.config.MAX_POSITION * 0.5)
+                sector_alignment = self.sector_analyzer.get_sector_alignment_score(self.current_symbol, 'BUY')
+                add_amount = self.balance * (self.config.MAX_POSITION * 0.5) * sector_alignment
                 shares = add_amount / price
                 self.position += shares
                 self.balance -= add_amount
                 reward -= self.config.TRADING_FEE * 0.5
 
-                if xgb_conf_norm > 0.8 and xgb_pred == 1:
+                if xgb_conf_norm > 0.8 and xgb_pred == 1 and sector_trend > 0:
                     reward += 0.03
 
         elif action == 4:  # REDUCE position
@@ -736,17 +961,18 @@ class HedgeFundTradingEnv(gym.Env):
                 self.position -= reduce_shares
                 reward -= self.config.TRADING_FEE * 0.5
 
-        # Hold reward
+        # Hold reward with sector context
         if action == 0:
             if self.position > 0:
                 unrealized_pnl = (price - self.entry_price) / self.entry_price
+                sector_alignment = self.sector_analyzer.get_sector_alignment_score(self.current_symbol, 'BUY')
                 if xgb_conf_norm > 0.6 and next_price > price:
-                    reward += 0.005 * xgb_conf_norm * (1 + unrealized_pnl)
+                    reward += 0.005 * xgb_conf_norm * (1 + unrealized_pnl) * sector_alignment
             else:
-                if xgb_conf_norm > 0.6 and next_price > price:
+                if xgb_conf_norm > 0.6 and next_price > price and sector_trend > 0:
                     reward += 0.002 * xgb_conf_norm
 
-        # ✅ AGENTIC LOOP FEEDBACK (NEW - 구조 변경 없이 추가)
+        # ✅ AGENTIC LOOP FEEDBACK (with sector info)
         if trade_closed and self.agentic_loop is not None:
             try:
                 feedback_trade = {
@@ -755,6 +981,8 @@ class HedgeFundTradingEnv(gym.Env):
                     'success': pnl > 0,
                     'entry_price': self.entry_price,
                     'exit_price': current_price,
+                    'sector': self.current_sector,  # ✅ NEW
+                    'sector_momentum': sector_momentum,  # ✅ NEW
                     'exit_reason': 'take_profit' if pnl > 0.03 else 'stop_loss' if pnl < -0.02 else 'manual'
                 }
                 self.agentic_loop.after_trade_feedback(feedback_trade)
@@ -792,17 +1020,27 @@ class HedgeFundTradingEnv(gym.Env):
         # Final reward clipping
         reward = np.clip(reward, self.config.REWARD_CLIP_MIN, self.config.REWARD_CLIP_MAX)
 
+        # ✅ NEW: Check if episode was exceptional (for Telegram notification)
+        if terminated and len(self.trades) > 0:
+            total_return = (self.balance / self.config.INITIAL_BALANCE - 1) * 100
+            if total_return > 20 or total_return < -20:
+                self._send_performance_alert(total_return)
+
         # Build info dict
         info = {
             'balance': self.balance,
             'symbol': self.current_symbol,
+            'sector': self.current_sector,  # ✅ NEW
             'step': self.current_step,
             'xgb_conf': xgb_conf,
             'drawdown': drawdown,
             'sharpe_ratio': self._calculate_sharpe_ratio(self.returns),
             'total_trades': len(self.trades),
             'win_rate': sum(1 for t in self.trades if t.get('success', False)) / len(self.trades) if self.trades else 0,
-            'total_return': (self.balance / self.config.INITIAL_BALANCE - 1) * 100
+            'total_return': (self.balance / self.config.INITIAL_BALANCE - 1) * 100,
+            'consecutive_wins': self.consecutive_wins,  # ✅ NEW
+            'consecutive_losses': self.consecutive_losses,  # ✅ NEW
+            'sector_momentum': sector_momentum  # ✅ NEW
         }
 
         # Add trade_result if trade closed
@@ -810,6 +1048,34 @@ class HedgeFundTradingEnv(gym.Env):
             info['trade_result'] = trade_result
 
         return self._get_obs(), reward, terminated, False, info
+
+    def _send_performance_alert(self, total_return):
+        """✅ NEW: Send Telegram alert for exceptional performance"""
+        if abs(total_return) > 20:
+            emoji = "🚀" if total_return > 0 else "📉"
+            message = f"""
+{emoji} <b>Exceptional Episode!</b>
+📊 Symbol: {self.current_symbol}
+🏭 Sector: {self.current_sector}
+💰 Return: {total_return:+.1f}%
+📈 Trades: {len(self.trades)}
+🎯 Win Rate: {sum(1 for t in self.trades if t.get('success', False)) / len(self.trades) * 100:.1f}%
+"""
+            send_telegram_message(message)
+
+    def get_sector_performance_summary(self):
+        """✅ NEW: Get performance summary by sector"""
+        summary = []
+        for sector, perf in self.sector_performance.items():
+            if perf['trades'] > 0:
+                summary.append({
+                    'sector': sector,
+                    'trades': perf['trades'],
+                    'win_rate': perf['wins'] / perf['trades'] * 100,
+                    'total_pnl': perf['pnl'] * 100,
+                    'avg_pnl': perf['pnl'] / perf['trades'] * 100
+                })
+        return sorted(summary, key=lambda x: x['total_pnl'], reverse=True)
 
 # =========================================================
 # ENVIRONMENT WRAPPER
@@ -827,7 +1093,7 @@ def create_hedge_fund_env(data: pd.DataFrame,
 
 if __name__ == "__main__":
     print("="*70)
-    print("🏦 HEDGE FUND LEVEL ENVIRONMENT v3.1 (Observation Space Fixed)")
+    print("🏦 HEDGE FUND LEVEL ENVIRONMENT v4.0 (Sector Features)")
     print("="*70)
 
     try:
@@ -843,7 +1109,7 @@ if __name__ == "__main__":
         # Test reset (multiple times for randomization)
         for i in range(3):
             obs, info = env.reset()
-            print(f"\n✅ Reset {i+1}: start_step={env.current_step}, symbol={env.current_symbol}, obs_shape={obs.shape}")
+            print(f"\n✅ Reset {i+1}: start_step={env.current_step}, symbol={env.current_symbol}, sector={env.current_sector}, obs_shape={obs.shape}")
 
         # Test steps
         obs, info = env.reset()
@@ -860,7 +1126,15 @@ if __name__ == "__main__":
         print(f"   Final balance: ${info['balance']:,.2f}")
         print(f"   Sharpe ratio: {info['sharpe_ratio']:.3f}")
         print(f"   Win rate: {info['win_rate']:.2%}")
+        print(f"   Sector: {info['sector']}")
         print(f"   Observation shape: {obs.shape}")
+
+        # ✅ NEW: Print sector performance summary
+        sector_summary = env.get_sector_performance_summary()
+        if sector_summary:
+            print(f"\n📊 Sector Performance Summary:")
+            for s in sector_summary[:3]:
+                print(f"   {s['sector']}: {s['win_rate']:.1f}% win rate, {s['total_pnl']:+.1f}% PnL")
 
     except Exception as e:
         print(f"❌ Error: {e}")
