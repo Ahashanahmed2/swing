@@ -3394,7 +3394,7 @@ def detect_confluence_zone(df, idx):
     ote = detect_ote_entry(df, idx)
     
     confluence_score = 0
-    confluence_items = Ugc
+    confluence_items = []
     
     if ob:
         confluence_score += 1
@@ -4368,7 +4368,7 @@ def main():
     MAX_PER_SYMBOL = TOTAL_PATTERNS * MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS
     print(f"✅ Auto MAX_PER_SYMBOL: {MAX_PER_SYMBOL} (={TOTAL_PATTERNS} patterns × {MIN_EXAMPLES_PER_PATTERN} min × {NUM_VARIATIONS} variations)")
     
-    training_data = Ugc
+    training_data = []
     symbols_processed = 0
     
     # ✅ প্যাটার্ন ট্র্যাকিং
