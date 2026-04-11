@@ -4051,7 +4051,7 @@ def generate_elliott_wave_data(symbol, df_row, pattern_type, config, indicator_v
 
     sector_details = f"""
 #🏭 SECTOR INFORMATION:
-────────────────────────────────────────────────────────────────────────────────
+#────────────────────────────────────────────────────────────────────────────────
 Sector: {sector}
 Sector Strength: {sector_analysis.get('strength', 'Neutral')}
 Sector Rotation Signal: {sector_analysis.get('rotation', 'None')}
@@ -4110,8 +4110,8 @@ Peer Comparison: {sector_analysis.get('peer_rank', 'N/A')}
 
     if liquidity_info:
         additional_analysis += f"""
-💧 FIXED RANGE LIQUIDITY:
-────────────────────────────────────────────────────────────────────────────────
+#💧 FIXED RANGE LIQUIDITY:
+#────────────────────────────────────────────────────────────────────────────────
 Highest Liquidity: {liquidity_info['highest_liquidity']}
 Current Position: {liquidity_info['current_position']}
 Top Levels: {', '.join([str(l[0]) for l in liquidity_info['liquidity_levels'][:3]])}
@@ -4119,8 +4119,8 @@ Top Levels: {', '.join([str(l[0]) for l in liquidity_info['liquidity_levels'][:3
 
     if gap_info and gap_info['type'] != 'NO_GAP':
         additional_analysis += f"""
-🚀 GAP ANALYSIS:
-────────────────────────────────────────────────────────────────────────────────
+#🚀 GAP ANALYSIS:
+#────────────────────────────────────────────────────────────────────────────────
 Type: {gap_info['type']}
 Gap: {gap_info['gap_percent']:.2f}%
 Fill Probability: {gap_info['fill_probability']:.1f}%
@@ -4129,8 +4129,8 @@ Expected Fill: {gap_info['expected_fill_days']} days
 
     if vol_skew:
         additional_analysis += f"""
-📉 VOLATILITY SKEW:
-────────────────────────────────────────────────────────────────────────────────
+#📉 VOLATILITY SKEW:
+#────────────────────────────────────────────────────────────────────────────────
 5d Vol: {vol_skew['vol_5d']:.2f}% | 20d Vol: {vol_skew['vol_20d']:.2f}%
 Term Structure: {vol_skew['term_structure']}
 Signal: {vol_skew['signal']}
@@ -4138,8 +4138,8 @@ Signal: {vol_skew['signal']}
 
     if zscore_info:
         additional_analysis += f"""
-📊 Z-SCORE (Mean Reversion):
-────────────────────────────────────────────────────────────────────────────────
+#📊 Z-SCORE (Mean Reversion):
+#────────────────────────────────────────────────────────────────────────────────
 Z-Score: {zscore_info['zscore']:.2f}
 Signal: {zscore_info['signal']}
 Target: {zscore_info['mean_reversion_target']:.2f}
@@ -4148,8 +4148,8 @@ Confidence: {zscore_info['confidence']:.1f}%
 
     if lstm_pred:
         additional_analysis += f"""
-🤖 LSTM PRICE PREDICTION:
-────────────────────────────────────────────────────────────────────────────────
+#🤖 LSTM PRICE PREDICTION:
+#────────────────────────────────────────────────────────────────────────────────
 Method: {lstm_pred['method']}
 Forecast ({lstm_pred['forecast_days']} days): {', '.join([f'{p:.2f}' for p in lstm_pred['predictions'][:3]])}
 Trend: {lstm_pred['trend']} | Confidence: {lstm_pred['confidence']:.1f}%
@@ -4157,8 +4157,8 @@ Trend: {lstm_pred['trend']} | Confidence: {lstm_pred['confidence']:.1f}%
 
     if risk_metrics:
         additional_analysis += f"""
-⚠️ RISK METRICS:
-────────────────────────────────────────────────────────────────────────────────
+#⚠️ RISK METRICS:
+#────────────────────────────────────────────────────────────────────────────────
 VaR (95%): {risk_metrics['var_95']:.2f}% | CVaR: {risk_metrics['cvar_95']:.2f}%
 Sharpe: {risk_metrics['sharpe_ratio']:.2f} | Sortino: {risk_metrics['sortino_ratio']:.2f}
 Max Drawdown: {risk_metrics['max_drawdown']:.2f}%
@@ -4167,16 +4167,16 @@ Risk Level: {risk_metrics['risk_level']}
 
     if supply_demand:
         additional_analysis += f"""
-📦 SUPPLY/DEMAND ZONES:
-────────────────────────────────────────────────────────────────────────────────
+#📦 SUPPLY/DEMAND ZONES:
+#────────────────────────────────────────────────────────────────────────────────
 """
         for zone in supply_demand[:2]:
             additional_analysis += f"• {zone['type']}: {zone['level_low']:.2f} - {zone['level_high']:.2f} ({zone['freshness']}, {zone['strength']})\n"
 
     if anchored_vwap:
         additional_analysis += f"""
-⚓ ANCHORED VWAP (50 bars):
-────────────────────────────────────────────────────────────────────────────────
+#⚓ ANCHORED VWAP (50 bars):
+#────────────────────────────────────────────────────────────────────────────────
 VWAP: {anchored_vwap['anchored_vwap']:.2f}
 Deviation: {anchored_vwap['deviation']:.2f}%
 Position: {anchored_vwap['position']} | Signal: {anchored_vwap['signal']}
@@ -4184,8 +4184,8 @@ Position: {anchored_vwap['position']} | Signal: {anchored_vwap['signal']}
 
     if order_book:
         additional_analysis += f"""
-📖 ORDER BOOK (Simulated):
-────────────────────────────────────────────────────────────────────────────────
+#📖 ORDER BOOK (Simulated):
+#────────────────────────────────────────────────────────────────────────────────
 Bid/Ask Ratio: {order_book['bid_ask_ratio']:.2f}
 Imbalance: {order_book['imbalance']}
 Support: {order_book['nearest_support']:.2f} | Resistance: {order_book['nearest_resistance']:.2f}
@@ -4208,11 +4208,11 @@ Support: {order_book['nearest_support']:.2f} | Resistance: {order_book['nearest_
     pred_id = elliott_backtester.add_prediction(symbol, current_date, pattern_type, target, current_price)
 
     training_text = f"""
-================================================================================
+#================================================================================
 Elliott Wave Pattern: {pattern_display}{variation_note}
 Symbol: {symbol}
 Date: {current_date}
-================================================================================
+#================================================================================
 
 {sector_details}
 {price_sequence_text}
@@ -4223,12 +4223,12 @@ Date: {current_date}
 {forward_text}
 
 {price_header}
-────────────────────────────────────────────────────────────────────────────────
+#────────────────────────────────────────────────────────────────────────────────
 Open: {df_row['open']:.2f} | High: {df_row['high']:.2f} | Low: {df_row['low']:.2f}
 Close: {current_price:.2f} | Volume: {volume:,}
 
-📈 TECHNICAL INDICATORS:
-────────────────────────────────────────────────────────────────────────────────
+#📈 TECHNICAL INDICATORS:
+#────────────────────────────────────────────────────────────────────────────────
 🔹 RSI (14): {rsi:.1f} | Status: {'Oversold' if rsi < 30 else 'Overbought' if rsi > 70 else 'Neutral'}
    Divergence: {rsi_div}
 
@@ -4240,8 +4240,8 @@ Close: {current_price:.2f} | Volume: {volume:,}
 🔹 ATR: {atr_value:.2f} | ATR %: {(atr_value / current_price * 100):.2f}%
 🔹 Volume Spike: {volume_spike}
 
-📐 ELLIOTT WAVE ANALYSIS:
-────────────────────────────────────────────────────────────────────────────────
+#📐 ELLIOTT WAVE ANALYSIS:
+#────────────────────────────────────────────────────────────────────────────────
 Pattern Type: {pattern_type}
 Category: {config['category']}
 Wave Structure: {config['structure']}
@@ -4249,20 +4249,20 @@ Bias: {config['bias']}
 Wave Degree: {config['degree']}
 Fibonacci Ratios: {config['fib_ratios']}
 
-🎯 WAVE SPECIFICATIONS:
-────────────────────────────────────────────────────────────────────────────────
+#🎯 WAVE SPECIFICATIONS:
+#────────────────────────────────────────────────────────────────────────────────
 {config['specifications']}
 
-💰 TRADING SETUP:
-────────────────────────────────────────────────────────────────────────────────
+#💰 TRADING SETUP:
+#────────────────────────────────────────────────────────────────────────────────
 Entry Price: {entry:.2f}
 Stop Loss: {stop:.2f}
 Target: {target:.2f}
 Risk-Reward Ratio: {rr_ratio:.2f}
 Signal Strength: {confidence:.1f}%
 
-📝 RECOMMENDATION:
-────────────────────────────────────────────────────────────────────────────────
+#📝 RECOMMENDATION:
+#────────────────────────────────────────────────────────────────────────────────
 {'✅ BUY - Wave ' + config['wave_position'] if config['bias'] == 'Bullish' else '❌ SELL - Wave ' + config['wave_position'] if config['bias'] == 'Bearish' else '⏳ WAIT - Wave ' + config['wave_position']}
 
 Wave Count: {config['wave_count']}
@@ -4273,7 +4273,7 @@ Additional Confirmation:
 {'- Volume supports' if volume_spike == 'Yes' else '- Volume needs confirmation'}
 {sector_analysis.get('additional_note', '')}
 
-================================================================================
+#================================================================================
 """
     return training_text
 
@@ -4358,7 +4358,7 @@ def generate_complete_pattern_data(symbol, df_row, pattern_type, config, indicat
     pattern_display = pattern_type if random.random() < 0.5 else "Unknown Pattern"
 
     sector_details = f"""
-🏭 SECTOR: {sector} | Strength: {sector_analysis.get('strength', 'Neutral')} | Rotation: {sector_analysis.get('rotation', 'None')}
+#🏭 SECTOR: {sector} | Strength: {sector_analysis.get('strength', 'Neutral')} | Rotation: {sector_analysis.get('rotation', 'None')}
 """
 
     price_sequence_text = ""
@@ -4389,11 +4389,11 @@ def generate_complete_pattern_data(symbol, df_row, pattern_type, config, indicat
         additional_analysis += f"\n⚠️ VaR: {risk_metrics['var_95']:.2f}% | Sharpe: {risk_metrics['sharpe_ratio']:.2f}"
 
     return f"""
-================================================================================
+#================================================================================
 Pattern: {pattern_display}{variation_note}
 Symbol: {symbol}
 Date: {current_date}
-================================================================================
+#================================================================================
 
 {sector_details}
 {price_sequence_text}
@@ -4402,30 +4402,30 @@ Date: {current_date}
 {forward_text}
 {additional_analysis}
 
-📊 PRICE DATA:
+#📊 PRICE DATA:
 ────────────────────────────────────────────────────────────────────────────────
 Open: {df_row['open']:.2f} | High: {df_row['high']:.2f} | Low: {df_row['low']:.2f}
 Close: {current_price:.2f} | Volume: {volume:,}
 
-📈 TECHNICAL INDICATORS:
-────────────────────────────────────────────────────────────────────────────────
+#📈 TECHNICAL INDICATORS:
+#────────────────────────────────────────────────────────────────────────────────
 🔹 RSI (14): {rsi:.1f} | Divergence: {rsi_div}
 🔹 MACD: {macd:.4f} | Signal: {macd_signal:.4f}
 🔹 Stochastic: %K={stoch_k:.1f}
 🔹 ATR: {atr_value:.2f} | Volume Spike: {volume_spike}
 
-🎯 PATTERN ANALYSIS:
+#🎯 PATTERN ANALYSIS:
 ────────────────────────────────────────────────────────────────────────────────
 Pattern: {pattern_type} | Category: {config['category']} | Bias: {config['bias']}
 Entry: {config['entry']} | Stop: {config['stop']} | Target: {config['target']}
 
-💰 TRADING SETUP:
-────────────────────────────────────────────────────────────────────────────────
+#💰 TRADING SETUP:
+#────────────────────────────────────────────────────────────────────────────────
 Entry: {entry:.2f} | Stop: {stop:.2f} | Target: {target:.2f}
 Risk-Reward: {rr_ratio:.2f} | Confidence: {confidence:.1f}%
 
-📝 RECOMMENDATION:
-────────────────────────────────────────────────────────────────────────────────
+#📝 RECOMMENDATION:
+#────────────────────────────────────────────────────────────────────────────────
 {'✅ BUY' if config['bias'] == 'Bullish' else '❌ SELL' if config['bias'] == 'Bearish' else '⏳ WAIT'} at {entry:.2f}
 {sector_analysis.get('additional_note', '')}
 
