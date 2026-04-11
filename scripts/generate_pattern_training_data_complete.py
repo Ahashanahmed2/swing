@@ -1404,7 +1404,7 @@ def calculate_rsi_series(prices, period=14):
         else:
             rs = up / down
             rsi[i] = 100. - 100. / (1. + rs)
-            return rsi
+        return rsi
 
 
 def calculate_macd(prices, fast=12, slow=26, signal=9):
@@ -4429,8 +4429,7 @@ Risk-Reward: {rr_ratio:.2f} | Confidence: {confidence:.1f}%
 {'✅ BUY' if config['bias'] == 'Bullish' else '❌ SELL' if config['bias'] == 'Bearish' else '⏳ WAIT'} at {entry:.2f}
 {sector_analysis.get('additional_note', '')}
 
-================================================================================
-"""
+#================================================================================
 
 
 # =========================================================
@@ -4460,7 +4459,7 @@ def main():
     print(f"✅ Loaded {TOTAL_PATTERNS} pattern configurations")
 
     # ✅ MAX_PER_SYMBOL অটো ক্যালকুলেট
-    NUM_VARIATIONS = 3
+    #NUM_VARIATIONS = 3
     MAX_PER_SYMBOL = TOTAL_PATTERNS * MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS
     print(f"✅ Auto MAX_PER_SYMBOL: {MAX_PER_SYMBOL} (={TOTAL_PATTERNS} patterns × {MIN_EXAMPLES_PER_PATTERN} min × {NUM_VARIATIONS} variations)")
 
