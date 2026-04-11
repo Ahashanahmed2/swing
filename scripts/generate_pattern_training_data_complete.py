@@ -4050,7 +4050,7 @@ def generate_elliott_wave_data(symbol, df_row, pattern_type, config, indicator_v
     price_header = "PRICE SNAPSHOT:" if random.random() < 0.3 else "📊 PRICE DATA:"
 
     sector_details = f"""
-🏭 SECTOR INFORMATION:
+#🏭 SECTOR INFORMATION:
 ────────────────────────────────────────────────────────────────────────────────
 Sector: {sector}
 Sector Strength: {sector_analysis.get('strength', 'Neutral')}
