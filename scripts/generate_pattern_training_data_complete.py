@@ -17,6 +17,100 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 from typing import Dict, List, Tuple, Optional, Any, Union
 
+# =========================================================
+# 🎯 PRIORITY-BASED TRAINING CONFIGURATION (NEW)
+# =========================================================
+
+BASE_MIN_EXAMPLES = 50
+BASE_MAX_EXAMPLES = 100
+NUM_VARIATIONS = 4
+MAX_EXAMPLES_PER_RUN = 100000
+
+PATTERN_PRIORITY = {
+    'Impulse Wave': 3.0, 'Leading Diagonal': 3.0, 'Ending Diagonal': 3.0,
+    '3rd Wave Extension': 3.0, '5th Wave Extension': 3.0, 'Single Zigzag': 3.0,
+    'Double Zigzag': 3.0, 'Regular Flat': 3.0, 'Expanded Flat': 3.0,
+    'Contracting Triangle': 3.0, 'Expanding Triangle': 3.0,
+    'Break of Structure (BOS)': 2.5, 'Bullish Order Block': 2.5,
+    'Bearish Order Block': 2.5, 'Fair Value Gap (FVG)': 2.5,
+    'Optimal Trade Entry (OTE)': 2.5, 'Liquidity Sweep': 2.5,
+    'Change of Character (CHoCH)': 2.5, 'Breaker Block': 2.5,
+    'Mitigation Block': 2.5, 'Rejection Block': 2.5,
+    'RSI Divergence': 2.0, 'MACD Divergence': 2.0, 'Hidden Divergence': 2.0,
+    'Hammer': 1.5, 'Shooting Star': 1.5, 'Doji': 1.5, 'Engulfing': 1.5,
+    'Bullish Engulfing': 1.5, 'Morning Star': 1.5, 'Evening Star': 1.5,
+    'Three White Soldiers': 1.5, 'Three Black Crows': 1.5, 'Piercing Line': 1.5,
+    'Cup and Handle': 1.0, 'Double Bottom': 1.0, 'Head and Shoulders': 1.0,
+    'Bull Flag': 1.0, 'Ascending Triangle': 1.0, 'Descending Triangle': 1.0,
+    'Symmetrical Triangle': 1.0, 'Rounding Bottom': 1.0,
+    'Volume Climax': 1.2, 'Bollinger Band Squeeze': 1.2,
+}
+DEFAULT_PRIORITY = 1.0
+
+def get_pattern_limits(pattern_name):
+    multiplier = PATTERN_PRIORITY.get(pattern_name, DEFAULT_PRIORITY)
+    return int(BASE_MIN_EXAMPLES * multiplier), int(BASE_MAX_EXAMPLES * multiplier), multiplier
+
+def get_pattern_category(pattern_name):
+    if pattern_name in ['Impulse Wave', 'Leading Diagonal', 'Ending Diagonal', 
+                        '3rd Wave Extension', '5th Wave Extension', 'Single Zigzag',
+                        'Double Zigzag', 'Regular Flat', 'Expanded Flat',
+                        'Contracting Triangle', 'Expanding Triangle']:
+        return 'Elliott Wave'
+    elif pattern_name in ['Break of Structure (BOS)', 'Bullish Order Block', 
+                          'Bearish Order Block', 'Fair Value Gap (FVG)', 
+                          'Optimal Trade Entry (OTE)', 'Liquidity Sweep',
+                          'Change of Character (CHoCH)', 'Breaker Block',
+                          'Mitigation Block', 'Rejection Block']:
+        return 'SMC'
+    elif 'Divergence' in pattern_name:
+        return 'Divergence'
+    elif pattern_name in ['Hammer', 'Shooting Star', 'Doji', 'Engulfing',
+                          'Bullish Engulfing', 'Morning Star', 'Evening Star',
+                          'Three White Soldiers', 'Three Black Crows', 'Piercing Line']:
+        return 'Candlestick'
+    else:
+        return 'Basic'
+
+# Safety Helper Functions
+def safe_divide(a, b, default=0.0):
+    try:
+        if b == 0 or np.isnan(a) or np.isnan(b): return default
+        result = a / b
+        if np.isnan(result) or np.isinf(result): return default
+        return result
+    except: return default
+
+def safe_mean(arr, default=0.0):
+    try:
+        if arr is None or len(arr) == 0: return default
+        arr = np.array(arr); arr = arr[~np.isnan(arr)]
+        if len(arr) == 0: return default
+        return float(np.mean(arr))
+    except: return default
+
+def safe_max(arr, default=0.0):
+    try:
+        if arr is None or len(arr) == 0: return default
+        arr = np.array(arr); arr = arr[~np.isnan(arr)]
+        if len(arr) == 0: return default
+        return float(np.max(arr))
+    except: return default
+
+def safe_min(arr, default=0.0):
+    try:
+        if arr is None or len(arr) == 0: return default
+        arr = np.array(arr); arr = arr[~np.isnan(arr)]
+        if len(arr) == 0: return default
+        return float(np.min(arr))
+    except: return default
+
+def clean_array(arr):
+    try:
+        arr = np.array(arr)
+        return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+    except: return np.array([])
+
 # Optional ML imports
 try:
     from sklearn.preprocessing import StandardScaler
