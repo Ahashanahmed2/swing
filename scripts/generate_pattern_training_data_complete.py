@@ -676,6 +676,9 @@ def calculate_fixed_range_volume_profile(symbol_data, lookback=100, num_bins=20)
         price = recent_closes[i]
         vol = recent_volumes[i]
 
+        if np.isnan(price) or np.isnan(range_low) or bin_size <= 0 or np.isnan(bin_size):
+            continue
+
         # Distribute volume across price range
         bin_idx = int((price - range_low) / bin_size)
         bin_idx = max(0, min(num_bins - 1, bin_idx))
@@ -1396,10 +1399,12 @@ def calculate_rsi_series(prices, period=14):
             downval = -delta
         up = (up * (period - 1) + upval) / period
         down = (down * (period - 1) + downval) / period
-        rs = up / down if down != 0 else 0
-        rsi[i] = 100. - 100. / (1. + rs)
-
-    return rsi
+        if down == 0:
+            rsi[i] = 100.0
+        else:
+            rs = up / down
+            rsi[i] = 100. - 100. / (1. + rs)
+            return rsi
 
 
 def calculate_macd(prices, fast=12, slow=26, signal=9):
@@ -4537,8 +4542,18 @@ def main():
                 global_pattern_count = pattern_counts[pattern_name]
                 symbol_pattern_count = symbol_pattern_counts[symbol][pattern_name]
 
-                if global_pattern_count >= MAX_EXAMPLES_PER_PATTERN * NUM_VARIATIONS:
+                limits = get_pattern_limits(pattern_name)
+                required_min = limits[0] * NUM_VARIATIONS
+                required_max = limits[1] * NUM_VARIATIONS
+
+                if global_pattern_count >= required_max:
                     continue
+
+                # Optional: Progress display
+                if pattern_counts[pattern_name] % 10 == 0:
+                    progress_pct = (pattern_counts[pattern_name] / required_min) * 100
+                    category = get_pattern_category(pattern_name)
+                    print(f"      📊 {category} - {pattern_name}: {pattern_counts[pattern_name]}/{required_min} ({progress_pct:.0f}%)")
 
                 if symbol_pattern_count >= MAX_EXAMPLES_PER_PATTERN:
                     continue
