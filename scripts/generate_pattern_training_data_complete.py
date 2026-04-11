@@ -3892,5 +3892,632 @@ Close: {current_price:.2f} | Volume: {volume:,}
 
 Consolidation expected. Wait for clearer signal.
 
+==============================================================================
+# =========================================================
+# DATA GENERATION FUNCTIONS
+# =========================================================
+
+def generate_elliott_wave_data(symbol, df_row, pattern_type, config, indicator_values, metrics, variation_idx=0, symbol_data=None, idx=None):
+    if config.get('category') not in ['Motive Wave', 'Corrective Wave', 'Wave Relationships', 'Combination']:
+        return generate_complete_pattern_data(symbol, df_row, pattern_type, config, indicator_values, metrics, variation_idx, symbol_data, idx)
+
+    current_price = df_row['close']
+    current_date = df_row['date']
+    sector = df_row.get('sector', 'Unknown')
+
+    rsi = indicator_values.get('rsi', 50)
+    macd = indicator_values.get('macd', 0)
+    macd_signal = indicator_values.get('macd_signal', 0)
+    stoch_k = indicator_values.get('stoch_k', 50)
+    stoch_d = indicator_values.get('stoch_d', 50)
+    atr = indicator_values.get('atr', current_price * 0.02)
+    volume = indicator_values.get('volume', 1000000)
+    rsi_div = indicator_values.get('rsi_divergence', 'None')
+    macd_div = indicator_values.get('macd_divergence', 'None')
+    avg_vol = indicator_values.get('avg_volume', volume)
+    ema_20 = indicator_values.get('ema_20', current_price)
+    sma_20 = indicator_values.get('sma_20', current_price)
+
+    atr_value = atr if atr > 0 else current_price * 0.02
+
+    if config['bias'] == 'Bullish':
+        entry, stop = current_price, current_price - atr_value * 1.5
+        target = entry + abs(entry - stop) * random.uniform(1.5, 3.0)
+    elif config['bias'] == 'Bearish':
+        entry, stop = current_price, current_price + atr_value * 1.5
+        target = entry - abs(entry - stop) * random.uniform(1.5, 3.0)
+    else:
+        entry, stop = current_price, current_price - atr_value * 2
+        target = entry + abs(entry - stop) * random.uniform(1.0, 2.0)
+
+    confidence = 50
+    confidence += (macd > macd_signal and config['bias'] == 'Bullish') * 10
+    confidence += (macd < macd_signal and config['bias'] == 'Bearish') * 10
+    confidence += (rsi < 40 and config['bias'] == 'Bullish') * 5
+    confidence += (rsi > 60 and config['bias'] == 'Bearish') * 5
+    confidence += (volume > avg_vol * 1.5) * 5
+    confidence += (metrics.get('relative_strength', 0) > 0.6) * 5
+    confidence += (rsi_div != 'None') * random.randint(3, 6)
+    confidence += (macd_div != 'None') * random.randint(2, 5)
+
+    sector_analysis = get_sector_analysis(sector, symbol, current_price)
+    confidence += sector_analysis.get('confidence_boost', 0)
+    confidence = min(95, max(30, confidence + random.uniform(-5, 5)))
+
+    rr_ratio = abs((target - entry) / max(abs(entry - stop), 1e-6))
+    volume_spike = "Yes" if volume > avg_vol * 1.5 else "No"
+    variation_note = f" [VARIATION {variation_idx + 1}]" if variation_idx > 0 else " [ORIGINAL SEQUENCE]"
+    pattern_display = pattern_type if random.random() < 0.5 else "Unknown Pattern"
+    price_header = "PRICE SNAPSHOT:" if random.random() < 0.3 else "📊 PRICE DATA:"
+
+    sector_details = f"""
+🏭 SECTOR INFORMATION:
+────────────────────────────────────────────────────────────────────────────────
+Sector: {sector}
+Sector Strength: {sector_analysis.get('strength', 'Neutral')}
+Sector Rotation Signal: {sector_analysis.get('rotation', 'None')}
+Peer Comparison: {sector_analysis.get('peer_rank', 'N/A')}
+"""
+
+    price_sequence_text = ""
+    if symbol_data is not None and idx is not None:
+        price_sequence_text, bos_detected, vol_spike, high_vol = generate_advanced_price_sequence(symbol_data, idx)
+        if bos_detected: confidence += 10
+        if vol_spike: confidence += 5
+        if high_vol: confidence += 3
+
+    wyckoff_text = ""
+    if symbol_data is not None and idx is not None:
+        wyckoff_text, wyckoff_data = detect_volume_price_cycle(symbol_data, idx)
+        confidence += wyckoff_data.get('confidence_boost', 0)
+
+    forward_text = ""
+    if symbol_data is not None and idx is not None:
+        forward_text = generate_forward_looking_analysis(symbol_data, idx)
+
+    # Price Action Complete Analysis
+    pa_report, trend_lines, channels, rays, fib_ext, vol_profile, pa_predictions = analyze_price_action_complete(symbol_data, idx)
+
+    # Fixed Range Liquidity
+    liquidity_info = detect_fixed_range_liquidity(symbol_data)
+
+    # Gap Analysis
+    gap_info = analyze_gaps(symbol_data, idx)
+
+    # Volatility Skew
+    vol_skew = analyze_volatility_skew(symbol_data)
+
+    # Z-Score
+    zscore_info = calculate_zscore_signals(symbol_data)
+
+    # LSTM Prediction
+    lstm_pred = predict_price_lstm(symbol_data)
+
+    # Risk Metrics
+    risk_metrics = calculate_risk_metrics(symbol_data)
+
+    # Supply/Demand Zones
+    supply_demand = detect_supply_demand_zones(symbol_data, idx)
+
+    # Anchored VWAP (using 50 candles back as anchor)
+    anchor_idx = max(0, idx - 50)
+    anchored_vwap = calculate_anchored_vwap(symbol_data, anchor_idx)
+
+    # Order Book Simulation
+    order_book = simulate_order_book(symbol_data, idx)
+
+    # Add new analysis to report
+    additional_analysis = ""
+
+    if liquidity_info:
+        additional_analysis += f"""
+💧 FIXED RANGE LIQUIDITY:
+────────────────────────────────────────────────────────────────────────────────
+Highest Liquidity: {liquidity_info['highest_liquidity']}
+Current Position: {liquidity_info['current_position']}
+Top Levels: {', '.join([str(l[0]) for l in liquidity_info['liquidity_levels'][:3]])}
+"""
+
+    if gap_info and gap_info['type'] != 'NO_GAP':
+        additional_analysis += f"""
+🚀 GAP ANALYSIS:
+────────────────────────────────────────────────────────────────────────────────
+Type: {gap_info['type']}
+Gap: {gap_info['gap_percent']:.2f}%
+Fill Probability: {gap_info['fill_probability']:.1f}%
+Expected Fill: {gap_info['expected_fill_days']} days
+"""
+
+    if vol_skew:
+        additional_analysis += f"""
+📉 VOLATILITY SKEW:
+────────────────────────────────────────────────────────────────────────────────
+5d Vol: {vol_skew['vol_5d']:.2f}% | 20d Vol: {vol_skew['vol_20d']:.2f}%
+Term Structure: {vol_skew['term_structure']}
+Signal: {vol_skew['signal']}
+"""
+
+    if zscore_info:
+        additional_analysis += f"""
+📊 Z-SCORE (Mean Reversion):
+────────────────────────────────────────────────────────────────────────────────
+Z-Score: {zscore_info['zscore']:.2f}
+Signal: {zscore_info['signal']}
+Target: {zscore_info['mean_reversion_target']:.2f}
+Confidence: {zscore_info['confidence']:.1f}%
+"""
+
+    if lstm_pred:
+        additional_analysis += f"""
+🤖 LSTM PRICE PREDICTION:
+────────────────────────────────────────────────────────────────────────────────
+Method: {lstm_pred['method']}
+Forecast ({lstm_pred['forecast_days']} days): {', '.join([f'{p:.2f}' for p in lstm_pred['predictions'][:3]])}
+Trend: {lstm_pred['trend']} | Confidence: {lstm_pred['confidence']:.1f}%
+"""
+
+    if risk_metrics:
+        additional_analysis += f"""
+⚠️ RISK METRICS:
+────────────────────────────────────────────────────────────────────────────────
+VaR (95%): {risk_metrics['var_95']:.2f}% | CVaR: {risk_metrics['cvar_95']:.2f}%
+Sharpe: {risk_metrics['sharpe_ratio']:.2f} | Sortino: {risk_metrics['sortino_ratio']:.2f}
+Max Drawdown: {risk_metrics['max_drawdown']:.2f}%
+Risk Level: {risk_metrics['risk_level']}
+"""
+
+    if supply_demand:
+        additional_analysis += f"""
+📦 SUPPLY/DEMAND ZONES:
+────────────────────────────────────────────────────────────────────────────────
+"""
+        for zone in supply_demand[:2]:
+            additional_analysis += f"• {zone['type']}: {zone['level_low']:.2f} - {zone['level_high']:.2f} ({zone['freshness']}, {zone['strength']})\n"
+
+    if anchored_vwap:
+        additional_analysis += f"""
+⚓ ANCHORED VWAP (50 bars):
+────────────────────────────────────────────────────────────────────────────────
+VWAP: {anchored_vwap['anchored_vwap']:.2f}
+Deviation: {anchored_vwap['deviation']:.2f}%
+Position: {anchored_vwap['position']} | Signal: {anchored_vwap['signal']}
+"""
+
+    if order_book:
+        additional_analysis += f"""
+📖 ORDER BOOK (Simulated):
+────────────────────────────────────────────────────────────────────────────────
+Bid/Ask Ratio: {order_book['bid_ask_ratio']:.2f}
+Imbalance: {order_book['imbalance']}
+Support: {order_book['nearest_support']:.2f} | Resistance: {order_book['nearest_resistance']:.2f}
+"""
+
+    elliott_complete_text = ""
+    if symbol_data is not None and idx is not None:
+        mt_wave = detect_elliott_wave_multi_timeframe(symbol_data, idx)
+        if mt_wave and mt_wave.get('higher_timeframe'):
+            elliott_complete = mt_wave['higher_timeframe']
+            elliott_complete_text = elliott_complete['prediction_text']
+            confidence += elliott_complete.get('confidence', 0) // 5
+            elliott_complete_text += f"\n\n🔄 MULTI-TIMEFRAME CONFLUENCE: {mt_wave.get('confluence_score', 0)}%\n"
+            elliott_complete_text += f"Recommendation: {mt_wave.get('recommendation', 'MODERATE')} Ugc"
+
+    global elliott_backtester
+    if elliott_backtester is None:
+        elliott_backtester = ElliottWaveBacktester()
+
+    pred_id = elliott_backtester.add_prediction(symbol, current_date, pattern_type, target, current_price)
+
+    training_text = f"""
+================================================================================
+Elliott Wave Pattern: {pattern_display}{variation_note}
+Symbol: {symbol}
+Date: {current_date}
+================================================================================
+
+{sector_details}
+{price_sequence_text}
+{wyckoff_text}
+{pa_report}
+{additional_analysis}
+{elliott_complete_text}
+{forward_text}
+
+{price_header}
+────────────────────────────────────────────────────────────────────────────────
+Open: {df_row['open']:.2f} | High: {df_row['high']:.2f} | Low: {df_row['low']:.2f}
+Close: {current_price:.2f} | Volume: {volume:,}
+
+📈 TECHNICAL INDICATORS:
+────────────────────────────────────────────────────────────────────────────────
+🔹 RSI (14): {rsi:.1f} | Status: {'Oversold' if rsi < 30 else 'Overbought' if rsi > 70 else 'Neutral'}
+   Divergence: {rsi_div}
+
+🔹 MACD: {macd:.4f} | Signal: {macd_signal:.4f}
+   Status: {'Bullish' if macd > macd_signal else 'Bearish'}
+   Divergence: {macd_div}
+
+🔹 Stochastic: %K={stoch_k:.1f} | %D={stoch_d:.1f}
+🔹 ATR: {atr_value:.2f} | ATR %: {(atr_value / current_price * 100):.2f}%
+🔹 Volume Spike: {volume_spike}
+
+📐 ELLIOTT WAVE ANALYSIS:
+────────────────────────────────────────────────────────────────────────────────
+Pattern Type: {pattern_type}
+Category: {config['category']}
+Wave Structure: {config['structure']}
+Bias: {config['bias']}
+Wave Degree: {config['degree']}
+Fibonacci Ratios: {config['fib_ratios']}
+
+🎯 WAVE SPECIFICATIONS:
+────────────────────────────────────────────────────────────────────────────────
+{config['specifications']}
+
+💰 TRADING SETUP:
+────────────────────────────────────────────────────────────────────────────────
+Entry Price: {entry:.2f}
+Stop Loss: {stop:.2f}
+Target: {target:.2f}
+Risk-Reward Ratio: {rr_ratio:.2f}
+Signal Strength: {confidence:.1f}%
+
+📝 RECOMMENDATION:
+────────────────────────────────────────────────────────────────────────────────
+{'✅ BUY - Wave ' + config['wave_position'] if config['bias'] == 'Bullish' else '❌ SELL - Wave ' + config['wave_position'] if config['bias'] == 'Bearish' else '⏳ WAIT - Wave ' + config['wave_position']}
+
+Wave Count: {config['wave_count']}
+Invalidation Level: {config['invalidation']}
+
+Additional Confirmation:
+{'- RSI divergence confirms' if rsi_div != 'None' else '- No divergence'}
+{'- Volume supports' if volume_spike == 'Yes' else '- Volume needs confirmation'}
+{sector_analysis.get('additional_note', '')}
+
 ================================================================================
 """
+    return training_text
+
+
+def get_elliott_wave_patterns():
+    return {
+        'Impulse Wave': {'category': 'Motive Wave', 'structure': '5-3-5-3-5', 'bias': 'Bullish', 'degree': 'Primary/Intermediate/Minor', 'fib_ratios': 'Wave 2: 0.382-0.618, Wave 3: 1.618-2.618', 'specifications': 'Wave 1: Initial move\nWave 2: Retracement\nWave 3: Strongest\nWave 4: Correction\nWave 5: Divergence', 'wave_position': '3', 'wave_count': '1-2-3-4-5', 'invalidation': 'Below Wave 1 start'},
+        'Leading Diagonal': {'category': 'Motive Wave', 'structure': '5-3-5-3-5', 'bias': 'Bullish/Bearish', 'degree': 'Primary/Intermediate', 'fib_ratios': 'Wave 3: 1.0-1.618', 'specifications': 'Occurs in Wave 1 or A\nOverlapping waves', 'wave_position': '1 or A', 'wave_count': '1-2-3-4-5', 'invalidation': 'Structural violation'},
+        'Ending Diagonal': {'category': 'Motive Wave', 'structure': '3-3-3-3-3', 'bias': 'Bullish/Bearish', 'degree': 'Intermediate/Minor', 'fib_ratios': 'Wave 3: 1.0-1.382', 'specifications': 'Occurs in Wave 5 or C\nTerminal pattern', 'wave_position': '5 or C', 'wave_count': '1-2-3-4-5', 'invalidation': 'Pattern expansion'},
+        '3rd Wave Extension': {'category': 'Motive Wave', 'structure': '5-3-5-3-5', 'bias': 'Bullish', 'degree': 'Primary/Intermediate', 'fib_ratios': 'Wave 3 = 1.618-2.618 x Wave 1', 'specifications': 'Most common extension\nStrongest momentum', 'wave_position': '3', 'wave_count': '1-2-[3-3-3-3-3]-4-5', 'invalidation': 'Below Wave 1 high'},
+        '5th Wave Extension': {'category': 'Motive Wave', 'structure': '5-3-5-3-5', 'bias': 'Bullish/Bearish', 'degree': 'Intermediate/Minor', 'fib_ratios': 'Wave 5 = 0.618-1.618 x Wave 1', 'specifications': 'Terminal move\nDivergence', 'wave_position': '5', 'wave_count': '1-2-3-4-[5-5-5-5-5]', 'invalidation': 'Divergence confirmed'},
+        'Single Zigzag': {'category': 'Corrective Wave', 'structure': '5-3-5', 'bias': 'Neutral', 'degree': 'Any', 'fib_ratios': 'Wave B = 0.382-0.786, Wave C = 0.618-1.618', 'specifications': 'Sharp correction', 'wave_position': 'ABC', 'wave_count': 'A-B-C', 'invalidation': 'Complex structure'},
+        'Double Zigzag': {'category': 'Corrective Wave', 'structure': '5-3-5-3-5', 'bias': 'Neutral', 'degree': 'Intermediate/Minor', 'fib_ratios': 'Wave Y = 0.618-1.618 x Wave W', 'specifications': 'Two zigzags connected', 'wave_position': 'W-X-Y', 'wave_count': 'W-X-Y', 'invalidation': 'Triple zigzag'},
+        'Regular Flat': {'category': 'Corrective Wave', 'structure': '3-3-5', 'bias': 'Neutral', 'degree': 'Any', 'fib_ratios': 'Wave B = 0.90-1.05, Wave C = 1.0 x Wave A', 'specifications': 'Sideways correction', 'wave_position': 'A-B-C', 'wave_count': 'A-B-C', 'invalidation': 'B > 1.05 x A'},
+        'Expanded Flat': {'category': 'Corrective Wave', 'structure': '3-3-5', 'bias': 'Neutral', 'degree': 'Intermediate/Minor', 'fib_ratios': 'Wave B = 1.05-1.382 x Wave A', 'specifications': 'Wave B exceeds A start', 'wave_position': 'A-B-C', 'wave_count': 'A-B-C', 'invalidation': 'Wave C extreme'},
+        'Contracting Triangle': {'category': 'Corrective Wave', 'structure': '3-3-3-3-3', 'bias': 'Neutral', 'degree': 'Any', 'fib_ratios': 'Wave E = 0.618-0.786 x Wave C', 'specifications': '5 waves contracting', 'wave_position': '4 or B', 'wave_count': 'A-B-C-D-E', 'invalidation': 'Triangle expands'},
+        'Expanding Triangle': {'category': 'Corrective Wave', 'structure': '3-3-3-3-3', 'bias': 'Neutral', 'degree': 'Intermediate/Minor', 'fib_ratios': 'Wave E = 1.236-1.382 x Wave C', 'specifications': '5 waves expanding', 'wave_position': '4 or B', 'wave_count': 'A-B-C-D-E', 'invalidation': 'Triangle contracts'},
+    }
+
+
+def get_all_patterns():
+    patterns = {
+        'Cup and Handle': {'category': 'Continuation', 'bias': 'Bullish', 'timeframe': 'Swing', 'entry': 'Breakout above handle', 'stop': 'Below handle low', 'target': 'Measure cup depth'},
+        'Ascending Triangle': {'category': 'Continuation', 'bias': 'Bullish', 'timeframe': 'Swing', 'entry': 'Breakout above resistance', 'stop': 'Below higher low', 'target': 'Height of triangle'},
+        'Bull Flag': {'category': 'Continuation', 'bias': 'Bullish', 'timeframe': 'Short-term', 'entry': 'Breakout of flag', 'stop': 'Below flag low', 'target': 'Flagpole length'},
+        'Double Bottom': {'category': 'Reversal', 'bias': 'Bullish', 'timeframe': 'Swing', 'entry': 'Break above neckline', 'stop': 'Below bottom', 'target': 'Pattern height'},
+        'Head and Shoulders': {'category': 'Reversal', 'bias': 'Bearish', 'timeframe': 'Swing', 'entry': 'Breakdown neckline', 'stop': 'Above right shoulder', 'target': 'Height'},
+        'Hammer': {'category': 'Candlestick', 'bias': 'Bullish', 'timeframe': 'Intraday', 'entry': 'Confirm next green', 'stop': 'Below wick', 'target': 'Recent resistance'},
+        'Bullish Engulfing': {'category': 'Candlestick', 'bias': 'Bullish', 'timeframe': 'Intraday', 'entry': 'Engulfing close', 'stop': 'Below candle', 'target': 'Resistance'},
+        'Doji': {'category': 'Candlestick', 'bias': 'Neutral', 'timeframe': 'Intraday', 'entry': 'Wait breakout', 'stop': 'High/low', 'target': 'Next move'},
+        'Volume Climax': {'category': 'Volume', 'bias': 'Reversal', 'timeframe': 'Any', 'entry': 'Spike volume', 'stop': 'Recent extreme', 'target': 'Reversal zone'},
+        'Bollinger Band Squeeze': {'category': 'Volatility', 'bias': 'Breakout', 'timeframe': 'Any', 'entry': 'Expansion', 'stop': 'Opp band', 'target': 'Move'},
+        'Break of Structure (BOS)': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Swing', 'entry': 'Retest', 'stop': 'Beyond swing', 'target': 'Next structure'},
+        'Bullish Order Block': {'category': 'SMC', 'bias': 'Bullish', 'timeframe': 'Any', 'entry': 'OB retest', 'stop': 'Below OB', 'target': 'Next liquidity'},
+        'Fair Value Gap (FVG)': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'FVG fill', 'stop': 'Beyond FVG', 'target': 'Next OB'},
+        'Optimal Trade Entry (OTE)': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Short-term', 'entry': '0.618-0.786 Fib', 'stop': 'Beyond 0.786', 'target': 'Swing high/low'},
+    }
+    patterns.update(get_elliott_wave_patterns())
+    return patterns
+
+
+def generate_complete_pattern_data(symbol, df_row, pattern_type, config, indicator_values, metrics, variation_idx=0, symbol_data=None, idx=None):
+    current_price = df_row['close']
+    current_date = df_row['date']
+    sector = df_row.get('sector', 'Unknown')
+
+    rsi = indicator_values.get('rsi', 50)
+    macd = indicator_values.get('macd', 0)
+    macd_signal = indicator_values.get('macd_signal', 0)
+    stoch_k = indicator_values.get('stoch_k', 50)
+    atr = indicator_values.get('atr', current_price * 0.02)
+    volume = indicator_values.get('volume', 1000000)
+    rsi_div = indicator_values.get('rsi_divergence', 'None')
+    avg_vol = indicator_values.get('avg_volume', volume)
+
+    atr_value = atr if atr > 0 else current_price * 0.02
+
+    if config['bias'] == 'Bullish':
+        entry, stop = current_price, current_price - atr_value * 1.5
+        target = entry + abs(entry - stop) * random.uniform(1.5, 3.0)
+    elif config['bias'] == 'Bearish':
+        entry, stop = current_price, current_price + atr_value * 1.5
+        target = entry - abs(entry - stop) * random.uniform(1.5, 3.0)
+    else:
+        entry, stop = current_price, current_price - atr_value * 2
+        target = entry + abs(entry - stop) * random.uniform(1.0, 2.0)
+
+    confidence = 50
+    confidence += (macd > macd_signal and config['bias'] == 'Bullish') * 10
+    confidence += (macd < macd_signal and config['bias'] == 'Bearish') * 10
+    confidence += (rsi < 40 and config['bias'] == 'Bullish') * 5
+    confidence += (rsi > 60 and config['bias'] == 'Bearish') * 5
+    confidence += (volume > avg_vol * 1.5) * 5
+
+    sector_analysis = get_sector_analysis(sector, symbol, current_price)
+    confidence += sector_analysis.get('confidence_boost', 0)
+    confidence = min(95, max(30, confidence + random.uniform(-5, 5)))
+
+    rr_ratio = abs((target - entry) / max(abs(entry - stop), 1e-6))
+    volume_spike = "Yes" if volume > avg_vol * 1.5 else "No"
+    variation_note = f" [VARIATION {variation_idx + 1}]" if variation_idx > 0 else " [ORIGINAL SEQUENCE]"
+    pattern_display = pattern_type if random.random() < 0.5 else "Unknown Pattern"
+
+    sector_details = f"""
+🏭 SECTOR: {sector} | Strength: {sector_analysis.get('strength', 'Neutral')} | Rotation: {sector_analysis.get('rotation', 'None')}
+"""
+
+    price_sequence_text = ""
+    if symbol_data is not None and idx is not None:
+        price_sequence_text, _, _, _ = generate_advanced_price_sequence(symbol_data, idx)
+
+    wyckoff_text = ""
+    if symbol_data is not None and idx is not None:
+        wyckoff_text, _ = detect_volume_price_cycle(symbol_data, idx)
+
+    forward_text = ""
+    if symbol_data is not None and idx is not None:
+        forward_text = generate_forward_looking_analysis(symbol_data, idx)
+
+    pa_report, _, _, _, _, _, _ = analyze_price_action_complete(symbol_data, idx) if symbol_data is not None and idx is not None else ("", None, None, None, None, None, None)
+
+    # Additional analysis for complete pattern
+    liquidity_info = detect_fixed_range_liquidity(symbol_data) if symbol_data is not None else None
+    zscore_info = calculate_zscore_signals(symbol_data) if symbol_data is not None else None
+    risk_metrics = calculate_risk_metrics(symbol_data) if symbol_data is not None else None
+
+    additional_analysis = ""
+    if liquidity_info:
+        additional_analysis += f"\n💧 Highest Liquidity: {liquidity_info['highest_liquidity']} ({liquidity_info['current_position']})"
+    if zscore_info:
+        additional_analysis += f"\n📊 Z-Score: {zscore_info['zscore']:.2f} ({zscore_info['signal']})"
+    if risk_metrics:
+        additional_analysis += f"\n⚠️ VaR: {risk_metrics['var_95']:.2f}% | Sharpe: {risk_metrics['sharpe_ratio']:.2f}"
+
+    return f"""
+================================================================================
+Pattern: {pattern_display}{variation_note}
+Symbol: {symbol}
+Date: {current_date}
+================================================================================
+
+{sector_details}
+{price_sequence_text}
+{wyckoff_text}
+{pa_report}
+{forward_text}
+{additional_analysis}
+
+📊 PRICE DATA:
+────────────────────────────────────────────────────────────────────────────────
+Open: {df_row['open']:.2f} | High: {df_row['high']:.2f} | Low: {df_row['low']:.2f}
+Close: {current_price:.2f} | Volume: {volume:,}
+
+📈 TECHNICAL INDICATORS:
+────────────────────────────────────────────────────────────────────────────────
+🔹 RSI (14): {rsi:.1f} | Divergence: {rsi_div}
+🔹 MACD: {macd:.4f} | Signal: {macd_signal:.4f}
+🔹 Stochastic: %K={stoch_k:.1f}
+🔹 ATR: {atr_value:.2f} | Volume Spike: {volume_spike}
+
+🎯 PATTERN ANALYSIS:
+────────────────────────────────────────────────────────────────────────────────
+Pattern: {pattern_type} | Category: {config['category']} | Bias: {config['bias']}
+Entry: {config['entry']} | Stop: {config['stop']} | Target: {config['target']}
+
+💰 TRADING SETUP:
+────────────────────────────────────────────────────────────────────────────────
+Entry: {entry:.2f} | Stop: {stop:.2f} | Target: {target:.2f}
+Risk-Reward: {rr_ratio:.2f} | Confidence: {confidence:.1f}%
+
+📝 RECOMMENDATION:
+────────────────────────────────────────────────────────────────────────────────
+{'✅ BUY' if config['bias'] == 'Bullish' else '❌ SELL' if config['bias'] == 'Bearish' else '⏳ WAIT'} at {entry:.2f}
+{sector_analysis.get('additional_note', '')}
+
+================================================================================
+"""
+
+
+# =========================================================
+# MAIN FUNCTION
+# =========================================================
+
+def main():
+    global elliott_backtester, TOTAL_PATTERNS, MAX_PER_SYMBOL
+    elliott_backtester = ElliottWaveBacktester()
+
+    print("="*80)
+    print("🚀 COMPLETE PATTERN TRAINING DATA GENERATOR (AUTO CONFIG)")
+    print("   (130+ Patterns + Elliott Wave + SMC + Price Action + Multi-Timeframe + ML + Backtesting + Risk Metrics)")
+    print("="*80)
+
+    csv_path = "./csv/mongodb.csv"
+    if not os.path.exists(csv_path):
+        print(f"❌ {csv_path} not found!")
+        return
+
+    df = pd.read_csv(csv_path)
+    df['date'] = pd.to_datetime(df['date'])
+    print(f"✅ Loaded {len(df)} rows, {df['symbol'].nunique()} symbols")
+
+    all_patterns = get_all_patterns()
+    TOTAL_PATTERNS = len(all_patterns)
+    print(f"✅ Loaded {TOTAL_PATTERNS} pattern configurations")
+
+    # ✅ MAX_PER_SYMBOL অটো ক্যালকুলেট
+    NUM_VARIATIONS = 3
+    MAX_PER_SYMBOL = TOTAL_PATTERNS * MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS
+    print(f"✅ Auto MAX_PER_SYMBOL: {MAX_PER_SYMBOL} (={TOTAL_PATTERNS} patterns × {MIN_EXAMPLES_PER_PATTERN} min × {NUM_VARIATIONS} variations)")
+
+    training_data = []
+    symbols_processed = 0
+
+    # ✅ প্যাটার্ন ট্র্যাকিং
+    pattern_counts = defaultdict(int)
+    symbol_pattern_counts = defaultdict(lambda: defaultdict(int))
+
+    for symbol in df['symbol'].unique():
+        symbol_data = df[df['symbol'] == symbol].sort_values('date').reset_index(drop=True)
+
+        if len(symbol_data) < 30:
+            print(f"   ⚠️ {symbol}: only {len(symbol_data)} rows - SKIPPED")
+            continue
+
+        print(f"\n🔄 Processing {symbol} ({len(symbol_data)} rows)")
+
+        close_prices = symbol_data['close']
+        high_prices = symbol_data['high']
+        low_prices = symbol_data['low']
+        volumes = symbol_data['volume']
+
+        rsi_series = calculate_rsi(close_prices)
+        macd_line, macd_signal, macd_hist = calculate_macd(close_prices)
+        stoch_k, stoch_d = calculate_stochastic(high_prices, low_prices, close_prices)
+        obv_series = calculate_obv(close_prices, volumes)
+        ema_20 = calculate_ema(close_prices, 20)
+        sma_20 = calculate_sma(close_prices, 20)
+        bb_upper, bb_middle, bb_lower = calculate_bollinger_bands(close_prices)
+        atr_series = calculate_atr(high_prices, low_prices, close_prices)
+        avg_volume = volumes.rolling(20).mean()
+        vwap = (close_prices * volumes).cumsum() / volumes.cumsum()
+
+        symbol_data['rsi'] = rsi_series
+        symbol_data['bb_upper'] = bb_upper
+        symbol_data['bb_middle'] = bb_middle
+        symbol_data['bb_lower'] = bb_lower
+
+        market_regime = detect_market_regime(close_prices)
+        print(f"   📊 Market regime: {market_regime}")
+
+        row_count = 0
+        last_detected_idx = {}
+        step = 1 if len(symbol_data) < 500 else 2
+
+        for idx in range(50, len(symbol_data), step):
+            detected_patterns = detect_all_patterns(symbol_data, idx)
+
+            if not detected_patterns:
+                continue
+
+            row = symbol_data.iloc[idx]
+            indicator_values = {
+                'rsi': rsi_series.iloc[idx] if idx < len(rsi_series) else 50,
+                'macd': macd_line.iloc[idx] if idx < len(macd_line) else 0,
+                'macd_signal': macd_signal.iloc[idx] if idx < len(macd_signal) else 0,
+                'stoch_k': stoch_k.iloc[idx] if idx < len(stoch_k) else 50,
+                'stoch_d': stoch_d.iloc[idx] if idx < len(stoch_d) else 50,
+                'obv': obv_series.iloc[idx] if idx < len(obv_series) else 0,
+                'atr': atr_series.iloc[idx] if idx < len(atr_series) else row['close'] * 0.02,
+                'ema_20': ema_20.iloc[idx] if idx < len(ema_20) else row['close'],
+                'sma_20': sma_20.iloc[idx] if idx < len(sma_20) else row['close'],
+                'volume': volumes.iloc[idx],
+                'avg_volume': avg_volume.iloc[idx] if idx < len(avg_volume) else volumes.iloc[idx],
+                'rsi_divergence': 'None',
+                'macd_divergence': 'None',
+            }
+
+            pattern_high, pattern_low = row['high'], row['low']
+            real_sequence = close_prices.iloc[max(0, idx-30):idx+1].values
+
+            for pattern_name in detected_patterns[:5]:  # Limit per index
+                if pattern_name not in all_patterns:
+                    continue
+
+                # ✅ প্যাটার্ন লিমিট চেক
+                global_pattern_count = pattern_counts[pattern_name]
+                symbol_pattern_count = symbol_pattern_counts[symbol][pattern_name]
+
+                if global_pattern_count >= MAX_EXAMPLES_PER_PATTERN * NUM_VARIATIONS:
+                    continue
+
+                if symbol_pattern_count >= MAX_EXAMPLES_PER_PATTERN:
+                    continue
+
+                config = all_patterns[pattern_name]
+                metrics = calculate_pattern_metrics(real_sequence, pattern_high, pattern_low, row['close'])
+
+                is_elliott = pattern_name in get_elliott_wave_patterns()
+
+                if is_elliott:
+                    text = generate_elliott_wave_data(symbol, row, pattern_name, config, indicator_values, metrics, 0, symbol_data, idx)
+                else:
+                    text = generate_complete_pattern_data(symbol, row, pattern_name, config, indicator_values, metrics, 0, symbol_data, idx)
+
+                if text:
+                    training_data.append(text)
+                    pattern_counts[pattern_name] += 1
+                    symbol_pattern_counts[symbol][pattern_name] += 1
+                    row_count += 1
+                    print(f"   ✅ Generated {pattern_name}")
+
+                    if row_count >= MAX_PER_SYMBOL:
+                        break
+
+            if row_count >= MAX_PER_SYMBOL:
+                break
+
+        print(f"   📈 {symbol}: Generated {row_count} examples")
+        symbols_processed += 1
+
+        if symbols_processed >= MAX_SYMBOLS:
+            break
+
+    # ✅ প্যাটার্ন কভারেজ রিপোর্ট
+    print("\n" + "="*80)
+    print("📊 PATTERN COVERAGE REPORT:")
+    print("="*80)
+    covered_patterns = len(pattern_counts)
+    fully_covered = sum(1 for p, c in pattern_counts.items() if c >= MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS)
+    print(f"   Total Patterns: {TOTAL_PATTERNS}")
+    print(f"   Patterns with examples: {covered_patterns} ({covered_patterns/TOTAL_PATTERNS*100:.1f}%)")
+    print(f"   Fully covered (≥{MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS}): {fully_covered}")
+
+    low_coverage = [(p, c) for p, c in pattern_counts.items() if c < MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS]
+    if low_coverage:
+        print(f"\n   ⚠️ Low coverage patterns (<{MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS} examples):")
+        for p, c in sorted(low_coverage, key=lambda x: x[1])[:10]:
+            print(f"      - {p}: {c} examples")
+    print("="*80)
+
+    output_file = "./csv/training_texts.txt"
+    os.makedirs("./csv", exist_ok=True)
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(training_data))
+
+    print(f"\n📊 Training data saved: {output_file}")
+    print(f"   Total examples: {len(training_data)}")
+
+    if elliott_backtester:
+        print(elliott_backtester.get_performance_report())
+
+    print("\n" + "="*80)
+    print("📤 NEXT STEPS:")
+    print("="*80)
+    print("1. Upload training_texts.txt to Hugging Face dataset")
+    print("2. Then retrain your LLM: python scripts/llm_train.py")
+    print("="*80)
+
+
+if __name__ == "__main__":
+    ma
+
+
+
+
