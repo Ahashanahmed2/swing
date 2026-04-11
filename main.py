@@ -56,7 +56,8 @@ scripts = [
     
     "scripts/generate_pattern_training_data_complete.py",
     "scripts/llm_train.py",
-    
+    "
+    "scripts/fix_and_train_missing_symbol.py",
 ]
 
 for script in scripts:
