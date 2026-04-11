@@ -43,193 +43,71 @@ except ImportError:
     print("⚠️ fastdtw not installed. Pattern similarity disabled.")
 
 # =========================================================
-# TRAINING CONFIGURATION - AUTO (সব প্যাটার্ন + সব সিম্বল)
+# TRAINING CONFIGURATION - AUTO
 # =========================================================
 
-# ✅ অটো ডিটেক্ট MAX_SYMBOLS
 try:
     df_temp = pd.read_csv('./csv/mongodb.csv')
     MAX_SYMBOLS = df_temp['symbol'].nunique()
     print(f"✅ Auto-detected {MAX_SYMBOLS} symbols from mongodb.csv")
 except:
-    MAX_SYMBOLS = 396  # Fallback
+    MAX_SYMBOLS = 396
     print(f"⚠️ Using fallback: {MAX_SYMBOLS} symbols")
 
-# ✅ TOTAL_PATTERNS পরে main() এ সেট হবে
 TOTAL_PATTERNS = None
+MIN_EXAMPLES_PER_PATTERN = 5
+MAX_EXAMPLES_PER_PATTERN = 10
+NUM_VARIATIONS = 4
+MAX_PER_SYMBOL = None
+MAX_EXAMPLES_PER_RUN = 100000
 
-# ✅ প্যাটার্ন কভারেজ কনফিগ
-MIN_EXAMPLES_PER_PATTERN = 5      # প্রতি প্যাটার্ন কমপক্ষে ৫টি examples
-MAX_EXAMPLES_PER_PATTERN = 10     # প্রতি প্যাটার্ন সর্বোচ্চ ১০টি
-
-# ✅ VARIATION কনফিগ
-NUM_VARIATIONS = 3                # প্রতি প্যাটার্নের ৩টি variation (main এ ওভাররাইড হবে)
-
-# ✅ MAX_PER_SYMBOL হবে অটো ক্যালকুলেটেড
-MAX_PER_SYMBOL = None             # main() এ TOTAL_PATTERNS * MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS
-
-# Time control
-MAX_EXAMPLES_PER_RUN = 50000      # Max examples to generate (prevents timeout)
-
-# Elliott Wave Configuration
 ELLIOTT_LOOKBACK = 300
 SWING_WINDOW = 5
 HT_SWING_WINDOW = 20
 
-# Fibonacci Levels
 FIB_RETRACEMENT = [0.236, 0.382, 0.5, 0.618, 0.786]
 FIB_EXTENSION = [1.272, 1.618, 2.0, 2.618, 4.236]
 
-# Global Trackers
 generated_patterns_tracker = defaultdict(lambda: defaultdict(int))
 elliott_wave_tracker = defaultdict(list)
 mistake_log = []
-
-# Elliott Wave Backtester Instance
 elliott_backtester = None
 
 # =========================================================
-# 🎯 PRIORITY-BASED TRAINING CONFIGURATION (LLM অপ্টিমাইজড)
+# PRIORITY-BASED TRAINING CONFIGURATION (NEW)
 # =========================================================
 
-# বেস কনফিগারেশন
-BASE_MIN_EXAMPLES = 50      # বেস মিনিমাম examples per pattern
-BASE_MAX_EXAMPLES = 100     # বেস ম্যাক্সিমাম examples per pattern
+BASE_MIN_EXAMPLES = 50
+BASE_MAX_EXAMPLES = 100
 
-# ✅ প্যাটার্ন টাইপ অনুযায়ী মাল্টিপ্লায়ার
 PATTERN_PRIORITY = {
-    # Elliott Wave Patterns (সবচেয়ে জটিল) - 3.0x
-    'Impulse Wave': 3.0,
-    'Leading Diagonal': 3.0,
-    'Ending Diagonal': 3.0,
-    '3rd Wave Extension': 3.0,
-    '5th Wave Extension': 3.0,
-    'Single Zigzag': 3.0,
-    'Double Zigzag': 3.0,
-    'Regular Flat': 3.0,
-    'Expanded Flat': 3.0,
-    'Contracting Triangle': 3.0,
-    'Expanding Triangle': 3.0,
-    
-    # SMC/Smart Money Patterns (খুব জটিল) - 2.5x
-    'Break of Structure (BOS)': 2.5,
-    'Bullish Order Block': 2.5,
-    'Bearish Order Block': 2.5,
-    'Fair Value Gap (FVG)': 2.5,
-    'Optimal Trade Entry (OTE)': 2.5,
-    
-    # Divergence Patterns (মিডিয়াম জটিল) - 2.0x
-    'RSI Divergence': 2.0,
-    'MACD Divergence': 2.0,
-    'Hidden Divergence': 2.0,
-    
-    # Candlestick Patterns (সহজ কিন্তু গুরুত্বপূর্ণ) - 1.5x
-    'Hammer': 1.5,
-    'Shooting Star': 1.5,
-    'Doji': 1.5,
-    'Engulfing': 1.5,
-    'Bullish Engulfing': 1.5,
-    'Morning Star': 1.5,
-    'Evening Star': 1.5,
-    'Three White Soldiers': 1.5,
-    'Three Black Crows': 1.5,
-    'Piercing Line': 1.5,
-    
-    # Basic Chart Patterns (সহজ) - 1.0x
-    'Cup and Handle': 1.0,
-    'Double Bottom': 1.0,
-    'Head and Shoulders': 1.0,
-    'Bull Flag': 1.0,
-    'Ascending Triangle': 1.0,
-    'Descending Triangle': 1.0,
-    'Symmetrical Triangle': 1.0,
-    'Rounding Bottom': 1.0,
-    
-    # Volume/Volatility Patterns - 1.2x
-    'Volume Climax': 1.2,
-    'Bollinger Band Squeeze': 1.2,
+    'Impulse Wave': 3.0, 'Leading Diagonal': 3.0, 'Ending Diagonal': 3.0,
+    '3rd Wave Extension': 3.0, '5th Wave Extension': 3.0, 'Single Zigzag': 3.0,
+    'Double Zigzag': 3.0, 'Regular Flat': 3.0, 'Expanded Flat': 3.0,
+    'Contracting Triangle': 3.0, 'Expanding Triangle': 3.0,
+    'Break of Structure (BOS)': 2.5, 'Bullish Order Block': 2.5,
+    'Bearish Order Block': 2.5, 'Fair Value Gap (FVG)': 2.5,
+    'Optimal Trade Entry (OTE)': 2.5, 'Liquidity Sweep': 2.5,
+    'Change of Character (CHoCH)': 2.5, 'Breaker Block': 2.5,
+    'Mitigation Block': 2.5, 'Rejection Block': 2.5,
+    'RSI Divergence': 2.0, 'MACD Divergence': 2.0, 'Hidden Divergence': 2.0,
+    'Hammer': 1.5, 'Shooting Star': 1.5, 'Doji': 1.5, 'Engulfing': 1.5,
+    'Bullish Engulfing': 1.5, 'Morning Star': 1.5, 'Evening Star': 1.5,
+    'Three White Soldiers': 1.5, 'Three Black Crows': 1.5, 'Piercing Line': 1.5,
+    'Cup and Handle': 1.0, 'Double Bottom': 1.0, 'Head and Shoulders': 1.0,
+    'Bull Flag': 1.0, 'Ascending Triangle': 1.0, 'Descending Triangle': 1.0,
+    'Symmetrical Triangle': 1.0, 'Rounding Bottom': 1.0,
+    'Volume Climax': 1.2, 'Bollinger Band Squeeze': 1.2,
 }
-
-# ডিফল্ট মাল্টিপ্লায়ার (যে প্যাটার্ন লিস্টে নেই)
 DEFAULT_PRIORITY = 1.0
 
-# =========================================================
-# SAFETY HELPER FUNCTIONS
-# =========================================================
-
-def safe_divide(a, b, default=0.0):
-    """Safe division with default value"""
-    try:
-        if b == 0 or np.isnan(a) or np.isnan(b):
-            return default
-        result = a / b
-        if np.isnan(result) or np.isinf(result):
-            return default
-        return result
-    except:
-        return default
-
-def safe_mean(arr, default=0.0):
-    """Safe mean calculation"""
-    try:
-        if arr is None or len(arr) == 0:
-            return default
-        arr = np.array(arr)
-        arr = arr[~np.isnan(arr)]
-        if len(arr) == 0:
-            return default
-        return float(np.mean(arr))
-    except:
-        return default
-
-def safe_max(arr, default=0.0):
-    """Safe max calculation"""
-    try:
-        if arr is None or len(arr) == 0:
-            return default
-        arr = np.array(arr)
-        arr = arr[~np.isnan(arr)]
-        if len(arr) == 0:
-            return default
-        return float(np.max(arr))
-    except:
-        return default
-
-def safe_min(arr, default=0.0):
-    """Safe min calculation"""
-    try:
-        if arr is None or len(arr) == 0:
-            return default
-        arr = np.array(arr)
-        arr = arr[~np.isnan(arr)]
-        if len(arr) == 0:
-            return default
-        return float(np.min(arr))
-    except:
-        return default
-
-def clean_array(arr):
-    """Remove NaN and Inf from array"""
-    try:
-        arr = np.array(arr)
-        arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
-        return arr
-    except:
-        return np.array([])
-
-# =========================================================
-# PATTERN PRIORITY HELPER FUNCTIONS
-# =========================================================
-
 def get_pattern_limits(pattern_name):
-    """প্যাটার্ন অনুযায়ী min/max examples ক্যালকুলেট করে"""
     multiplier = PATTERN_PRIORITY.get(pattern_name, DEFAULT_PRIORITY)
     min_examples = int(BASE_MIN_EXAMPLES * multiplier)
     max_examples = int(BASE_MAX_EXAMPLES * multiplier)
     return min_examples, max_examples, multiplier
 
 def get_pattern_category(pattern_name):
-    """প্যাটার্নের ক্যাটাগরি রিটার্ন করে"""
     if pattern_name in ['Impulse Wave', 'Leading Diagonal', 'Ending Diagonal', 
                         '3rd Wave Extension', '5th Wave Extension', 'Single Zigzag',
                         'Double Zigzag', 'Regular Flat', 'Expanded Flat',
@@ -237,7 +115,9 @@ def get_pattern_category(pattern_name):
         return 'Elliott Wave'
     elif pattern_name in ['Break of Structure (BOS)', 'Bullish Order Block', 
                           'Bearish Order Block', 'Fair Value Gap (FVG)', 
-                          'Optimal Trade Entry (OTE)']:
+                          'Optimal Trade Entry (OTE)', 'Liquidity Sweep',
+                          'Change of Character (CHoCH)', 'Breaker Block',
+                          'Mitigation Block', 'Rejection Block']:
         return 'SMC'
     elif 'Divergence' in pattern_name:
         return 'Divergence'
@@ -249,12 +129,66 @@ def get_pattern_category(pattern_name):
         return 'Basic'
 
 # =========================================================
+# SAFETY HELPER FUNCTIONS
+# =========================================================
+
+def safe_divide(a, b, default=0.0):
+    try:
+        if b == 0 or np.isnan(a) or np.isnan(b): return default
+        result = a / b
+        if np.isnan(result) or np.isinf(result): return default
+        return result
+    except: return default
+
+def safe_mean(arr, default=0.0):
+    try:
+        if arr is None or len(arr) == 0: return default
+        arr = np.array(arr)
+        arr = arr[~np.isnan(arr)]
+        if len(arr) == 0: return default
+        return float(np.mean(arr))
+    except: return default
+
+def safe_max(arr, default=0.0):
+    try:
+        if arr is None or len(arr) == 0: return default
+        arr = np.array(arr)
+        arr = arr[~np.isnan(arr)]
+        if len(arr) == 0: return default
+        return float(np.max(arr))
+    except: return default
+
+def safe_min(arr, default=0.0):
+    try:
+        if arr is None or len(arr) == 0: return default
+        arr = np.array(arr)
+        arr = arr[~np.isnan(arr)]
+        if len(arr) == 0: return default
+        return float(np.min(arr))
+    except: return default
+
+def clean_array(arr):
+    try:
+        arr = np.array(arr)
+        arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+        return arr
+    except: return np.array([])
+
+def fill_na_series(series, method='ffill'):
+    try:
+        if isinstance(series, pd.Series):
+            return series.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        else:
+            arr = np.array(series)
+            arr = np.nan_to_num(arr, nan=0.0)
+            return arr
+    except: return series
+
+# =========================================================
 # ELLIOTT WAVE BACKTESTER CLASS
 # =========================================================
 
 class ElliottWaveBacktester:
-    """Track Elliott Wave prediction accuracy"""
-
     def __init__(self):
         self.predictions = []
         self.results = []
@@ -263,7 +197,6 @@ class ElliottWaveBacktester:
         self.load_history()
 
     def load_history(self):
-        """Load previous backtest history"""
         if os.path.exists(self.backtest_file):
             try:
                 with open(self.backtest_file, 'r') as f:
@@ -271,11 +204,9 @@ class ElliottWaveBacktester:
                     self.predictions = data.get('predictions', [])
                     self.results = data.get('results', [])
                     self.accuracy_log = data.get('accuracy_log', [])
-            except:
-                pass
+            except: pass
 
     def save_history(self):
-        """Save backtest history"""
         os.makedirs("./csv", exist_ok=True)
         with open(self.backtest_file, 'w') as f:
             json.dump({
@@ -285,67 +216,40 @@ class ElliottWaveBacktester:
             }, f, indent=2)
 
     def add_prediction(self, symbol, date, predicted_wave, predicted_target, current_price):
-        """Add a prediction for tracking"""
         pred_id = len(self.predictions)
-
         self.predictions.append({
-            'id': pred_id,
-            'symbol': symbol,
-            'date': str(date)[:10],
+            'id': pred_id, 'symbol': symbol, 'date': str(date)[:10],
             'predicted_wave': predicted_wave,
             'predicted_target': float(predicted_target) if not np.isnan(predicted_target) else float(current_price),
             'current_price': float(current_price) if not np.isnan(current_price) else 100.0,
             'timestamp': datetime.now().isoformat()
         })
-
         self.save_history()
         return pred_id
 
     def verify_prediction(self, pred_id, actual_future_price):
-        """Verify a previous prediction"""
-        if pred_id >= len(self.predictions):
-            return None
-
+        if pred_id >= len(self.predictions): return None
         pred = self.predictions[pred_id]
-        if actual_future_price <= 0 or np.isnan(actual_future_price):
-            return None
+        if actual_future_price <= 0 or np.isnan(actual_future_price): return None
         error = abs(pred['predicted_target'] - actual_future_price) / actual_future_price
         accurate = error < 0.05
-
-        result = {
-            'prediction_id': pred_id,
-            'symbol': pred['symbol'],
-            'date': pred['date'],
-            'accurate': accurate,
-            'error_percent': error * 100
-        }
-
+        result = {'prediction_id': pred_id, 'symbol': pred['symbol'], 'date': pred['date'],
+                  'accurate': accurate, 'error_percent': error * 100}
         self.results.append(result)
-
         total = len(self.results)
         accurate_count = sum(1 for r in self.results if r['accurate'])
         accuracy = safe_divide(accurate_count, total) * 100 if total > 0 else 0
-
-        self.accuracy_log.append({
-            'total_predictions': total,
-            'accuracy': accuracy,
-            'date': datetime.now().isoformat()
-        })
-
+        self.accuracy_log.append({'total_predictions': total, 'accuracy': accuracy, 'date': datetime.now().isoformat()})
         self.save_history()
         return result
 
     def get_performance_report(self):
-        """Get overall performance report"""
-        if not self.results:
-            return "No predictions verified yet"
-
+        if not self.results: return "No predictions verified yet"
         total = len(self.results)
         accurate = sum(1 for r in self.results if r['accurate'])
         avg_error = safe_mean([r['error_percent'] for r in self.results], 0)
         recent_10 = self.results[-10:] if len(self.results) >= 10 else self.results
         recent_accuracy = sum(1 for r in recent_10 if r['accurate']) / len(recent_10) * 100 if recent_10 else 0
-
         return f"""
 📊 ELLIOTT WAVE PERFORMANCE REPORT:
 ────────────────────────────────────────────────────────────────────────────────
@@ -355,7 +259,6 @@ Accuracy Rate: {accurate/total*100:.1f}%
 Average Error: {avg_error:.2f}%
 Recent Accuracy (Last {len(recent_10)}): {recent_accuracy:.1f}%
 """
-
 
 # =========================================================
 # SIMPLE BACKTESTER CLASS
@@ -368,13 +271,10 @@ class SimpleBacktester:
         self.equity_curve = []
 
     def run_backtest(self, symbol_data, signals):
-        """Run backtest on historical data with given signals"""
         capital = self.initial_capital
         position = 0
-
         for i, (idx, row) in enumerate(symbol_data.iterrows()):
             signal = signals[i] if i < len(signals) else 'HOLD'
-
             if signal == 'BUY' and position == 0:
                 if row['close'] > 0 and not np.isnan(row['close']):
                     position = capital / row['close']
@@ -385,819 +285,374 @@ class SimpleBacktester:
                     capital = position * row['close']
                     position = 0
                     self.trades.append({'type': 'SELL', 'price': row['close'], 'date': row['date']})
-
             equity = capital + (position * row['close'] if position > 0 else 0)
-            if not np.isnan(equity):
-                self.equity_curve.append(equity)
-
+            if not np.isnan(equity): self.equity_curve.append(equity)
         return self.get_performance()
 
     def get_performance(self):
         if len(self.equity_curve) == 0:
             return {'total_return': 0, 'total_trades': 0, 'win_rate': 0, 'equity_curve': []}
-
         total_return = (self.equity_curve[-1] - self.initial_capital) / self.initial_capital * 100
         winning_trades = sum(1 for i in range(1, len(self.trades), 2) if i < len(self.trades) and self.trades[i]['price'] > self.trades[i-1]['price'])
         total_trades = len(self.trades) // 2
-
-        return {
-            'total_return': total_return,
-            'total_trades': total_trades,
-            'win_rate': winning_trades / total_trades * 100 if total_trades > 0 else 0,
-            'equity_curve': self.equity_curve[-50:] if len(self.equity_curve) >= 50 else self.equity_curve
-        }
-
+        return {'total_return': total_return, 'total_trades': total_trades,
+                'win_rate': winning_trades / total_trades * 100 if total_trades > 0 else 0,
+                'equity_curve': self.equity_curve[-50:] if len(self.equity_curve) >= 50 else self.equity_curve}
 
 # =========================================================
-# PRICE ACTION TOOLS - TREND LINES, RAY, PARALLEL CHANNEL
+# PRICE ACTION TOOLS
 # =========================================================
 
 def calculate_trend_line(highs, lows, closes, lookback=50):
-    """Calculate dynamic trend lines based on swing points"""
-    highs = clean_array(highs)
-    lows = clean_array(lows)
-    closes = clean_array(closes)
-    
-    if len(highs) < lookback:
-        return None
-
-    recent_highs = highs[-lookback:]
-    recent_lows = lows[-lookback:]
-    recent_closes = closes[-lookback:]
-
-    swing_highs = []
-    swing_lows = []
-    swing_high_indices = []
-    swing_low_indices = []
-
+    highs, lows, closes = clean_array(highs), clean_array(lows), clean_array(closes)
+    if len(highs) < lookback: return None
+    recent_highs, recent_lows, recent_closes = highs[-lookback:], lows[-lookback:], closes[-lookback:]
+    swing_highs, swing_lows, swing_high_indices, swing_low_indices = [], [], [], []
     for i in range(2, len(recent_highs) - 2):
         if i-2 >= 0 and i+3 <= len(recent_highs):
             if recent_highs[i] == max(recent_highs[i-2:i+3]):
-                swing_highs.append(recent_highs[i])
-                swing_high_indices.append(i)
+                swing_highs.append(recent_highs[i]); swing_high_indices.append(i)
         if i-2 >= 0 and i+3 <= len(recent_lows):
             if recent_lows[i] == min(recent_lows[i-2:i+3]):
-                swing_lows.append(recent_lows[i])
-                swing_low_indices.append(i)
-
-    trend_lines = {
-        'support_lines': [],
-        'resistance_lines': [],
-        'current_support': None,
-        'current_resistance': None,
-        'channel': None
-    }
-
+                swing_lows.append(recent_lows[i]); swing_low_indices.append(i)
+    trend_lines = {'support_lines': [], 'resistance_lines': [], 'current_support': None, 'current_resistance': None}
     if len(swing_lows) >= 2:
-        for i in range(len(swing_lows) - 1):
-            for j in range(i + 1, len(swing_lows)):
+        for i in range(len(swing_lows)-1):
+            for j in range(i+1, len(swing_lows)):
                 x1, y1 = swing_low_indices[i], swing_lows[i]
                 x2, y2 = swing_low_indices[j], swing_lows[j]
-
                 if x2 > x1 and x2 - x1 > 0:
                     slope = (y2 - y1) / (x2 - x1)
-                    intercept = y1 - slope * x1
-
-                    valid = True
-                    touch_count = 0
-                    for k in range(x1, min(x2 + 20, len(recent_lows))):
-                        expected = slope * k + intercept
-                        if recent_lows[k] < expected * 0.99:
-                            valid = False
-                            break
-                        if expected > 0 and abs(recent_lows[k] - expected) / expected < 0.01:
-                            touch_count += 1
-
+                    valid, touch_count = True, 0
+                    for k in range(x1, min(x2+20, len(recent_lows))):
+                        expected = slope * k + y1 - slope * x1
+                        if recent_lows[k] < expected * 0.99: valid = False; break
+                        if expected > 0 and abs(recent_lows[k] - expected) / expected < 0.01: touch_count += 1
                     if valid and touch_count >= 2:
-                        current_level = slope * (len(recent_lows) - 1) + intercept
+                        current_level = slope * (len(recent_lows)-1) + y1 - slope * x1
                         trend_lines['support_lines'].append({
-                            'start_price': float(y1),
-                            'end_price': float(y2),
-                            'current_level': float(current_level),
-                            'slope': float(slope),
-                            'type': 'SUPPORT',
-                            'strength': 'STRONG' if touch_count >= 3 else 'MODERATE',
-                            'touches': touch_count
-                        })
-
+                            'start_price': float(y1), 'end_price': float(y2), 'current_level': float(current_level),
+                            'slope': float(slope), 'type': 'SUPPORT',
+                            'strength': 'STRONG' if touch_count >= 3 else 'MODERATE', 'touches': touch_count})
     if len(swing_highs) >= 2:
-        for i in range(len(swing_highs) - 1):
-            for j in range(i + 1, len(swing_highs)):
+        for i in range(len(swing_highs)-1):
+            for j in range(i+1, len(swing_highs)):
                 x1, y1 = swing_high_indices[i], swing_highs[i]
                 x2, y2 = swing_high_indices[j], swing_highs[j]
-
                 if x2 > x1 and x2 - x1 > 0:
                     slope = (y2 - y1) / (x2 - x1)
-                    intercept = y1 - slope * x1
-
-                    valid = True
-                    touch_count = 0
-                    for k in range(x1, min(x2 + 20, len(recent_highs))):
-                        expected = slope * k + intercept
-                        if recent_highs[k] > expected * 1.01:
-                            valid = False
-                            break
-                        if expected > 0 and abs(recent_highs[k] - expected) / expected < 0.01:
-                            touch_count += 1
-
+                    valid, touch_count = True, 0
+                    for k in range(x1, min(x2+20, len(recent_highs))):
+                        expected = slope * k + y1 - slope * x1
+                        if recent_highs[k] > expected * 1.01: valid = False; break
+                        if expected > 0 and abs(recent_highs[k] - expected) / expected < 0.01: touch_count += 1
                     if valid and touch_count >= 2:
-                        current_level = slope * (len(recent_highs) - 1) + intercept
+                        current_level = slope * (len(recent_highs)-1) + y1 - slope * x1
                         trend_lines['resistance_lines'].append({
-                            'start_price': float(y1),
-                            'end_price': float(y2),
-                            'current_level': float(current_level),
-                            'slope': float(slope),
-                            'type': 'RESISTANCE',
-                            'strength': 'STRONG' if touch_count >= 3 else 'MODERATE',
-                            'touches': touch_count
-                        })
-
-    current_price = float(recent_closes[-1]) if len(recent_closes) > 0 else 0.0
-    if current_price <= 0:
-        current_price = 100.0
-
+                            'start_price': float(y1), 'end_price': float(y2), 'current_level': float(current_level),
+                            'slope': float(slope), 'type': 'RESISTANCE',
+                            'strength': 'STRONG' if touch_count >= 3 else 'MODERATE', 'touches': touch_count})
+    current_price = float(recent_closes[-1]) if len(recent_closes) > 0 else 100.0
     if trend_lines['support_lines']:
         supports_below = [s for s in trend_lines['support_lines'] if s['current_level'] < current_price]
-        if supports_below:
-            trend_lines['current_support'] = max(supports_below, key=lambda x: x['current_level'])
-
+        if supports_below: trend_lines['current_support'] = max(supports_below, key=lambda x: x['current_level'])
     if trend_lines['resistance_lines']:
         resistances_above = [r for r in trend_lines['resistance_lines'] if r['current_level'] > current_price]
-        if resistances_above:
-            trend_lines['current_resistance'] = min(resistances_above, key=lambda x: x['current_level'])
-
+        if resistances_above: trend_lines['current_resistance'] = min(resistances_above, key=lambda x: x['current_level'])
     return trend_lines
 
-
 def calculate_parallel_channel(trend_lines, current_price):
-    """Create parallel channel from trend line"""
-    if not trend_lines or current_price <= 0 or np.isnan(current_price):
-        return None
-
+    if not trend_lines or current_price <= 0 or np.isnan(current_price): return None
     channels = []
-
     if trend_lines.get('current_support'):
-        support = trend_lines['current_support']
-        slope = support.get('slope', 0)
-        support_level = support.get('current_level', current_price * 0.95)
-        
-        if support_level <= 0:
-            support_level = current_price * 0.95
-
+        s = trend_lines['current_support']
+        support_level = s.get('current_level', current_price * 0.95)
+        if support_level <= 0: support_level = current_price * 0.95
         channel_top = current_price * 1.05
-
-        channel = {
-            'type': 'ASCENDING' if slope > 0 else 'DESCENDING' if slope < 0 else 'HORIZONTAL',
-            'support_line': support_level,
-            'support_slope': slope,
-            'mid_line': support_level + (channel_top - support_level) / 2,
-            'channel_top': channel_top,
+        channels.append({
+            'type': 'ASCENDING' if s.get('slope', 0) > 0 else 'DESCENDING' if s.get('slope', 0) < 0 else 'HORIZONTAL',
+            'support_line': support_level, 'support_slope': s.get('slope', 0),
+            'mid_line': support_level + (channel_top - support_level) / 2, 'channel_top': channel_top,
             'width': channel_top - support_level,
             'width_percent': safe_divide(channel_top - support_level, support_level) * 100,
             'position': 'UPPER' if current_price > support_level + (channel_top - support_level) * 0.7 else
-                       'LOWER' if current_price < support_level + (channel_top - support_level) * 0.3 else
-                       'MIDDLE'
-        }
-        channels.append(channel)
-
+                       'LOWER' if current_price < support_level + (channel_top - support_level) * 0.3 else 'MIDDLE'})
     if trend_lines.get('current_resistance'):
-        resistance = trend_lines['current_resistance']
-        slope = resistance.get('slope', 0)
-        resistance_level = resistance.get('current_level', current_price * 1.05)
-        
-        if resistance_level <= 0:
-            resistance_level = current_price * 1.05
-
+        r = trend_lines['current_resistance']
+        resistance_level = r.get('current_level', current_price * 1.05)
+        if resistance_level <= 0: resistance_level = current_price * 1.05
         channel_bottom = current_price * 0.95
-
-        channel = {
-            'type': 'ASCENDING' if slope > 0 else 'DESCENDING' if slope < 0 else 'HORIZONTAL',
-            'resistance_line': resistance_level,
-            'resistance_slope': slope,
-            'mid_line': channel_bottom + (resistance_level - channel_bottom) / 2,
-            'channel_bottom': channel_bottom,
+        channels.append({
+            'type': 'ASCENDING' if r.get('slope', 0) > 0 else 'DESCENDING' if r.get('slope', 0) < 0 else 'HORIZONTAL',
+            'resistance_line': resistance_level, 'resistance_slope': r.get('slope', 0),
+            'mid_line': channel_bottom + (resistance_level - channel_bottom) / 2, 'channel_bottom': channel_bottom,
             'width': resistance_level - channel_bottom,
             'width_percent': safe_divide(resistance_level - channel_bottom, channel_bottom) * 100,
             'position': 'UPPER' if current_price > channel_bottom + (resistance_level - channel_bottom) * 0.7 else
-                       'LOWER' if current_price < channel_bottom + (resistance_level - channel_bottom) * 0.3 else
-                       'MIDDLE'
-        }
-        channels.append(channel)
-
+                       'LOWER' if current_price < channel_bottom + (resistance_level - channel_bottom) * 0.3 else 'MIDDLE'})
     return channels if channels else None
 
-
 def calculate_ray_lines(symbol_data, lookback=100):
-    """Calculate Ray lines (extended trend lines into future)"""
-    if symbol_data is None:
-        return None
-        
-    closes = clean_array(symbol_data['close'].values)
-    highs = clean_array(symbol_data['high'].values)
-    lows = clean_array(symbol_data['low'].values)
-
-    if len(closes) < lookback:
-        return None
-
-    recent_highs = highs[-lookback:]
-    recent_lows = lows[-lookback:]
+    if symbol_data is None: return None
+    closes, highs, lows = clean_array(symbol_data['close'].values), clean_array(symbol_data['high'].values), clean_array(symbol_data['low'].values)
+    if len(closes) < lookback: return None
+    recent_highs, recent_lows = highs[-lookback:], lows[-lookback:]
     current_price = closes[-1] if len(closes) > 0 else 100.0
-
-    rays = []
-
-    pivot_highs = []
-    pivot_lows = []
-
-    for i in range(5, len(recent_highs) - 5):
+    rays, pivot_highs, pivot_lows = [], [], []
+    for i in range(5, len(recent_highs)-5):
         if i-5 >= 0 and i+6 <= len(recent_highs):
-            if recent_highs[i] == max(recent_highs[i-5:i+6]):
-                pivot_highs.append((i, recent_highs[i]))
-    for i in range(5, len(recent_lows) - 5):
+            if recent_highs[i] == max(recent_highs[i-5:i+6]): pivot_highs.append((i, recent_highs[i]))
+    for i in range(5, len(recent_lows)-5):
         if i-5 >= 0 and i+6 <= len(recent_lows):
-            if recent_lows[i] == min(recent_lows[i-5:i+6]):
-                pivot_lows.append((i, recent_lows[i]))
-
+            if recent_lows[i] == min(recent_lows[i-5:i+6]): pivot_lows.append((i, recent_lows[i]))
     if len(pivot_lows) >= 2:
-        for i in range(len(pivot_lows) - 1):
-            for j in range(i + 1, len(pivot_lows)):
+        for i in range(len(pivot_lows)-1):
+            for j in range(i+1, len(pivot_lows)):
                 if pivot_lows[j][1] > pivot_lows[i][1]:
-                    x1, y1 = pivot_lows[i]
-                    x2, y2 = pivot_lows[j]
+                    x1, y1 = pivot_lows[i]; x2, y2 = pivot_lows[j]
                     if x2 > x1:
                         slope = (y2 - y1) / (x2 - x1)
-
-                        future_steps = [5, 10, 20, 50]
                         projections = {}
-                        for step in future_steps:
+                        for step in [5, 10, 20, 50]:
                             future_x = len(recent_lows) + step
-                            future_y = slope * (future_x - x1) + y1
-                            projections[f'{step}_days'] = float(future_y)
-
-                        rays.append({
-                            'type': 'BULLISH_RAY',
-                            'start_price': float(y1),
-                            'current_support': float(slope * (len(recent_lows) - 1 - x1) + y1),
-                            'slope': float(slope),
-                            'projections': projections,
-                            'angle': float(np.degrees(np.arctan(slope)))
-                        })
-
+                            projections[f'{step}_days'] = float(slope * (future_x - x1) + y1)
+                        rays.append({'type': 'BULLISH_RAY', 'start_price': float(y1),
+                                     'current_support': float(slope * (len(recent_lows)-1 - x1) + y1),
+                                     'slope': float(slope), 'projections': projections,
+                                     'angle': float(np.degrees(np.arctan(slope)))})
     if len(pivot_highs) >= 2:
-        for i in range(len(pivot_highs) - 1):
-            for j in range(i + 1, len(pivot_highs)):
+        for i in range(len(pivot_highs)-1):
+            for j in range(i+1, len(pivot_highs)):
                 if pivot_highs[j][1] < pivot_highs[i][1]:
-                    x1, y1 = pivot_highs[i]
-                    x2, y2 = pivot_highs[j]
+                    x1, y1 = pivot_highs[i]; x2, y2 = pivot_highs[j]
                     if x2 > x1:
                         slope = (y2 - y1) / (x2 - x1)
-
-                        future_steps = [5, 10, 20, 50]
                         projections = {}
-                        for step in future_steps:
+                        for step in [5, 10, 20, 50]:
                             future_x = len(recent_highs) + step
-                            future_y = slope * (future_x - x1) + y1
-                            projections[f'{step}_days'] = float(future_y)
-
-                        rays.append({
-                            'type': 'BEARISH_RAY',
-                            'start_price': float(y1),
-                            'current_resistance': float(slope * (len(recent_highs) - 1 - x1) + y1),
-                            'slope': float(slope),
-                            'projections': projections,
-                            'angle': float(np.degrees(np.arctan(slope)))
-                        })
-
+                            projections[f'{step}_days'] = float(slope * (future_x - x1) + y1)
+                        rays.append({'type': 'BEARISH_RAY', 'start_price': float(y1),
+                                     'current_resistance': float(slope * (len(recent_highs)-1 - x1) + y1),
+                                     'slope': float(slope), 'projections': projections,
+                                     'angle': float(np.degrees(np.arctan(slope)))})
     return rays if rays else None
 
-
 def calculate_trend_based_fib_extension(symbol_data, lookback=100):
-    """Trend-based Fibonacci extension levels"""
-    if symbol_data is None:
-        return None
-        
-    closes = clean_array(symbol_data['close'].values)
-    highs = clean_array(symbol_data['high'].values)
-    lows = clean_array(symbol_data['low'].values)
-
-    if len(closes) < lookback:
-        return None
-
-    recent_lows = lows[-lookback:]
-    recent_highs = highs[-lookback:]
-
-    swing_low = safe_min(recent_lows, 0)
-    swing_high = safe_max(recent_highs, 0)
-    
-    if swing_low <= 0 or swing_high <= 0:
-        return None
-        
+    if symbol_data is None: return None
+    closes, highs, lows = clean_array(symbol_data['close'].values), clean_array(symbol_data['high'].values), clean_array(symbol_data['low'].values)
+    if len(closes) < lookback: return None
+    recent_lows, recent_highs = lows[-lookback:], highs[-lookback:]
+    swing_low, swing_high = safe_min(recent_lows, 0), safe_max(recent_highs, 0)
+    if swing_low <= 0 or swing_high <= 0: return None
     swing_low_idx = np.argmin(recent_lows) if len(recent_lows) > 0 else 0
     swing_high_idx = np.argmax(recent_highs) if len(recent_highs) > 0 else 0
-
     current_price = closes[-1] if len(closes) > 0 else 0.0
     is_uptrend = swing_high_idx > swing_low_idx
-
-    fib_levels = {
-        'trend': 'UPTREND' if is_uptrend else 'DOWNTREND',
-        'swing_low': float(swing_low),
-        'swing_high': float(swing_high),
-        'retracement': {},
-        'extension': {},
-        'projection': {}
-    }
-
+    fib_levels = {'trend': 'UPTREND' if is_uptrend else 'DOWNTREND', 'swing_low': float(swing_low),
+                  'swing_high': float(swing_high), 'retracement': {}, 'extension': {}}
     range_size = swing_high - swing_low
-    if range_size <= 0:
-        return None
-
+    if range_size <= 0: return None
     if is_uptrend:
-        for fib in FIB_RETRACEMENT:
-            level = swing_high - range_size * fib
-            fib_levels['retracement'][f'{fib:.3f}'] = float(level)
-
-        for fib in FIB_EXTENSION:
-            level = swing_low + range_size * fib
-            fib_levels['extension'][f'{fib:.3f}'] = float(level)
+        for fib in FIB_RETRACEMENT: fib_levels['retracement'][f'{fib:.3f}'] = float(swing_high - range_size * fib)
+        for fib in FIB_EXTENSION: fib_levels['extension'][f'{fib:.3f}'] = float(swing_low + range_size * fib)
     else:
-        for fib in FIB_RETRACEMENT:
-            level = swing_low + range_size * fib
-            fib_levels['retracement'][f'{fib:.3f}'] = float(level)
-
-        for fib in FIB_EXTENSION:
-            level = swing_high - range_size * fib
-            fib_levels['extension'][f'{fib:.3f}'] = float(level)
-
+        for fib in FIB_RETRACEMENT: fib_levels['retracement'][f'{fib:.3f}'] = float(swing_low + range_size * fib)
+        for fib in FIB_EXTENSION: fib_levels['extension'][f'{fib:.3f}'] = float(swing_high - range_size * fib)
     current_zone = None
     for level_name, price in fib_levels['retracement'].items():
         if is_uptrend:
-            if current_price <= price:
-                current_zone = f'Below {level_name} retracement'
-                break
+            if current_price <= price: current_zone = f'Below {level_name} retracement'; break
         else:
-            if current_price >= price:
-                current_zone = f'Above {level_name} retracement'
-                break
-
+            if current_price >= price: current_zone = f'Above {level_name} retracement'; break
     fib_levels['current_zone'] = current_zone if current_zone else 'Between retracement levels'
-
     return fib_levels
 
-
 def calculate_fixed_range_volume_profile(symbol_data, lookback=100, num_bins=20):
-    """Fixed Range Volume Profile"""
-    if symbol_data is None or len(symbol_data) < lookback:
-        return None
-
-    closes = clean_array(symbol_data['close'].values)
-    volumes = clean_array(symbol_data['volume'].values)
-    highs = clean_array(symbol_data['high'].values)
-    lows = clean_array(symbol_data['low'].values)
-
-    if len(closes) < lookback:
-        return None
-
-    recent_closes = closes[-lookback:]
-    recent_volumes = volumes[-lookback:]
-    recent_highs = highs[-lookback:]
-    recent_lows = lows[-lookback:]
-
+    if symbol_data is None or len(symbol_data) < lookback: return None
+    closes, volumes, highs, lows = clean_array(symbol_data['close'].values), clean_array(symbol_data['volume'].values), clean_array(symbol_data['high'].values), clean_array(symbol_data['low'].values)
+    if len(closes) < lookback: return None
+    recent_closes, recent_volumes = closes[-lookback:], volumes[-lookback:]
+    recent_highs, recent_lows = highs[-lookback:], lows[-lookback:]
     valid_mask = ~(np.isnan(recent_closes) | np.isnan(recent_volumes) | np.isnan(recent_highs) | np.isnan(recent_lows))
-    if np.sum(valid_mask) < 10:
-        return None
-        
-    recent_closes = recent_closes[valid_mask]
-    recent_volumes = recent_volumes[valid_mask]
-    recent_highs = recent_highs[valid_mask]
-    recent_lows = recent_lows[valid_mask]
-
-    range_high = safe_max(recent_highs, 0)
-    range_low = safe_min(recent_lows, 0)
+    if np.sum(valid_mask) < 10: return None
+    recent_closes, recent_volumes = recent_closes[valid_mask], recent_volumes[valid_mask]
+    recent_highs, recent_lows = recent_highs[valid_mask], recent_lows[valid_mask]
+    range_high, range_low = safe_max(recent_highs, 0), safe_min(recent_lows, 0)
     range_size = range_high - range_low
-    
-    if range_size <= 0:
-        return None
-        
+    if range_size <= 0: return None
     bin_size = range_size / num_bins
-    if bin_size <= 0:
-        return None
-
+    if bin_size <= 0: return None
     volume_by_price = defaultdict(float)
-
     for i in range(len(recent_closes)):
-        price = recent_closes[i]
-        vol = recent_volumes[i]
-        
-        if price <= 0 or vol <= 0:
-            continue
-
+        price, vol = recent_closes[i], recent_volumes[i]
+        if price <= 0 or vol <= 0: continue
         bin_idx = int((price - range_low) / bin_size)
-        bin_idx = max(0, min(num_bins - 1, bin_idx))
+        bin_idx = max(0, min(num_bins-1, bin_idx))
         bin_center = range_low + (bin_idx + 0.5) * bin_size
-
         volume_by_price[float(bin_center)] += float(vol)
-
-    if not volume_by_price:
-        return None
-        
+    if not volume_by_price: return None
     poc = max(volume_by_price, key=volume_by_price.get) if volume_by_price else None
     total_volume = sum(volume_by_price.values())
-    
-    if total_volume <= 0:
-        return None
-
+    if total_volume <= 0: return None
     sorted_bins = sorted(volume_by_price.items(), key=lambda x: x[1], reverse=True)
-    cumulative_vol = 0
-    value_area_bins = []
-
+    cumulative_vol, value_area_bins = 0, []
     for price, vol in sorted_bins:
-        cumulative_vol += vol
-        value_area_bins.append(price)
-        if cumulative_vol >= total_volume * 0.7:
-            break
-
+        cumulative_vol += vol; value_area_bins.append(price)
+        if cumulative_vol >= total_volume * 0.7: break
     vah = max(value_area_bins) if value_area_bins else range_high
     val = min(value_area_bins) if value_area_bins else range_low
-
     current_price = float(recent_closes[-1]) if len(recent_closes) > 0 else 0.0
-
-    return {
-        'range_high': float(range_high),
-        'range_low': float(range_low),
-        'poc': float(poc) if poc is not None else None,
-        'value_area_high': float(vah),
-        'value_area_low': float(val),
-        'current_position': 'ABOVE_VA' if current_price > vah else 'BELOW_VA' if current_price < val else 'IN_VA',
-        'volume_profile': dict(sorted(volume_by_price.items())),
-        'total_volume': float(total_volume)
-    }
-
+    return {'range_high': float(range_high), 'range_low': float(range_low), 'poc': float(poc) if poc else None,
+            'value_area_high': float(vah), 'value_area_low': float(val),
+            'current_position': 'ABOVE_VA' if current_price > vah else 'BELOW_VA' if current_price < val else 'IN_VA',
+            'volume_profile': dict(sorted(volume_by_price.items())), 'total_volume': float(total_volume)}
 
 def predict_price_from_trend_lines(trend_lines, current_price, days_forward=10):
-    """Predict future price based on trend lines and channels"""
-    if not trend_lines or current_price <= 0:
-        return None
-
+    if not trend_lines or current_price <= 0: return None
     predictions = []
-
     if trend_lines.get('current_support'):
-        support = trend_lines['current_support']
-        current_level = support.get('current_level', current_price)
-
-        if current_level > 0 and current_price < current_level * 1.02:
-            predictions.append({
-                'type': 'BOUNCE_FROM_SUPPORT',
-                'expected_direction': 'UP',
-                'target': float(current_level + (current_level * 0.05)),
-                'invalidation': float(current_level * 0.98),
-                'confidence': 'HIGH' if support.get('strength') == 'STRONG' else 'MEDIUM'
-            })
-
+        s = trend_lines['current_support']; level = s.get('current_level', current_price)
+        if level > 0 and current_price < level * 1.02:
+            predictions.append({'type': 'BOUNCE_FROM_SUPPORT', 'expected_direction': 'UP',
+                                'target': float(level * 1.05), 'invalidation': float(level * 0.98),
+                                'confidence': 'HIGH' if s.get('strength') == 'STRONG' else 'MEDIUM'})
     if trend_lines.get('current_resistance'):
-        resistance = trend_lines['current_resistance']
-        current_level = resistance.get('current_level', current_price)
-
-        if current_level > 0 and current_price > current_level * 0.98:
-            predictions.append({
-                'type': 'REJECTION_FROM_RESISTANCE',
-                'expected_direction': 'DOWN',
-                'target': float(current_level * 0.95),
-                'invalidation': float(current_level * 1.02),
-                'confidence': 'HIGH' if resistance.get('strength') == 'STRONG' else 'MEDIUM'
-            })
-
-    if trend_lines.get('current_resistance'):
-        resistance = trend_lines['current_resistance']
-        current_level = resistance.get('current_level', current_price)
-        if current_level > 0 and current_price > current_level * 1.01:
-            predictions.append({
-                'type': 'BULLISH_BREAKOUT',
-                'expected_direction': 'UP',
-                'target': float(current_price * 1.05),
-                'invalidation': float(current_level),
-                'confidence': 'HIGH'
-            })
-
+        r = trend_lines['current_resistance']; level = r.get('current_level', current_price)
+        if level > 0 and current_price > level * 0.98:
+            predictions.append({'type': 'REJECTION_FROM_RESISTANCE', 'expected_direction': 'DOWN',
+                                'target': float(level * 0.95), 'invalidation': float(level * 1.02),
+                                'confidence': 'HIGH' if r.get('strength') == 'STRONG' else 'MEDIUM'})
+        if level > 0 and current_price > level * 1.01:
+            predictions.append({'type': 'BULLISH_BREAKOUT', 'expected_direction': 'UP',
+                                'target': float(current_price * 1.05), 'invalidation': float(level), 'confidence': 'HIGH'})
     if trend_lines.get('current_support'):
-        support = trend_lines['current_support']
-        current_level = support.get('current_level', current_price)
-        if current_level > 0 and current_price < current_level * 0.99:
-            predictions.append({
-                'type': 'BEARISH_BREAKDOWN',
-                'expected_direction': 'DOWN',
-                'target': float(current_price * 0.95),
-                'invalidation': float(current_level),
-                'confidence': 'HIGH'
-            })
-
+        s = trend_lines['current_support']; level = s.get('current_level', current_price)
+        if level > 0 and current_price < level * 0.99:
+            predictions.append({'type': 'BEARISH_BREAKDOWN', 'expected_direction': 'DOWN',
+                                'target': float(current_price * 0.95), 'invalidation': float(level), 'confidence': 'HIGH'})
     return predictions if predictions else None
 
-
 def analyze_price_action_complete(symbol_data, idx, lookback=100):
-    """Complete Price Action Analysis with all tools"""
-    
-    if symbol_data is None or idx is None:
-        return "Insufficient data for Price Action analysis.", None, None, None, None, None, None
-        
-    if idx < 0 or idx >= len(symbol_data):
-        return "Invalid index for Price Action analysis.", None, None, None, None, None, None
-
-    closes = clean_array(symbol_data['close'].values)
-    highs = clean_array(symbol_data['high'].values)
-    lows = clean_array(symbol_data['low'].values)
-    
-    if len(closes) == 0:
-        return "Insufficient data for Price Action analysis.", None, None, None, None, None, None
-        
-    current_price = float(closes[-1]) if len(closes) > 0 else 0.0
-    if current_price <= 0:
-        current_price = 100.0
-
-    if len(closes) < 50:
-        return "Insufficient data for Price Action analysis.", None, None, None, None, None, None
-
+    if symbol_data is None or idx is None: return "Insufficient data.", None, None, None, None, None, None
+    if idx < 0 or idx >= len(symbol_data): return "Invalid index.", None, None, None, None, None, None
+    closes, highs, lows = clean_array(symbol_data['close'].values), clean_array(symbol_data['high'].values), clean_array(symbol_data['low'].values)
+    if len(closes) == 0: return "Insufficient data.", None, None, None, None, None, None
+    current_price = float(closes[-1]) if len(closes) > 0 else 100.0
+    if len(closes) < 50: return "Insufficient data.", None, None, None, None, None, None
     trend_lines = calculate_trend_line(highs, lows, closes, min(lookback, len(closes)))
     channels = calculate_parallel_channel(trend_lines, current_price) if trend_lines else None
     rays = calculate_ray_lines(symbol_data, min(lookback, len(closes)))
     fib_ext = calculate_trend_based_fib_extension(symbol_data, min(lookback, len(closes)))
-
-    try:
-        vol_profile = calculate_fixed_range_volume_profile(symbol_data, min(lookback, len(closes)))
-    except Exception:
-        vol_profile = None
-
+    try: vol_profile = calculate_fixed_range_volume_profile(symbol_data, min(lookback, len(closes)))
+    except: vol_profile = None
     predictions = predict_price_from_trend_lines(trend_lines, current_price) if trend_lines else None
-
-    report = """
-📐 PRICE ACTION COMPLETE ANALYSIS:
-================================================================================
-"""
-
+    report = "\n📐 PRICE ACTION COMPLETE ANALYSIS:\n" + "="*80 + "\n"
     if trend_lines:
-        report += """
-📏 TREND LINES:
-────────────────────────────────────────────────────────────────────────────────
-"""
+        report += "\n📏 TREND LINES:\n" + "─"*80 + "\n"
         if trend_lines.get('current_support'):
             s = trend_lines['current_support']
-            report += f"""
-🔹 SUPPORT TREND LINE:
-   Current Level: {s['current_level']:.2f}
-   Slope: {s['slope']:.4f} ({'ASCENDING' if s['slope'] > 0 else 'DESCENDING'})
-   Strength: {s['strength']} ({s['touches']} touches)
-"""
-
+            report += f"\n🔹 SUPPORT: Level={s['current_level']:.2f} Slope={s['slope']:.4f} Strength={s['strength']}\n"
         if trend_lines.get('current_resistance'):
             r = trend_lines['current_resistance']
-            report += f"""
-🔸 RESISTANCE TREND LINE:
-   Current Level: {r['current_level']:.2f}
-   Slope: {r['slope']:.4f} ({'ASCENDING' if r['slope'] > 0 else 'DESCENDING'})
-   Strength: {r['strength']} ({r['touches']} touches)
-"""
-
+            report += f"\n🔸 RESISTANCE: Level={r['current_level']:.2f} Slope={r['slope']:.4f} Strength={r['strength']}\n"
     if channels:
-        report += """
-📊 PARALLEL CHANNELS:
-────────────────────────────────────────────────────────────────────────────────
-"""
+        report += "\n📊 PARALLEL CHANNELS:\n" + "─"*80 + "\n"
         for i, ch in enumerate(channels[:2]):
-            report += f"""
-🔹 CHANNEL {i+1} ({ch['type']}):
-   Support: {ch.get('support_line', ch.get('channel_bottom', 0)):.2f}
-   Resistance: {ch.get('channel_top', ch.get('resistance_line', 0)):.2f}
-   Mid Line: {ch['mid_line']:.2f}
-   Width: {ch['width']:.2f} ({ch['width_percent']:.1f}%)
-   Position: {ch['position']}
-"""
-
+            report += f"\n🔹 CHANNEL {i+1}: {ch['type']} | Support: {ch.get('support_line', ch.get('channel_bottom', 0)):.2f} | Resistance: {ch.get('channel_top', ch.get('resistance_line', 0)):.2f}\n"
     if rays:
-        report += """
-🔆 RAY LINES (Future Projections):
-────────────────────────────────────────────────────────────────────────────────
-"""
+        report += "\n🔆 RAY LINES:\n" + "─"*80 + "\n"
         for ray in rays[:3]:
-            report += f"""
-🔹 {ray['type']}:
-   Current Level: {ray.get('current_support', ray.get('current_resistance', 0)):.2f}
-   Slope: {ray['slope']:.4f}
-   Angle: {ray['angle']:.1f}°
-"""
-            if ray.get('projections'):
-                report += "   Future Projections:\n"
-                for period, price in ray['projections'].items():
-                    report += f"      • {period}: {price:.2f}\n"
-
+            report += f"\n🔹 {ray['type']}: Level={ray.get('current_support', ray.get('current_resistance', 0)):.2f} Angle={ray['angle']:.1f}°\n"
     if fib_ext:
-        report += f"""
-📐 TREND-BASED FIBONACCI EXTENSION:
-────────────────────────────────────────────────────────────────────────────────
-Trend: {fib_ext['trend']}
-Swing Low: {fib_ext['swing_low']:.2f}
-Swing High: {fib_ext['swing_high']:.2f}
-Current Zone: {fib_ext['current_zone']}
-
-Retracement Levels:
-"""
-        for level, price in fib_ext['retracement'].items():
-            report += f"   • {level}: {price:.2f}\n"
-
-        report += "\nExtension Targets:\n"
-        for level, price in fib_ext['extension'].items():
-            report += f"   • {level}: {price:.2f}\n"
-
+        report += f"\n📐 FIBONACCI: {fib_ext['trend']} | Swing: {fib_ext['swing_low']:.2f}-{fib_ext['swing_high']:.2f} | Zone: {fib_ext['current_zone']}\n"
     if vol_profile:
-        report += f"""
-📊 FIXED RANGE VOLUME PROFILE:
-────────────────────────────────────────────────────────────────────────────────
-Range: {vol_profile['range_low']:.2f} - {vol_profile['range_high']:.2f}
-POC (Point of Control): {vol_profile['poc']:.2f if vol_profile['poc'] else 'N/A'}
-Value Area: {vol_profile['value_area_low']:.2f} - {vol_profile['value_area_high']:.2f}
-Current Position: {vol_profile['current_position']}
-Total Volume: {vol_profile['total_volume']:,.0f}
-"""
-
+        report += f"\n📊 VOLUME PROFILE: Range={vol_profile['range_low']:.2f}-{vol_profile['range_high']:.2f} | POC={vol_profile['poc']:.2f if vol_profile['poc'] else 'N/A'} | Position={vol_profile['current_position']}\n"
     if predictions:
-        report += """
-🎯 PRICE PREDICTIONS (Based on Price Action):
-────────────────────────────────────────────────────────────────────────────────
-"""
+        report += "\n🎯 PREDICTIONS:\n" + "─"*80 + "\n"
         for pred in predictions:
-            report += f"""
-🔹 {pred['type']}:
-   Direction: {pred['expected_direction']}
-   Target: {pred['target']:.2f}
-   Invalidation: {pred['invalidation']:.2f}
-   Confidence: {pred['confidence']}
-"""
-
-    report += """
-================================================================================
-"""
-
+            report += f"\n🔹 {pred['type']}: {pred['expected_direction']} | Target={pred['target']:.2f} | Confidence={pred['confidence']}\n"
+    report += "\n" + "="*80 + "\n"
     return report, trend_lines, channels, rays, fib_ext, vol_profile, predictions
 
-
 # =========================================================
-# NEW FUNCTIONS - FIXED RANGE LIQUIDITY, GAP ANALYSIS, ETC.
+# NEW FUNCTIONS - LIQUIDITY, GAP, VOLATILITY, Z-SCORE, LSTM, RISK
 # =========================================================
 
 def detect_fixed_range_liquidity(symbol_data, lookback=200):
-    """Fixed Range Liquidity Levels based on volume"""
-    if symbol_data is None:
-        return None
-        
-    closes = clean_array(symbol_data['close'].values)
-    volumes = clean_array(symbol_data['volume'].values)
-
-    if len(closes) < lookback:
-        return None
-
+    if symbol_data is None: return None
+    closes, volumes = clean_array(symbol_data['close'].values), clean_array(symbol_data['volume'].values)
+    if len(closes) < lookback: return None
     volume_by_price = {}
     for price, vol in zip(closes[-lookback:], volumes[-lookback:]):
-        if price <= 0:
-            continue
+        if price <= 0: continue
         price_level = round(price, -1)
         volume_by_price[price_level] = volume_by_price.get(price_level, 0) + vol
-
-    if not volume_by_price:
-        return None
-        
+    if not volume_by_price: return None
     sorted_levels = sorted(volume_by_price.items(), key=lambda x: x[1], reverse=True)
     current_price = float(closes[-1]) if len(closes) > 0 else 0.0
-
-    return {
-        'highest_liquidity': float(sorted_levels[0][0]) if sorted_levels else None,
-        'liquidity_levels': [(float(k), float(v)) for k, v in sorted_levels[:5]],
-        'current_position': 'ABOVE' if current_price > sorted_levels[0][0] else 'BELOW' if sorted_levels else 'UNKNOWN'
-    }
-
+    return {'highest_liquidity': float(sorted_levels[0][0]) if sorted_levels else None,
+            'liquidity_levels': [(float(k), float(v)) for k, v in sorted_levels[:5]],
+            'current_position': 'ABOVE' if current_price > sorted_levels[0][0] else 'BELOW' if sorted_levels else 'UNKNOWN'}
 
 def analyze_gaps(symbol_data, idx):
-    """Gap up/down analysis and fill probability"""
-    if symbol_data is None or idx < 1:
-        return None
-
+    if symbol_data is None or idx < 1: return None
     prev_close = symbol_data['close'].iloc[idx-1]
     curr_open = symbol_data['open'].iloc[idx]
-    
-    if prev_close <= 0:
-        return None
-
+    if prev_close <= 0: return None
     gap_pct = (curr_open - prev_close) / prev_close * 100
-
-    if abs(gap_pct) < 0.5:
-        return {'type': 'NO_GAP', 'gap_percent': 0.0, 'fill_probability': 0, 'expected_fill_days': 0}
-
+    if abs(gap_pct) < 0.5: return {'type': 'NO_GAP', 'gap_percent': 0.0, 'fill_probability': 0, 'expected_fill_days': 0}
     historical_gaps = []
     for i in range(max(20, idx-100), idx):
         prev_c = symbol_data['close'].iloc[i-1]
         curr_o = symbol_data['open'].iloc[i]
         if prev_c > 0:
             gap = (curr_o - prev_c) / prev_c * 100
-
             if abs(gap) > 0.5:
                 filled = False
                 for j in range(i, min(i+10, idx)):
-                    if (gap > 0 and symbol_data['low'].iloc[j] <= prev_c) or \
-                       (gap < 0 and symbol_data['high'].iloc[j] >= prev_c):
-                        filled = True
-                        break
+                    if (gap > 0 and symbol_data['low'].iloc[j] <= prev_c) or (gap < 0 and symbol_data['high'].iloc[j] >= prev_c):
+                        filled = True; break
                 historical_gaps.append(filled)
-
     fill_prob = sum(historical_gaps) / len(historical_gaps) * 100 if historical_gaps else 70
-
-    return {
-        'type': 'GAP_UP' if gap_pct > 0 else 'GAP_DOWN',
-        'gap_percent': float(gap_pct),
-        'fill_probability': float(fill_prob),
-        'expected_fill_days': 3 if abs(gap_pct) < 1 else 7
-    }
-
+    return {'type': 'GAP_UP' if gap_pct > 0 else 'GAP_DOWN', 'gap_percent': float(gap_pct),
+            'fill_probability': float(fill_prob), 'expected_fill_days': 3 if abs(gap_pct) < 1 else 7}
 
 def analyze_volatility_skew(symbol_data):
-    """Volatility skew - term structure"""
-    if symbol_data is None:
-        return None
-        
+    if symbol_data is None: return None
     returns = symbol_data['close'].pct_change().dropna()
     returns = clean_array(returns.values)
-
-    if len(returns) < 60:
-        return None
-
+    if len(returns) < 60: return None
     vol_5d = safe_divide(np.std(returns[-5:]) * np.sqrt(252), 1, 0) * 100 if len(returns) >= 5 else 0
     vol_20d = safe_divide(np.std(returns[-20:]) * np.sqrt(252), 1, 0) * 100 if len(returns) >= 20 else 0
-
     term_structure = 'CONTANGO' if vol_20d > vol_5d else 'BACKWARDATION'
-
-    return {
-        'vol_5d': float(vol_5d),
-        'vol_20d': float(vol_20d),
-        'term_structure': term_structure,
-        'signal': 'BULLISH' if term_structure == 'CONTANGO' else 'CAUTION'
-    }
-
+    return {'vol_5d': float(vol_5d), 'vol_20d': float(vol_20d), 'term_structure': term_structure,
+            'signal': 'BULLISH' if term_structure == 'CONTANGO' else 'CAUTION'}
 
 def calculate_zscore_signals(symbol_data, lookback=50):
-    """Z-Score for mean reversion trades"""
-    if symbol_data is None:
-        return None
-        
+    if symbol_data is None: return None
     closes = clean_array(symbol_data['close'].values)
-
-    if len(closes) < lookback:
-        return None
-
+    if len(closes) < lookback: return None
     sma = safe_mean(closes[-lookback:], 0)
     std = safe_divide(np.std(closes[-lookback:]), 1, 1)
-
     current_price = float(closes[-1]) if len(closes) > 0 else 0.0
     zscore = (current_price - sma) / std if std > 0 else 0
-
-    return {
-        'zscore': float(zscore),
-        'signal': 'OVERSOLD' if zscore < -2 else 'OVERBOUGHT' if zscore > 2 else 'NEUTRAL',
-        'mean_reversion_target': float(sma),
-        'confidence': float(min(95, abs(zscore) * 20))
-    }
-
+    return {'zscore': float(zscore), 'signal': 'OVERSOLD' if zscore < -2 else 'OVERBOUGHT' if zscore > 2 else 'NEUTRAL',
+            'mean_reversion_target': float(sma), 'confidence': float(min(95, abs(zscore) * 20))}
 
 def predict_price_lstm(symbol_data, lookback=50, forecast=5):
-    """LSTM-based price prediction (Simulated)"""
-    if symbol_data is None:
-        return None
-        
+    if symbol_data is None: return None
     closes = clean_array(symbol_data['close'].values)
-
-    if len(closes) < lookback:
-        return None
-
+    if len(closes) < lookback: return None
     recent_closes = closes[-lookback:]
-
     x = np.arange(len(recent_closes))
-    try:
-        slope, intercept = np.polyfit(x, recent_closes, 1)
-    except:
-        slope, intercept = 0, safe_mean(recent_closes, 100)
-
-    predictions = []
-    for i in range(1, forecast+1):
-        pred = slope * (len(recent_closes) + i) + intercept
-        predictions.append(float(pred))
-
-    return {
-        'method': 'LSTM (Simulated)',
-        'forecast_days': forecast,
-        'predictions': predictions,
-        'trend': 'UP' if slope > 0 else 'DOWN',
-        'confidence': float(min(80, abs(slope) * 100))
-    }
-
+    try: slope, intercept = np.polyfit(x, recent_closes, 1)
+    except: slope, intercept = 0, safe_mean(recent_closes, 100)
+    predictions = [float(slope * (len(recent_closes) + i) + intercept) for i in range(1, forecast+1)]
+    return {'method': 'LSTM (Simulated)', 'forecast_days': forecast, 'predictions': predictions,
+            'trend': 'UP' if slope > 0 else 'DOWN', 'confidence': float(min(80, abs(slope) * 100))}
 
 def detect_all_candlestick_patterns(df, idx):
-    """Complete candlestick pattern library"""
     patterns = []
-
     if detect_hammer(df, idx): patterns.append('Hammer')
     if detect_shooting_star(df, idx): patterns.append('Shooting Star')
     if detect_doji(df, idx): patterns.append('Doji')
@@ -1213,2511 +668,75 @@ def detect_all_candlestick_patterns(df, idx):
     if detect_three_white_soldiers(df, idx): patterns.append('Three White Soldiers')
     if detect_three_black_crows(df, idx): patterns.append('Three Black Crows')
     if detect_three_inside_up_down(df, idx): patterns.append('Three Inside Up/Down')
-    if detect_abandoned_baby(df, idx): patterns.append('Abandoned Baby Ugc')
-
+    if detect_abandoned_baby(df, idx): patterns.append('Abandoned Baby')
     return patterns
 
-
 def calculate_risk_metrics(symbol_data, risk_free_rate=0.04):
-    """Comprehensive risk metrics"""
-    if symbol_data is None:
-        return None
-        
+    if symbol_data is None: return None
     returns = symbol_data['close'].pct_change().dropna()
     returns = clean_array(returns.values)
-
-    if len(returns) < 50:
-        return None
-
+    if len(returns) < 50: return None
     var_95 = np.percentile(returns, 5) * 100
     cvar_95 = safe_mean(returns[returns <= np.percentile(returns, 5)], 0) * 100
-
     excess_returns = returns - risk_free_rate/252
     std_returns = np.std(returns)
     sharpe = np.sqrt(252) * safe_mean(excess_returns, 0) / std_returns if std_returns > 0 else 0
-
     downside_returns = returns[returns < 0]
     downside_std = np.std(downside_returns) if len(downside_returns) > 0 else 1
     sortino = np.sqrt(252) * safe_mean(returns, 0) / downside_std if downside_std > 0 else 0
-
     cumulative = (1 + returns).cumprod()
     running_max = cumulative.expanding().max()
     drawdown = (cumulative - running_max) / running_max
     max_dd = safe_min(drawdown, 0) * 100
-
-    return {
-        'var_95': float(var_95),
-        'cvar_95': float(cvar_95),
-        'sharpe_ratio': float(sharpe),
-        'sortino_ratio': float(sortino),
-        'max_drawdown': float(max_dd),
-        'risk_level': 'HIGH' if var_95 < -3 else 'MEDIUM' if var_95 < -1.5 else 'LOW'
-    }
-
+    return {'var_95': float(var_95), 'cvar_95': float(cvar_95), 'sharpe_ratio': float(sharpe),
+            'sortino_ratio': float(sortino), 'max_drawdown': float(max_dd),
+            'risk_level': 'HIGH' if var_95 < -3 else 'MEDIUM' if var_95 < -1.5 else 'LOW'}
 
 def detect_supply_demand_zones(df, idx, lookback=100):
-    """Fresh vs Tested Supply/Demand zones"""
-    if df is None or idx < lookback:
-        return None
-
-    highs = clean_array(df['high'].values[-lookback:])
-    lows = clean_array(df['low'].values[-lookback:])
-
+    if df is None or idx < lookback: return None
+    highs, lows = clean_array(df['high'].values[-lookback:]), clean_array(df['low'].values[-lookback:])
     zones = []
     current_price = float(df['close'].iloc[idx]) if not np.isnan(df['close'].iloc[idx]) else 100.0
-
     for i in range(20, len(highs)-10):
         if i+5 <= len(highs) and i+5 <= len(lows):
-            range_high = safe_max(highs[i:i+5], current_price)
-            range_low = safe_min(lows[i:i+5], current_price)
-
+            range_high, range_low = safe_max(highs[i:i+5], current_price), safe_min(lows[i:i+5], current_price)
             if range_low > 0 and (range_high - range_low) / range_low < 0.02:
                 prev_move = highs[i-1] - lows[i-5] if i >= 5 else 0
-
                 if prev_move > 0:
-                    zones.append({
-                        'type': 'DEMAND_ZONE' if i+5 < len(highs) and highs[i+5] > range_high else 'SUPPLY_ZONE',
-                        'level_high': float(range_high),
-                        'level_low': float(range_low),
-                        'freshness': 'FRESH' if current_price > range_high else 'TESTED',
-                        'strength': 'STRONG' if i > 50 else 'MODERATE'
-                    })
-
+                    zones.append({'type': 'DEMAND_ZONE' if i+5 < len(highs) and highs[i+5] > range_high else 'SUPPLY_ZONE',
+                                  'level_high': float(range_high), 'level_low': float(range_low),
+                                  'freshness': 'FRESH' if current_price > range_high else 'TESTED',
+                                  'strength': 'STRONG' if i > 50 else 'MODERATE'})
     return zones[:5] if zones else None
 
-
 def calculate_anchored_vwap(symbol_data, anchor_date_idx):
-    """VWAP anchored to specific event"""
-    if symbol_data is None or anchor_date_idx >= len(symbol_data):
-        return None
-
+    if symbol_data is None or anchor_date_idx >= len(symbol_data): return None
     anchored_data = symbol_data.iloc[anchor_date_idx:]
-
-    if len(anchored_data) < 2:
-        return None
-
+    if len(anchored_data) < 2: return None
     prices = (anchored_data['high'] + anchored_data['low'] + anchored_data['close']) / 3
     volumes = clean_array(anchored_data['volume'].values)
-
     vwap_series = (prices * volumes).cumsum() / volumes.cumsum()
     vwap_series = vwap_series.replace([np.inf, -np.inf], np.nan).fillna(method='ffill').fillna(0)
-
     current_price = float(symbol_data['close'].iloc[-1]) if len(symbol_data) > 0 else 0.0
     vwap_value = float(vwap_series.iloc[-1]) if len(vwap_series) > 0 and not np.isnan(vwap_series.iloc[-1]) else current_price
-
-    if vwap_value <= 0:
-        vwap_value = current_price
-
-    return {
-        'anchored_vwap': vwap_value,
-        'deviation': safe_divide(current_price - vwap_value, vwap_value) * 100,
-        'position': 'ABOVE' if current_price > vwap_value else 'BELOW',
-        'signal': 'BULLISH' if current_price > vwap_value and len(vwap_series) >= 2 and current_price > vwap_series.iloc[-2] else 'BEARISH'
-    }
-
+    if vwap_value <= 0: vwap_value = current_price
+    return {'anchored_vwap': vwap_value, 'deviation': safe_divide(current_price - vwap_value, vwap_value) * 100,
+            'position': 'ABOVE' if current_price > vwap_value else 'BELOW',
+            'signal': 'BULLISH' if current_price > vwap_value and len(vwap_series) >= 2 and current_price > vwap_series.iloc[-2] else 'BEARISH'}
 
 def simulate_order_book(symbol_data, idx):
-    """Simulated order book liquidity"""
-    if symbol_data is None or idx < 20:
-        return None
-
+    if symbol_data is None or idx < 20: return None
     current_price = float(symbol_data['close'].iloc[idx]) if not np.isnan(symbol_data['close'].iloc[idx]) else 100.0
-
     liquidity_levels = {
-        'bids': [
-            {'price': current_price * 0.998, 'size': random.randint(10000, 50000)},
-            {'price': current_price * 0.995, 'size': random.randint(20000, 100000)},
-            {'price': current_price * 0.990, 'size': random.randint(50000, 200000)}
-        ],
-        'asks': [
-            {'price': current_price * 1.002, 'size': random.randint(10000, 50000)},
-            {'price': current_price * 1.005, 'size': random.randint(20000, 100000)},
-            {'price': current_price * 1.010, 'size': random.randint(50000, 200000)}
-        ]
-    }
-
+        'bids': [{'price': current_price * 0.998, 'size': random.randint(10000, 50000)},
+                 {'price': current_price * 0.995, 'size': random.randint(20000, 100000)},
+                 {'price': current_price * 0.990, 'size': random.randint(50000, 200000)}],
+        'asks': [{'price': current_price * 1.002, 'size': random.randint(10000, 50000)},
+                 {'price': current_price * 1.005, 'size': random.randint(20000, 100000)},
+                 {'price': current_price * 1.010, 'size': random.randint(50000, 200000)}]}
     total_bids = sum(b['size'] for b in liquidity_levels['bids'])
     total_asks = sum(a['size'] for a in liquidity_levels['asks'])
-
-    return {
-        'liquidity_levels': liquidity_levels,
-        'bid_ask_ratio': safe_divide(total_bids, total_asks, 1),
-        'imbalance': 'BUY_PRESSURE' if total_bids > total_asks * 1.2 else 'SELL_PRESSURE' if total_asks > total_bids * 1.2 else 'BALANCED',
-        'nearest_support': float(liquidity_levels['bids'][0]['price']),
-        'nearest_resistance': float(liquidity_levels['asks'][0]['price'])
-    }
-
-
-# =========================================================
-# ADDITIONAL CANDLESTICK PATTERN DETECTIONS
-# =========================================================
-
-def detect_shooting_star(df, idx):
-    try:
-        row = df.iloc[idx]
-        body = abs(row['close'] - row['open'])
-        upper_wick = row['high'] - max(row['open'], row['close'])
-        lower_wick = min(row['open'], row['close']) - row['low']
-        return upper_wick > body * 2 and lower_wick < body * 0.3
-    except:
-        return False
-
-def detect_spinning_top(df, idx):
-    try:
-        row = df.iloc[idx]
-        body = abs(row['close'] - row['open'])
-        total_range = row['high'] - row['low']
-        return total_range > 0 and 0.1 < body / total_range < 0.3
-    except:
-        return False
-
-def detect_marubozu(df, idx):
-    try:
-        row = df.iloc[idx]
-        body = abs(row['close'] - row['open'])
-        upper_wick = row['high'] - max(row['open'], row['close'])
-        lower_wick = min(row['open'], row['close']) - row['low']
-        return body > 0 and upper_wick < body * 0.1 and lower_wick < body * 0.1
-    except:
-        return False
-
-def detect_engulfing(df, idx):
-    if idx < 1: return False
-    try:
-        prev = df.iloc[idx-1]
-        curr = df.iloc[idx]
-        return (prev['close'] < prev['open'] and curr['close'] > curr['open'] and 
-                curr['open'] < prev['close'] and curr['close'] > prev['open']) or \
-               (prev['close'] > prev['open'] and curr['close'] < curr['open'] and 
-                curr['open'] > prev['close'] and curr['close'] < prev['open'])
-    except:
-        return False
-
-def detect_harami(df, idx):
-    if idx < 1: return False
-    try:
-        prev = df.iloc[idx-1]
-        curr = df.iloc[idx]
-        prev_body = abs(prev['close'] - prev['open'])
-        curr_body = abs(curr['close'] - curr['open'])
-        return curr_body < prev_body * 0.5 and curr['high'] <= prev['high'] and curr['low'] >= prev['low']
-    except:
-        return False
-
-def detect_dark_cloud_cover(df, idx):
-    if idx < 1: return False
-    try:
-        prev = df.iloc[idx-1]
-        curr = df.iloc[idx]
-        return (prev['close'] > prev['open'] and 
-                curr['close'] < curr['open'] and
-                curr['open'] > prev['high'] and
-                curr['close'] < (prev['open'] + prev['close']) / 2)
-    except:
-        return False
-
-def detect_tweezer_top_bottom(df, idx):
-    if idx < 1: return False
-    try:
-        prev = df.iloc[idx-1]
-        curr = df.iloc[idx]
-        return abs(prev['high'] - curr['high']) < prev['high'] * 0.001 or \
-               abs(prev['low'] - curr['low']) < prev['low'] * 0.001
-    except:
-        return False
-
-def detect_evening_star(df, idx):
-    if idx < 2: return False
-    try:
-        c1 = df.iloc[idx-2]
-        c2 = df.iloc[idx-1]
-        c3 = df.iloc[idx]
-        return (c1['close'] > c1['open'] and
-                abs(c2['close'] - c2['open']) < (c2['high'] - c2['low']) * 0.3 and
-                c3['close'] < c3['open'] and
-                c3['close'] < (c1['open'] + c1['close']) / 2)
-    except:
-        return False
-
-def detect_three_black_crows(df, idx):
-    if idx < 2: return False
-    try:
-        c1 = df.iloc[idx-2]
-        c2 = df.iloc[idx-1]
-        c3 = df.iloc[idx]
-        return (c1['close'] < c1['open'] and
-                c2['close'] < c2['open'] and
-                c3['close'] < c3['open'] and
-                c2['close'] < c1['close'] and
-                c3['close'] < c2['close'])
-    except:
-        return False
-
-def detect_three_inside_up_down(df, idx):
-    if idx < 2: return False
-    try:
-        c1 = df.iloc[idx-2]
-        c2 = df.iloc[idx-1]
-        c3 = df.iloc[idx]
-        harami = abs(c2['close'] - c2['open']) < abs(c1['close'] - c1['open']) * 0.5
-        return harami and ((c1['close'] < c1['open'] and c3['close'] > c3['open'] and c3['close'] > c1['open']) or
-                           (c1['close'] > c1['open'] and c3['close'] < c3['open'] and c3['close'] < c1['open']))
-    except:
-        return False
-
-def detect_abandoned_baby(df, idx):
-    if idx < 2: return False
-    try:
-        c1 = df.iloc[idx-2]
-        c2 = df.iloc[idx-1]
-        c3 = df.iloc[idx]
-        gap_down = c2['high'] < c1['low'] and c2['high'] < c3['low']
-        gap_up = c2['low'] > c1['high'] and c2['low'] > c3['high']
-        doji = abs(c2['close'] - c2['open']) < (c2['high'] - c2['low']) * 0.1
-        return doji and (gap_down or gap_up)
-    except:
-        return False
-
-
-# =========================================================
-# INDICATOR CALCULATIONS
-# =========================================================
-
-def calculate_rsi(prices, period=14):
-    if len(prices) < period + 1:
-        return pd.Series([50] * len(prices), index=prices.index)
-    delta = prices.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    loss = loss.replace(0, np.nan)
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi.fillna(50)
-
-def calculate_rsi_series(prices, period=14):
-    if len(prices) < period + 1:
-        return np.full(len(prices), 50.0)
-    prices = clean_array(prices)
-    deltas = np.diff(prices)
-    if len(deltas) < period:
-        return np.full(len(prices), 50.0)
-    seed = deltas[:period+1]
-    up = np.sum(seed[seed >= 0]) / period if len(seed[seed >= 0]) > 0 else 0
-    down = -np.sum(seed[seed < 0]) / period if len(seed[seed < 0]) > 0 else 0
-    if down == 0:
-        rs = 100.0
-    else:
-        rs = up / down
-    rsi = np.zeros_like(prices)
-    rsi[:period] = 100. - 100. / (1. + rs) if rs != float('inf') else 100.0
-    for i in range(period, len(prices)):
-        delta = deltas[i-1]
-        if delta > 0:
-            upval = delta
-            downval = 0
-        else:
-            upval = 0
-            downval = -delta
-        up = (up * (period - 1) + upval) / period
-        down = (down * (period - 1) + downval) / period
-        if down == 0:
-            rsi[i] = 100.0
-        else:
-            rs = up / down
-            rsi[i] = 100. - 100. / (1. + rs)
-    return np.clip(rsi, 0, 100)
-
-def calculate_macd(prices, fast=12, slow=26, signal=9):
-    if len(prices) < slow + signal:
-        zeros = pd.Series([0] * len(prices), index=prices.index)
-        return zeros, zeros, zeros
-    exp1 = prices.ewm(span=fast, adjust=False).mean()
-    exp2 = prices.ewm(span=slow, adjust=False).mean()
-    macd_line = exp1 - exp2
-    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-    histogram = macd_line - signal_line
-    macd_line = macd_line.fillna(method='bfill').fillna(0)
-    signal_line = signal_line.fillna(method='bfill').fillna(0)
-    histogram = histogram.fillna(method='bfill').fillna(0)
-    return macd_line, signal_line, histogram
-
-def calculate_macd_series(prices, fast=12, slow=26, signal=9):
-    if len(prices) < slow + signal:
-        zeros = np.zeros(len(prices))
-        return zeros, zeros, zeros
-    prices = clean_array(prices)
-    exp1 = pd.Series(prices).ewm(span=fast, adjust=False).mean().values
-    exp2 = pd.Series(prices).ewm(span=slow, adjust=False).mean().values
-    macd_line = exp1 - exp2
-    signal_line = pd.Series(macd_line).ewm(span=signal, adjust=False).mean().values
-    macd_line = np.nan_to_num(macd_line, nan=0.0, posinf=0.0, neginf=0.0)
-    signal_line = np.nan_to_num(signal_line, nan=0.0, posinf=0.0, neginf=0.0)
-    histogram = macd_line - signal_line
-    return macd_line, signal_line, histogram
-
-def calculate_stochastic(high, low, close, k_period=14, d_period=3):
-    low_min = low.rolling(window=k_period).min()
-    high_max = high.rolling(window=k_period).max()
-    denominator = (high_max - low_min)
-    denominator = denominator.replace(0, np.nan)
-    k = 100 * ((close - low_min) / denominator)
-    k = k.fillna(50)
-    d = k.rolling(window=d_period).mean().fillna(50)
-    return k, d
-
-def calculate_obv(close, volume):
-    close_vals = clean_array(close.values if hasattr(close, 'values') else close)
-    volume_vals = clean_array(volume.values if hasattr(volume, 'values') else volume)
-    obv = [0.0]
-    for i in range(1, len(close_vals)):
-        if close_vals[i] > close_vals[i-1]:
-            obv.append(obv[-1] + volume_vals[i])
-        elif close_vals[i] < close_vals[i-1]:
-            obv.append(obv[-1] - volume_vals[i])
-        else:
-            obv.append(obv[-1])
-    return pd.Series(obv, index=close.index)
-
-def calculate_ema(prices, period=20):
-    return prices.ewm(span=period, adjust=False).mean()
-
-def calculate_sma(prices, period=20):
-    return prices.rolling(window=period).mean()
-
-def calculate_bollinger_bands(prices, period=20, std_dev=2):
-    sma = prices.rolling(window=period).mean()
-    std = prices.rolling(window=period).std()
-    sma = sma.fillna(method='bfill').fillna(prices.iloc[0] if len(prices) > 0 else 0)
-    std = std.fillna(0)
-    upper = sma + (std * std_dev)
-    lower = sma - (std * std_dev)
-    return upper, sma, lower
-
-def calculate_atr(high, low, close, period=14):
-    tr = pd.DataFrame({
-        'hl': high - low,
-        'hc': (high - close.shift()).abs(),
-        'lc': (low - close.shift()).abs()
-    }).max(axis=1)
-    atr = tr.rolling(window=period).mean()
-    return atr.fillna(method='bfill').fillna(0)
-
-def calculate_atr_series(highs, lows, closes, period=14):
-    highs = clean_array(highs)
-    lows = clean_array(lows)
-    closes = clean_array(closes)
-    if len(highs) < 2:
-        return np.full(len(highs), 0.01)
-    atr = []
-    for i in range(len(highs)):
-        if i < 1:
-            tr = highs[i] - lows[i]
-            atr.append(max(tr, 0.01))
-        else:
-            tr = max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
-            atr.append(max(tr, 0.01))
-    atr_series = []
-    for i in range(len(atr)):
-        if i < period:
-            atr_series.append(safe_mean(atr[:i+1], 0.01))
-        else:
-            atr_series.append(safe_mean(atr[i-period+1:i+1], 0.01))
-    return np.array(atr_series)
-
-
-# =========================================================
-# DIVERGENCE DETECTION
-# =========================================================
-
-def detect_rsi_divergence(prices, rsi_values):
-    if len(prices) < 20 or len(rsi_values) < 20:
-        return 'None'
-    prices_array = clean_array(prices)
-    rsi_array = clean_array(rsi_values)
-    if len(prices_array) > 30:
-        prices_array = prices_array[-30:]
-        rsi_array = rsi_array[-30:]
-    window = len(prices_array)
-    half = window // 2
-    if half == 0:
-        return 'None'
-    first_half_prices = prices_array[:half]
-    second_half_prices = prices_array[half:]
-    first_half_rsi = rsi_array[:half]
-    second_half_rsi = rsi_array[half:]
-    if len(first_half_prices) > 0 and len(second_half_prices) > 0:
-        first_min_idx = np.argmin(first_half_prices)
-        second_min_idx = np.argmin(second_half_prices)
-        first_min_price = first_half_prices[first_min_idx]
-        second_min_price = second_half_prices[second_min_idx]
-        first_min_rsi = first_half_rsi[first_min_idx]
-        second_min_rsi = second_half_rsi[second_min_idx]
-        if second_min_price < first_min_price and second_min_rsi > first_min_rsi:
-            return 'Bullish'
-    if len(first_half_prices) > 0 and len(second_half_prices) > 0:
-        first_max_idx = np.argmax(first_half_prices)
-        second_max_idx = np.argmax(second_half_prices)
-        first_max_price = first_half_prices[first_max_idx]
-        second_max_price = second_half_prices[second_max_idx]
-        first_max_rsi = first_half_rsi[first_max_idx]
-        second_max_rsi = second_half_rsi[second_max_idx]
-        if second_max_price > first_max_price and second_max_rsi < first_max_rsi:
-            return 'Bearish'
-    return 'None'
-
-def detect_macd_divergence(prices, macd_line):
-    if len(prices) < 20 or len(macd_line) < 20:
-        return 'None'
-    prices_array = clean_array(prices)
-    macd_array = clean_array(macd_line)
-    if len(prices_array) > 30:
-        prices_array = prices_array[-30:]
-        macd_array = macd_array[-30:]
-    window = len(prices_array)
-    half = window // 2
-    if half == 0:
-        return 'None'
-    first_half_prices = prices_array[:half]
-    second_half_prices = prices_array[half:]
-    first_half_macd = macd_array[:half]
-    second_half_macd = macd_array[half:]
-    if len(first_half_prices) > 0 and len(second_half_prices) > 0:
-        first_min_idx = np.argmin(first_half_prices)
-        second_min_idx = np.argmin(second_half_prices)
-        first_min_price = first_half_prices[first_min_idx]
-        second_min_price = second_half_prices[second_min_idx]
-        first_min_macd = first_half_macd[first_min_idx]
-        second_min_macd = second_half_macd[second_min_idx]
-        if second_min_price < first_min_price and second_min_macd > first_min_macd:
-            return 'Bullish'
-    if len(first_half_prices) > 0 and len(second_half_prices) > 0:
-        first_max_idx = np.argmax(first_half_prices)
-        second_max_idx = np.argmax(second_half_prices)
-        first_max_price = first_half_prices[first_max_idx]
-        second_max_price = second_half_prices[second_max_idx]
-        first_max_macd = first_half_macd[first_max_idx]
-        second_max_macd = second_half_macd[second_max_idx]
-        if second_max_price > first_max_price and second_max_macd < first_max_macd:
-            return 'Bearish'
-    return 'None'
-
-
-# =========================================================
-# PATTERN METRICS & NOISE
-# =========================================================
-
-def calculate_pattern_metrics(prices, pattern_high, pattern_low, current_price):
-    if len(prices) < 20:
-        return {}
-    prices = clean_array(prices)
-    recent_range = safe_max(prices[-20:], 0) - safe_min(prices[-20:], 0)
-    if pattern_low <= 0:
-        pattern_low = current_price * 0.95
-    if pattern_high <= 0:
-        pattern_high = current_price * 1.05
-    pattern_height = pattern_high - pattern_low
-    pattern_depth = safe_divide(pattern_height, pattern_low) * 100
-    breakout_distance = safe_divide(current_price - pattern_high, pattern_high) * 100
-    relative_strength = safe_divide(pattern_height, recent_range, 0)
-    return {
-        'pattern_height': round(float(pattern_height), 2),
-        'pattern_depth_percent': round(float(pattern_depth), 2),
-        'breakout_distance_percent': round(float(breakout_distance), 2),
-        'relative_strength': round(float(relative_strength), 3),
-        'recent_range': round(float(recent_range), 2)
-    }
-
-def add_noise_to_sequence(sequence, noise_level=0.005):
-    sequence = clean_array(sequence)
-    if len(sequence) == 0:
-        return sequence
-    trend = np.linspace(0, random.uniform(-0.01, 0.01), len(sequence))
-    noise = np.random.normal(0, noise_level, len(sequence)) + trend
-    noise = np.clip(noise, -0.03, 0.03)
-    noisy_sequence = sequence + (sequence * noise)
-    noisy_sequence = np.maximum(noisy_sequence, 0.01)
-    if sequence[-1] > sequence[0]:
-        noisy_sequence = np.sort(noisy_sequence)
-    else:
-        noisy_sequence = np.sort(noisy_sequence)[::-1]
-    return noisy_sequence
-
-def detect_market_regime(close_prices):
-    if len(close_prices) < 50:
-        return 'UNKNOWN'
-    momentum = safe_mean(close_prices.iloc[-50:].pct_change(20).dropna(), 0)
-    if len(close_prices) < 200:
-        sma20 = close_prices.rolling(20).mean()
-        if len(sma20) > 0 and len(close_prices) > 0:
-            if close_prices.iloc[-1] > sma20.iloc[-1] and momentum > 0:
-                return 'BULL'
-            elif close_prices.iloc[-1] < sma20.iloc[-1] and momentum < 0:
-                return 'BEAR'
-        return 'UNKNOWN'
-    sma50 = close_prices.rolling(50).mean()
-    sma200 = close_prices.rolling(200).mean()
-    if len(sma50) > 0 and len(sma200) > 0:
-        if sma50.iloc[-1] > sma200.iloc[-1] and momentum > 0:
-            return 'BULL'
-        elif sma50.iloc[-1] < sma200.iloc[-1] and momentum < 0:
-            return 'BEAR'
-    return 'SIDEWAYS'
-
-
-# =========================================================
-# SWING POINTS & MARKET STRUCTURE
-# =========================================================
-
-def find_swing_points(highs, lows, window=5):
-    highs = clean_array(highs)
-    lows = clean_array(lows)
-    swing_highs = []
-    swing_lows = []
-    for i in range(window, len(highs) - window):
-        if i-window >= 0 and i+window+1 <= len(highs):
-            if highs[i] == max(highs[i-window:i+window+1]):
-                swing_highs.append(highs[i])
-    for i in range(window, len(lows) - window):
-        if i-window >= 0 and i+window+1 <= len(lows):
-            if lows[i] == min(lows[i-window:i+window+1]):
-                swing_lows.append(lows[i])
-    return swing_highs, swing_lows
-
-def find_swing_points_with_indices(highs, lows, window=5):
-    highs = clean_array(highs)
-    lows = clean_array(lows)
-    if len(highs) < window * 2 + 1:
-        return [], [], [], []
-    swing_highs = []
-    swing_lows = []
-    swing_high_indices = []
-    swing_low_indices = []
-    for i in range(window, len(highs) - window):
-        if i-window >= 0 and i+window+1 <= len(highs):
-            if highs[i] == max(highs[i-window:i+window+1]):
-                swing_highs.append(highs[i])
-                swing_high_indices.append(i)
-    for i in range(window, len(lows) - window):
-        if i-window >= 0 and i+window+1 <= len(lows):
-            if lows[i] == min(lows[i-window:i+window+1]):
-                swing_lows.append(lows[i])
-                swing_low_indices.append(i)
-    return swing_highs, swing_lows, swing_high_indices, swing_low_indices
-
-def detect_bos_from_swings(swing_highs, swing_lows, current_price):
-    if len(swing_highs) >= 2 and current_price > swing_highs[-2]:
-        return True, "BULLISH BOS (Break of Structure)"
-    elif len(swing_lows) >= 2 and current_price < swing_lows[-2]:
-        return True, "BEARISH BOS (Break of Structure)"
-    return False, None
-
-def find_support_resistance(highs, lows, closes, tolerance=0.02):
-    highs = clean_array(highs)
-    lows = clean_array(lows)
-    closes = clean_array(closes)
-    all_levels = list(highs) + list(lows)
-    levels = {}
-    for price in all_levels:
-        if price <= 0:
-            continue
-        found = False
-        for key in list(levels.keys()):
-            if abs(price - key) / key < tolerance:
-                levels[key] += 1
-                found = True
-                break
-        if not found:
-            levels[price] = 1
-    sorted_levels = sorted(levels.items(), key=lambda x: x[1], reverse=True)
-    current_price = closes[-1] if len(closes) > 0 else 0.0
-    resistance = [price for price, count in sorted_levels if price > current_price and count >= 2]
-    support = [price for price, count in sorted_levels if price < current_price and count >= 2]
-    return {'resistance': sorted(resistance, reverse=True), 'support': sorted(support)}
-
-def count_touches(prices, level, tolerance=0.015):
-    prices = clean_array(prices)
-    if level <= 0:
-        return 0
-    return sum(1 for p in prices if p > 0 and abs(p - level) / level < tolerance)
-
-
-# =========================================================
-# ADVANCED PRICE SEQUENCE GENERATOR
-# =========================================================
-
-def generate_advanced_price_sequence(symbol_data, idx, lookback=150):
-    if symbol_data is None or idx is None:
-        return "Insufficient data.", False, False, False
-    start_idx = max(0, idx - lookback)
-    sequence_data = symbol_data.iloc[start_idx:idx+1].copy()
-    if len(sequence_data) < 50:
-        return "Insufficient data for 150+ candle analysis.", False, False, False
-    closes = clean_array(sequence_data['close'].values)
-    highs = clean_array(sequence_data['high'].values)
-    lows = clean_array(sequence_data['low'].values)
-    volumes = clean_array(sequence_data['volume'].values)
-    current_price = closes[-1] if len(closes) > 0 else 100.0
-    text = "📊 COMPREHENSIVE PRICE ANALYSIS (150+ Candles):\n"
-    text += "="*80 + "\n\n"
-    text += "📋 PRICE DATA (Last 30 candles):\n"
-    text += "─"*80 + "\n"
-    text += "Date       | Open   | High   | Low    | Close  | Volume   | Range\n"
-    recent_data = sequence_data.iloc[-30:]
-    for _, row in recent_data.iterrows():
-        date_str = str(row['date'])[:10]
-        range_val = row['high'] - row['low']
-        text += f"{date_str} | {row['open']:7.2f} | {row['high']:7.2f} | {row['low']:7.2f} | {row['close']:7.2f} | {int(row['volume']):8,} | {range_val:.2f}\n"
-    older_data = sequence_data.iloc[:-30] if len(sequence_data) > 30 else sequence_data.iloc[:0]
-    if len(older_data) > 0:
-        text += f"\n📊 Previous {len(older_data)} candles summary:\n"
-        text += f"   High: {older_data['high'].max():.2f} | Low: {older_data['low'].min():.2f}\n"
-        text += f"   Avg Close: {older_data['close'].mean():.2f} | Avg Volume: {older_data['volume'].mean():,.0f}\n"
-    text += "\n📈 TREND ANALYSIS:\n"
-    text += "─"*80 + "\n"
-    sma20 = safe_mean(closes[-20:], current_price)
-    sma50 = safe_mean(closes[-50:], sma20) if len(closes) >= 50 else sma20
-    sma150 = safe_mean(closes, sma50)
-    text += f"Short-term Trend (20):  {'BULLISH 📈' if current_price > sma20 else 'BEARISH 📉'}\n"
-    text += f"Medium-term Trend (50): {'BULLISH 📈' if current_price > sma50 else 'BEARISH 📉'}\n"
-    text += f"Long-term Trend (150):  {'BULLISH 📈' if current_price > sma150 else 'BEARISH 📉'}\n"
-    price_change_20 = safe_divide(closes[-1] - closes[-20], closes[-20]) * 100 if len(closes) >= 20 and closes[-20] > 0 else 0
-    price_change_50 = safe_divide(closes[-1] - closes[-50], closes[-50]) * 100 if len(closes) >= 50 and closes[-50] > 0 else price_change_20
-    price_change_150 = safe_divide(closes[-1] - closes[0], closes[0]) * 100 if len(closes) > 0 and closes[0] > 0 else 0
-    text += f"\nPrice Change (20d):  {price_change_20:+.2f}%\n"
-    text += f"Price Change (50d):  {price_change_50:+.2f}%\n"
-    text += f"Price Change (150d): {price_change_150:+.2f}%\n"
-    text += "\n🏗️ MARKET STRUCTURE (SMC):\n"
-    text += "─"*80 + "\n"
-    swing_highs, swing_lows = find_swing_points(highs, lows)
-    recent_sh = swing_highs[-5:] if len(swing_highs) >= 5 else swing_highs
-    recent_sl = swing_lows[-5:] if len(swing_lows) >= 5 else swing_lows
-    text += f"Swing Highs: {', '.join([f'{h:.2f}' for h in recent_sh])}\n"
-    text += f"Swing Lows:  {', '.join([f'{l:.2f}' for l in recent_sl])}\n"
-    if len(swing_highs) >= 3:
-        if swing_highs[-1] > swing_highs[-2] and swing_highs[-2] > swing_highs[-3]:
-            text += "Structure: HIGHER HIGHS (Bullish Continuation) 📈\n"
-        elif swing_highs[-1] < swing_highs[-2] and swing_highs[-2] < swing_highs[-3]:
-            text += "Structure: LOWER HIGHS (Bearish Continuation) 📉\n"
-        else:
-            text += "Structure: CHOPPY (Consolidation) ↔️\n"
-    if len(swing_lows) >= 3:
-        if swing_lows[-1] > swing_lows[-2] and swing_lows[-2] > swing_lows[-3]:
-            text += "Structure: HIGHER LOWS (Bullish Support) ✅\n"
-        elif swing_lows[-1] < swing_lows[-2] and swing_lows[-2] < swing_lows[-3]:
-            text += "Structure: LOWER LOWS (Bearish Continuation) ❌\n"
-    bos_detected, bos_type = detect_bos_from_swings(swing_highs, swing_lows, current_price)
-    if bos_detected:
-        text += f"\n⚡ {bos_type} DETECTED!\n"
-    text += "\n🎯 SUPPORT & RESISTANCE LEVELS:\n"
-    text += "─"*80 + "\n"
-    levels = find_support_resistance(highs, lows, closes)
-    text += "Resistance Levels:\n"
-    for level in levels['resistance'][:3]:
-        touches = count_touches(highs, level)
-        text += f"  R{level:.2f} ({touches} touches) - {'STRONG' if touches >= 3 else 'WEAK'}\n"
-    text += "\nSupport Levels:\n"
-    for level in levels['support'][:3]:
-        touches = count_touches(lows, level)
-        text += f"  S{level:.2f} ({touches} touches) - {'STRONG' if touches >= 3 else 'WEAK'}\n"
-    nearest_resistance = min([r for r in levels['resistance'] if r > current_price], default=current_price * 1.1)
-    nearest_support = max([s for s in levels['support'] if s < current_price], default=current_price * 0.9)
-    text += f"\nCurrent Price: {current_price:.2f}\n"
-    text += f"Nearest Resistance: {nearest_resistance:.2f} ({safe_divide(nearest_resistance, current_price)*100-100:+.1f}% away)\n"
-    text += f"Nearest Support: {nearest_support:.2f} ({safe_divide(nearest_support, current_price)*100-100:+.1f}% away)\n"
-    text += "\n📐 FIBONACCI RETRACEMENT:\n"
-    text += "─"*80 + "\n"
-    high_150 = safe_max(highs, current_price)
-    low_150 = safe_min(lows, current_price)
-    high_idx = np.argmax(highs) if len(highs) > 0 else 0
-    low_idx = np.argmin(lows) if len(lows) > 0 else 0
-    if high_idx > low_idx:
-        fib_range = high_150 - low_150
-        text += f"Swing Low: {low_150:.2f} → Swing High: {high_150:.2f} (Range: {fib_range:.2f})\n\n"
-        text += "Retracement Levels:\n"
-        for level in [0.236, 0.382, 0.5, 0.618, 0.786]:
-            fib_price = high_150 - (fib_range * level)
-            text += f"  {level:.3f} ({level*100:.1f}%): {fib_price:.2f}\n"
-    else:
-        fib_range = high_150 - low_150
-        text += f"Swing High: {high_150:.2f} → Swing Low: {low_150:.2f} (Range: {fib_range:.2f})\n\n"
-        text += "Retracement Levels:\n"
-        for level in [0.236, 0.382, 0.5, 0.618, 0.786]:
-            fib_price = low_150 + (fib_range * level)
-            text += f"  {level:.3f} ({level*100:.1f}%): {fib_price:.2f}\n"
-    text += "\n📊 VOLUME ANALYSIS:\n"
-    text += "─"*80 + "\n"
-    avg_volume_20 = safe_mean(volumes[-20:], 0) if len(volumes) >= 20 else safe_mean(volumes, 0)
-    avg_volume_50 = safe_mean(volumes[-50:], avg_volume_20) if len(volumes) >= 50 else avg_volume_20
-    current_volume = volumes[-1] if len(volumes) > 0 else 0
-    text += f"Current Volume: {current_volume:,.0f}\n"
-    text += f"Avg Volume (20): {avg_volume_20:,.0f} ({'ABOVE' if current_volume > avg_volume_20 else 'BELOW'} average)\n"
-    text += f"Avg Volume (50): {avg_volume_50:,.0f}\n"
-    text += f"Volume Trend: {'INCREASING 📈' if avg_volume_20 > avg_volume_50 else 'DECREASING 📉'}\n"
-    volume_spikes = []
-    for i in range(20, len(volumes)):
-        avg_prev = safe_mean(volumes[i-20:i], 1)
-        if avg_prev > 0 and volumes[i] > avg_prev * 1.5:
-            volume_spikes.append((i, volumes[i]))
-    has_volume_spike = len(volume_spikes) > 0
-    text += "\n📉 VOLATILITY ANALYSIS:\n"
-    text += "─"*80 + "\n"
-    atr_values = calculate_atr_series(highs, lows, closes)
-    current_atr = atr_values[-1] if len(atr_values) > 0 else current_price * 0.02
-    avg_atr = safe_mean(atr_values, current_atr)
-    text += f"Current ATR: {current_atr:.2f} ({safe_divide(current_atr, current_price)*100:.2f}% of price)\n"
-    text += f"Average ATR: {avg_atr:.2f}\n"
-    text += f"Volatility Regime: {'HIGH' if current_atr > avg_atr * 1.2 else 'LOW' if current_atr < avg_atr * 0.8 else 'NORMAL'}\n"
-    high_volatility = current_atr > avg_atr * 1.2
-    text += "\n🔄 PATTERN EVOLUTION (How the pattern formed):\n"
-    text += "─"*80 + "\n"
-    if price_change_20 > 5 and price_change_50 > 10:
-        text += "• Strong uptrend over last 50 candles\n• Multiple higher highs and higher lows formed\n"
-    elif price_change_20 < -5 and price_change_50 < -10:
-        text += "• Strong downtrend over last 50 candles\n• Multiple lower lows and lower highs formed\n"
-    else:
-        text += "• Price has been consolidating\n• Range-bound movement with no clear trend\n"
-    last_5 = closes[-5:]
-    if len(last_5) >= 5:
-        if all(last_5[i] > last_5[i-1] for i in range(1, 5)):
-            text += "• Last 5 candles: All bullish (Strong momentum)\n"
-        elif all(last_5[i] < last_5[i-1] for i in range(1, 5)):
-            text += "• Last 5 candles: All bearish (Strong selling pressure)\n"
-        else:
-            text += "• Last 5 candles: Mixed (Indecision)\n"
-    return text, bos_detected, has_volume_spike, high_volatility
-
-
-# =========================================================
-# WYCKOFF CYCLE & VOLUME-PRICE ANALYSIS
-# =========================================================
-
-def detect_volume_price_cycle(symbol_data, idx, lookback=150):
-    if symbol_data is None or idx is None:
-        return "Insufficient data.", {}
-    start_idx = max(0, idx - lookback)
-    sequence_data = symbol_data.iloc[start_idx:idx+1].copy()
-    if len(sequence_data) < 60:
-        return "Insufficient data for Wyckoff analysis.", {}
-    closes = clean_array(sequence_data['close'].values)
-    volumes = clean_array(sequence_data['volume'].values)
-    highs = clean_array(sequence_data['high'].values)
-    lows = clean_array(sequence_data['low'].values)
-    vol_10 = safe_mean(volumes[-10:], 0) if len(volumes) >= 10 else safe_mean(volumes, 0)
-    vol_20 = safe_mean(volumes[-20:], vol_10) if len(volumes) >= 20 else vol_10
-    vol_50 = safe_mean(volumes[-50:], vol_20) if len(volumes) >= 50 else vol_20
-    vol_50 = max(vol_50, 1)
-    current_volume = volumes[-1] if len(volumes) > 0 else 0
-    current_price = closes[-1] if len(closes) > 0 else 100.0
-    volume_trend = "INCREASING" if vol_10 > vol_20 > vol_50 else "DECREASING" if vol_10 < vol_20 < vol_50 else "NEUTRAL"
-    volume_ratio = safe_divide(current_volume, vol_50, 1)
-    is_volume_spike = volume_ratio >= 1.5
-    is_volume_dry = volume_ratio <= 0.5
-    high_50 = safe_max(highs[-50:], current_price) if len(highs) >= 50 else safe_max(highs, current_price)
-    low_50 = safe_min(lows[-50:], current_price) if len(lows) >= 50 else safe_min(lows, current_price)
-    range_50 = high_50 - low_50
-    price_position = safe_divide(current_price - low_50, range_50, 0.5)
-    price_change_5 = safe_divide(closes[-1] - closes[-5], closes[-5]) * 100 if len(closes) >= 5 and closes[-5] > 0 else 0
-    price_change_10 = safe_divide(closes[-1] - closes[-10], closes[-10]) * 100 if len(closes) >= 10 and closes[-10] > 0 else 0
-    price_change_20 = safe_divide(closes[-1] - closes[-20], closes[-20]) * 100 if len(closes) >= 20 and closes[-20] > 0 else 0
-    phase = "UNKNOWN"
-    confidence_boost = 0
-    prediction_text = ""
-    if volume_trend == "DECREASING" and price_position < 0.3 and abs(price_change_20) < 10:
-        phase = "ACCUMULATION"
-        confidence_boost = 5
-        prediction_text = """
-📊 WYCKOFF ANALYSIS - ACCUMULATION PHASE:
-────────────────────────────────────────────────────────────────────────────────
-Current Phase: ACCUMULATION (Smart Money Buying)
-• Volume is drying up - Smart money accumulating quietly
-• Price is in lower range - Institutional buying zone
-• Expect: Potential markup phase soon
-
-🎯 PREDICTION: Watch for volume surge + price breakout above resistance
-"""
-    elif is_volume_spike and price_change_5 > 0 and price_change_10 > 0 and price_position > 0.5:
-        phase = "MARKUP"
-        confidence_boost = 20
-        prediction_text = f"""
-📊 WYCKOFF ANALYSIS - MARKUP PHASE (BREAKOUT DETECTED!):
-────────────────────────────────────────────────────────────────────────────────
-Current Phase: MARKUP (Strong Uptrend Confirmed)
-• Volume Surge: {volume_ratio:.1f}x average volume ⚡
-• Price Movement: +{price_change_5:.1f}% (5d) | +{price_change_10:.1f}% (10d)
-
-🎯 PREDICTION: CONTINUED UPTREND
-"""
-    elif (is_volume_spike or volume_trend == "INCREASING") and price_position > 0.7 and price_change_10 < 5:
-        phase = "DISTRIBUTION"
-        confidence_boost = -5
-        prediction_text = """
-📊 WYCKOFF ANALYSIS - DISTRIBUTION PHASE:
-────────────────────────────────────────────────────────────────────────────────
-Current Phase: DISTRIBUTION (Smart Money Selling)
-⚠️ CAUTION: Volume is high but price not advancing significantly
-"""
-    elif price_change_20 < -5 and price_position < 0.5:
-        phase = "MARKDOWN"
-        confidence_boost = -10
-        prediction_text = """
-📊 WYCKOFF ANALYSIS - MARKDOWN PHASE:
-────────────────────────────────────────────────────────────────────────────────
-Current Phase: MARKDOWN (Downtrend)
-📉 BEARISH: Wait for accumulation phase before entering
-"""
-    elif volume_trend == "DECREASING" and 0.3 <= price_position <= 0.7 and abs(price_change_20) < 8:
-        phase = "RE-ACCUMULATION"
-        confidence_boost = 8
-        prediction_text = """
-📊 WYCKOFF ANALYSIS - RE-ACCUMULATION PHASE:
-────────────────────────────────────────────────────────────────────────────────
-Current Phase: RE-ACCUMULATION (Consolidation before next move up)
-🎯 PREDICTION: Expect another markup phase
-"""
-    divergence_type = None
-    divergence_text = ""
-    if price_change_10 < -3 and current_volume < vol_50 * 0.7:
-        divergence_type = "BULLISH_VOLUME"
-        divergence_text = "⚠️ BULLISH VOLUME DIVERGENCE: Selling pressure weakening"
-        confidence_boost += 8
-    elif price_change_10 > 3 and current_volume < vol_50 * 0.7:
-        divergence_type = "BEARISH_VOLUME"
-        divergence_text = "⚠️ BEARISH VOLUME DIVERGENCE: Buying pressure weakening"
-        confidence_boost -= 5
-    elif is_volume_spike and price_change_5 > 2:
-        divergence_type = "VOLUME_PRICE_CONFIRMATION"
-        divergence_text = "✅ VOLUME-PRICE CONFIRMATION (STRONG BULLISH)"
-        confidence_boost += 12
-    will_breakout_soon = False
-    breakout_confidence = 0
-    if phase == "ACCUMULATION":
-        days_in_accumulation = sum(1 for i in range(min(30, len(volumes))) if volumes[-1-i] < vol_50 * 0.8)
-        if days_in_accumulation >= 10 and price_position < 0.4:
-            will_breakout_soon = True
-            breakout_confidence = min(70, 40 + days_in_accumulation)
-    elif phase == "RE-ACCUMULATION":
-        if volume_trend == "DECREASING" and price_change_20 > -5:
-            will_breakout_soon = True
-            breakout_confidence = 65
-    elif phase == "MARKUP" and is_volume_spike:
-        will_breakout_soon = True
-        breakout_confidence = 85
-    analysis_text = f"""
-📊 VOLUME-PRICE CYCLE ANALYSIS (Wyckoff Method):
-================================================================================
-
-🔍 CURRENT MARKET PHASE: {phase}
-────────────────────────────────────────────────────────────────────────────────
-
-📈 VOLUME ANALYSIS:
-  Current Volume: {current_volume:,.0f}
-  Volume Trend: {volume_trend}
-  Volume Spike: {'YES ⚡' if is_volume_spike else 'NO'}
-  Volume Dry-up: {'YES 💧' if is_volume_dry else 'NO'}
-
-💰 PRICE ANALYSIS:
-  Current Price: {current_price:.2f}
-  5d Change: {price_change_5:+.2f}%
-  10d Change: {price_change_10:+.2f}%
-  20d Change: {price_change_20:+.2f}%
-
-{divergence_text}
-{prediction_text}
-
-🎯 BREAKOUT PREDICTION:
-────────────────────────────────────────────────────────────────────────────────
-Will Volume + Price Increase Soon? {'✅ YES' if will_breakout_soon else '❌ NOT YET'}
-Confidence: {breakout_confidence}%
-================================================================================
-"""
-    return analysis_text, {
-        'phase': phase, 'will_breakout_soon': will_breakout_soon,
-        'breakout_confidence': breakout_confidence, 'volume_spike': is_volume_spike,
-        'volume_ratio': volume_ratio, 'price_position': price_position,
-        'confidence_boost': confidence_boost, 'volume_trend': volume_trend,
-        'divergence': divergence_type
-    }
-
-
-# =========================================================
-# SECTOR ANALYSIS
-# =========================================================
-
-def get_sector_analysis(sector, symbol, current_price):
-    sector_strength = {
-        'Pharmaceuticals & Chemicals': {'strength': 'Strong', 'confidence_boost': 5},
-        'Bank': {'strength': 'Moderate', 'confidence_boost': 2},
-        'Telecommunication': {'strength': 'Strong', 'confidence_boost': 4},
-        'Fuel & Power': {'strength': 'Moderate', 'confidence_boost': 2},
-        'Engineering': {'strength': 'Moderate', 'confidence_boost': 1},
-        'Food & Allied': {'strength': 'Strong', 'confidence_boost': 3},
-        'Textile': {'strength': 'Weak', 'confidence_boost': -2},
-        'Financial Institutions': {'strength': 'Moderate', 'confidence_boost': 1},
-        'Services & Real Estate': {'strength': 'Moderate', 'confidence_boost': 0},
-        'Cement': {'strength': 'Moderate', 'confidence_boost': 1},
-        'IT': {'strength': 'Strong', 'confidence_boost': 4},
-        'Insurance': {'strength': 'Moderate', 'confidence_boost': 0},
-    }
-    sector_info = sector_strength.get(str(sector), {'strength': 'Unknown', 'confidence_boost': 0})
-    rotation_signals = ['None', 'Rotation In', 'Rotation Out', 'Sector Leadership']
-    rotation = random.choice(rotation_signals)
-    if rotation == 'Rotation In':
-        sector_info['confidence_boost'] += 3
-        additional_note = f"\n- Sector Rotation: {sector} is attracting capital inflow"
-    elif rotation == 'Rotation Out':
-        sector_info['confidence_boost'] -= 3
-        additional_note = f"\n- Sector Rotation: {sector} is seeing capital outflow"
-    elif rotation == 'Sector Leadership':
-        sector_info['confidence_boost'] += 5
-        additional_note = f"\n- Sector Leadership: {sector} is leading the market"
-    else:
-        additional_note = ""
-    peer_rank = random.choice(['Top 25%', 'Top 50%', 'Average', 'Below Average'])
-    return {
-        'strength': sector_info['strength'],
-        'rotation': rotation,
-        'peer_rank': peer_rank,
-        'confidence_boost': sector_info['confidence_boost'],
-        'additional_note': additional_note
-    }
-
-
-# =========================================================
-# ELLIOTT WAVE POSITION & SMC STRUCTURE
-# =========================================================
-
-def detect_elliott_wave_position(data):
-    if data is None or len(data) < 100:
-        return 'Unknown', 'Neutral'
-    closes = clean_array(data['close'].values)
-    highs = clean_array(data['high'].values)
-    lows = clean_array(data['low'].values)
-    if len(highs) < 11 or len(lows) < 11:
-        return 'Unknown', 'Neutral'
-    swing_highs = []
-    swing_lows = []
-    for i in range(5, len(highs) - 5):
-        if highs[i] == max(highs[i-5:i+6]):
-            swing_highs.append((i, highs[i]))
-    for i in range(5, len(lows) - 5):
-        if lows[i] == min(lows[i-5:i+6]):
-            swing_lows.append((i, lows[i]))
-    if len(swing_highs) < 3 or len(swing_lows) < 3:
-        return 'Unknown', 'Neutral'
-    recent_highs = [h for _, h in swing_highs[-3:]]
-    recent_lows = [l for _, l in swing_lows[-3:]]
-    if len(recent_highs) >= 3 and len(recent_lows) >= 3:
-        if recent_highs[-1] > recent_highs[-2] and recent_lows[-1] > recent_lows[-2]:
-            if recent_highs[-1] > recent_highs[-2] * 1.1:
-                return 'Wave 3', 'Bullish'
-            elif recent_highs[-1] > recent_highs[-2]:
-                return 'Wave 5', 'Bullish'
-            else:
-                return 'Wave 1', 'Bullish'
-        elif recent_highs[-1] < recent_highs[-2] and recent_lows[-1] < recent_lows[-2]:
-            return 'Wave C', 'Bearish'
-        else:
-            return 'Wave 4 or B', 'Neutral'
-    return 'Unknown', 'Neutral'
-
-def detect_smc_structure_for_symbol(data):
-    if data is None or len(data) < 50:
-        return 'Unknown'
-    highs = clean_array(data['high'].values)
-    lows = clean_array(data['low'].values)
-    closes = clean_array(data['close'].values)
-    current_price = closes[-1] if len(closes) > 0 else 0.0
-    swing_highs = []
-    swing_lows = []
-    for i in range(5, len(highs) - 5):
-        if highs[i] == max(highs[i-5:i+6]):
-            swing_highs.append(highs[i])
-    for i in range(5, len(lows) - 5):
-        if lows[i] == min(lows[i-5:i+6]):
-            swing_lows.append(lows[i])
-    if len(swing_highs) < 2 or len(swing_lows) < 2:
-        return 'Unknown'
-    structures = []
-    if current_price > swing_highs[-2]:
-        structures.append('BOS Bullish')
-    elif current_price < swing_lows[-2]:
-        structures.append('BOS Bearish')
-    if len(swing_lows) >= 2 and swing_lows[-1] > swing_lows[-2]:
-        structures.append('HL')
-    if len(swing_highs) >= 2 and swing_highs[-1] > swing_highs[-2]:
-        structures.append('HH')
-    if structures:
-        return ' + '.join(structures[:2])
-    return 'Neutral'
-
-
-# =========================================================
-# FORWARD-LOOKING ANALYSIS
-# =========================================================
-
-def generate_forward_looking_analysis(symbol_data, idx, lookback=150):
-    if symbol_data is None or idx is None:
-        return "Insufficient data for forward-looking analysis Ugc."
-    start_idx = max(0, idx - lookback)
-    sequence_data = symbol_data.iloc[start_idx:idx+1].copy()
-    if len(sequence_data) < 50:
-        return "Insufficient data for forward-looking analysis Ugc."
-    closes = clean_array(sequence_data['close'].values)
-    highs = clean_array(sequence_data['high'].values)
-    lows = clean_array(sequence_data['low'].values)
-    volumes = clean_array(sequence_data['volume'].values)
-    current_price = closes[-1] if len(closes) > 0 else 100.0
-    swing_highs, swing_lows = find_swing_points(highs, lows)
-    structure_desc = "Neutral"
-    if len(swing_highs) >= 2 and len(swing_lows) >= 2:
-        if swing_highs[-1] > swing_highs[-2] and swing_lows[-1] > swing_lows[-2]:
-            structure_desc = "Higher High (HH) and Higher Low (HL)"
-        elif swing_highs[-1] < swing_highs[-2] and swing_lows[-1] < swing_lows[-2]:
-            structure_desc = "Lower High (LH) and Lower Low (LL)"
-    bos_detected, bos_type = detect_bos_from_swings(swing_highs, swing_lows, current_price)
-    wave_position, wave_bias = detect_elliott_wave_position(sequence_data)
-    analysis_text = """
-🔮 FORWARD-LOOKING ANALYSIS (Expected Price Behavior):
-────────────────────────────────────────────────────────────────────────────────
-Based on current structure, here is the expected behavior:
-
-"""
-    analysis_text += f"Current Structure: {structure_desc}."
-    if bos_detected:
-        analysis_text += f" A {bos_type} has just occurred"
-        analysis_text += " on high volume." if len(volumes) >= 20 and volumes[-1] > safe_mean(volumes[-20:], 0) * 1.5 else "."
-    analysis_text += "\n\n"
-    if 'HH' in structure_desc and 'HL' in structure_desc:
-        analysis_text += """Typical Next Move: Price often pulls back to a newly formed Order Block (OB) or FVG for a retest before continuing higher.
-
-What to Watch For:
-1. A pullback to the nearest OB/FVG zone for long entry.
-2. A close below the most recent HL would be a warning sign.
-3. A sharp reversal breaking below the recent HL could signal a CHoCH.
-"""
-    elif 'LH' in structure_desc and 'LL' in structure_desc:
-        analysis_text += """Typical Next Move: Price typically retraces to a breaker block or FVG before resuming its downtrend.
-
-What to Watch For:
-1. A pullback to the nearest supply zone for short entry.
-2. A close above the most recent LH would be a sign of bullish strength.
-3. A breakout above the recent LH could signal a bullish CHoCH.
-"""
-    elif bos_detected and 'Bullish' in bos_type:
-        analysis_text += """Typical Next Move: The immediate move often continues, but a pullback to the breaker is common.
-
-What to Watch For:
-1. Continuation towards the next resistance.
-2. A successful retest of the breakout level.
-3. A failed retest would be a bearish trap.
-"""
-    elif wave_position == 'Wave 3' and wave_bias == 'Bullish':
-        analysis_text += """Elliott Wave Context: Currently in a powerful Wave 3.
-
-What to Watch For:
-1. Price to target the 1.618 Fibonacci extension.
-2. Any pullback should be supported by Wave 1 high.
-3. A close below Wave 1 high would invalidate the wave count.
-"""
-    else:
-        analysis_text += """Typical Next Move: Price is likely to remain range-bound until a clear BOS or CHoCH occurs.
-
-What to Watch For:
-1. A clear breakout on increased volume.
-2. Formation of a new Order Block or FVG.
-3. Avoid large positions until a new trend is confirmed.
-"""
-    if wave_position != 'Unknown':
-        analysis_text += f"\nElliott Wave Context: Currently in {wave_position}. "
-        if wave_position == 'Wave 3':
-            analysis_text += "Strongest wave, often reaching 1.618-2.618 of Wave 1."
-        elif wave_position == 'Wave 5':
-            analysis_text += "Final motive wave, watch for divergence."
-        elif wave_position == 'Wave C':
-            analysis_text += "Final corrective wave."
-        analysis_text += "\n"
-    return analysis_text
-
-
-# =========================================================
-# COMPLETE ELLIOTT WAVE DETECTION
-# =========================================================
-
-def detect_elliott_wave_complete(symbol_data, idx, lookback=200):
-    if symbol_data is None or idx is None:
-        return None
-    start_idx = max(0, idx - lookback)
-    sequence_data = symbol_data.iloc[start_idx:idx+1].copy()
-    if len(sequence_data) < 100:
-        return None
-    highs = clean_array(sequence_data['high'].values)
-    lows = clean_array(sequence_data['low'].values)
-    closes = clean_array(sequence_data['close'].values)
-    dates = sequence_data['date'].values
-    swing_highs, swing_lows, sh_indices, sl_indices = find_swing_points_with_indices(highs, lows)
-    if len(swing_highs) < 5 or len(swing_lows) < 5:
-        return None
-    recent_highs = swing_highs[-5:]
-    recent_lows = swing_lows[-5:]
-    is_bullish = (recent_highs[-1] > recent_highs[0] and recent_lows[-1] > recent_lows[0])
-    wave_structure = {'wave_count': [], 'sub_waves': {}, 'fib_levels': {}, 'invalidation': {}, 'confidence': 0}
-    if is_bullish:
-        waves = detect_impulse_waves(swing_highs, swing_lows, sh_indices, sl_indices, 'UP')
-    else:
-        waves = detect_impulse_waves(swing_highs, swing_lows, sh_indices, sl_indices, 'DOWN')
-    if waves:
-        wave_structure = waves
-    if wave_structure.get('wave_count'):
-        wave_structure['fib_levels'] = calculate_elliott_fibonacci(wave_structure['wave_points'], wave_structure['wave_count'])
-        wave_structure['fib_time_zones'] = calculate_fibonacci_time_zones(wave_structure['wave_points'], dates)
-    wave_structure['sub_waves'] = detect_sub_waves(sequence_data, wave_structure.get('wave_points', []))
-    wave_structure['volume_confluence'] = analyze_elliott_volume_confluence(sequence_data, wave_structure)
-    wave_structure['alternates'] = generate_alternate_wave_count(wave_structure, is_bullish)
-    if SKLEARN_AVAILABLE and len(closes) >= 100:
-        wave_structure['ml_match'] = ml_elliott_pattern_match(sequence_data)
-    wave_structure['order_flow'] = analyze_elliott_order_flow(sequence_data, wave_structure)
-    confirmations = confirm_elliott_with_indicators(sequence_data, wave_structure, len(sequence_data)-1)
-    wave_structure['confidence_score'] = calculate_elliott_confidence_score(wave_structure, confirmations, sequence_data['volume'].values)
-    prediction_text = generate_elliott_prediction_text(wave_structure, is_bullish)
-    return {
-        'wave_structure': wave_structure,
-        'prediction_text': prediction_text,
-        'is_bullish': is_bullish,
-        'confidence': wave_structure.get('confidence', 50)
-    }
-
-def detect_elliott_wave_multi_timeframe(symbol_data, idx):
-    ht_wave = detect_elliott_wave_complete(symbol_data, idx, lookback=300)
-    mt_wave = detect_elliott_wave_complete(symbol_data, idx, lookback=150)
-    lt_wave = detect_elliott_wave_complete(symbol_data, idx, lookback=75)
-    confluence_score = 0
-    if ht_wave and mt_wave and lt_wave:
-        if ht_wave['is_bullish'] == mt_wave['is_bullish'] == lt_wave['is_bullish']:
-            confluence_score = 90
-        elif ht_wave['is_bullish'] == mt_wave['is_bullish']:
-            confluence_score = 70
-        else:
-            confluence_score = 50
-    return {
-        'higher_timeframe': ht_wave,
-        'medium_timeframe': mt_wave,
-        'lower_timeframe': lt_wave,
-        'confluence_score': confluence_score,
-        'recommendation': 'STRONG' if confluence_score >= 80 else 'MODERATE' if confluence_score >= 60 else 'WEAK'
-    }
-
-def detect_impulse_waves(highs, lows, high_idx, low_idx, direction='UP'):
-    waves = {'wave_count': [], 'wave_points': {}, 'wave_lengths': {}, 'fib_ratios': {}, 'invalidation': {}, 'confidence': 0}
-    if len(highs) < 3 or len(lows) < 3:
-        return None
-    if direction == 'UP':
-        wave1_high = highs[1] if len(highs) > 1 else highs[0]
-        wave1_low = lows[0] if len(lows) > 0 else 0
-        wave2_low = lows[1] if len(lows) > 1 else lows[0]
-        wave3_high = highs[2] if len(highs) > 2 else highs[-1]
-        wave4_low = lows[2] if len(lows) > 2 else lows[-1]
-        wave5_high = highs[3] if len(highs) > 3 else highs[-1]
-        waves['wave_count'] = ['Wave 1', 'Wave 2', 'Wave 3', 'Wave 4', 'Wave 5']
-        waves['wave_points'] = {'start': wave1_low, 'w1': wave1_high, 'w2': wave2_low, 'w3': wave3_high, 'w4': wave4_low, 'w5': wave5_high}
-        wave1_len = wave1_high - wave1_low
-        wave3_len = wave3_high - wave2_low
-        wave5_len = wave5_high - wave4_low
-        waves['wave_lengths'] = {'wave1': wave1_len, 'wave3': wave3_len, 'wave5': wave5_len}
-        waves['fib_ratios'] = {
-            'wave3_vs_wave1': safe_divide(wave3_len, wave1_len, 0),
-            'wave5_vs_wave1': safe_divide(wave5_len, wave1_len, 0),
-            'wave2_retrace': safe_divide(wave1_high - wave2_low, wave1_len, 0)
-        }
-        waves['invalidation'] = {'wave2': wave1_low, 'wave4': wave1_high, 'wave5': wave3_high}
-        confidence = 50
-        if 1.618 <= waves['fib_ratios']['wave3_vs_wave1'] <= 2.618:
-            confidence += 20
-        if 0.382 <= waves['fib_ratios']['wave2_retrace'] <= 0.618:
-            confidence += 15
-        waves['confidence'] = min(95, confidence)
-    else:
-        wave1_low = lows[1] if len(lows) > 1 else lows[0]
-        wave1_high = highs[0] if len(highs) > 0 else 0
-        wave2_high = highs[1] if len(highs) > 1 else highs[0]
-        wave3_low = lows[2] if len(lows) > 2 else lows[-1]
-        wave4_high = highs[2] if len(highs) > 2 else highs[-1]
-        wave5_low = lows[3] if len(lows) > 3 else lows[-1]
-        waves['wave_count'] = ['Wave 1', 'Wave 2', 'Wave 3', 'Wave 4', 'Wave 5']
-        waves['wave_points'] = {'start': wave1_high, 'w1': wave1_low, 'w2': wave2_high, 'w3': wave3_low, 'w4': wave4_high, 'w5': wave5_low}
-        wave1_len = wave1_high - wave1_low
-        wave3_len = wave2_high - wave3_low
-        wave5_len = wave4_high - wave5_low
-        waves['wave_lengths'] = {'wave1': wave1_len, 'wave3': wave3_len, 'wave5': wave5_len}
-        waves['fib_ratios'] = {
-            'wave3_vs_wave1': safe_divide(wave3_len, wave1_len, 0),
-            'wave5_vs_wave1': safe_divide(wave5_len, wave1_len, 0),
-            'wave2_retrace': safe_divide(wave2_high - wave1_low, wave1_len, 0)
-        }
-        waves['invalidation'] = {'wave2': wave1_high, 'wave4': wave1_low, 'wave5': wave3_low}
-        confidence = 50
-        if 1.618 <= waves['fib_ratios']['wave3_vs_wave1'] <= 2.618:
-            confidence += 20
-        if 0.382 <= waves['fib_ratios']['wave2_retrace'] <= 0.618:
-            confidence += 15
-        waves['confidence'] = min(95, confidence)
-    return waves
-
-def detect_sub_waves(data, wave_points):
-    if not wave_points or len(wave_points) < 5:
-        return {}
-    return {
-        'wave1': {'structure': '5-wave impulse', 'sub_waves': ['i', 'ii', 'iii', 'iv', 'v']},
-        'wave2': {'structure': '3-wave corrective', 'sub_waves': ['a', 'b', 'c']},
-        'wave3': {'structure': '5-wave impulse (extended)', 'sub_waves': ['i', 'ii', 'iii', 'iv', 'v'], 'extension': '1.618-2.618x Wave 1'},
-        'wave4': {'structure': '3-wave corrective or triangle', 'sub_waves': ['a', 'b', 'c']},
-        'wave5': {'structure': '5-wave impulse', 'sub_waves': ['i', 'ii', 'iii', 'iv', 'v']}
-    }
-
-def calculate_elliott_fibonacci(wave_points, wave_count):
-    fib_levels = {}
-    if not wave_points:
-        return fib_levels
-    w1_high = wave_points.get('w1', 0)
-    w1_low = wave_points.get('start', 0)
-    w2_low = wave_points.get('w2', 0)
-    w3_high = wave_points.get('w3', 0)
-    wave1_len = w1_high - w1_low if w1_high > w1_low else 0
-    if wave1_len > 0:
-        fib_levels['wave2_retrace'] = {
-            '0.382': float(w1_high - wave1_len * 0.382),
-            '0.500': float(w1_high - wave1_len * 0.500),
-            '0.618': float(w1_high - wave1_len * 0.618)
-        }
-        fib_levels['wave3_targets'] = {
-            '1.000': float(w1_low + wave1_len * 1.000),
-            '1.618': float(w1_low + wave1_len * 1.618),
-            '2.000': float(w1_low + wave1_len * 2.000),
-            '2.618': float(w1_low + wave1_len * 2.618)
-        }
-        wave3_len = w3_high - w2_low if w3_high > w2_low else 0
-        if wave3_len > 0:
-            fib_levels['wave4_retrace'] = {
-                '0.236': float(w3_high - wave3_len * 0.236),
-                '0.382': float(w3_high - wave3_len * 0.382),
-                '0.500': float(w3_high - wave3_len * 0.500)
-            }
-        fib_levels['wave5_targets'] = {
-            '0.618': float(w1_low + wave1_len * 0.618),
-            '1.000': float(w1_low + wave1_len * 1.000),
-            '1.618': float(w1_low + wave1_len * 1.618)
-        }
-    return fib_levels
-
-def calculate_fibonacci_time_zones(wave_points, dates):
-    if not wave_points or len(dates) < 10:
-        return {}
-    avg_duration = 7
-    time_zones = {str(fib): avg_duration * fib for fib in [0.382, 0.5, 0.618, 1.0, 1.272, 1.618, 2.0, 2.618]}
-    current_date = dates[-1] if len(dates) > 0 else datetime.now()
-    predictions = {}
-    for fib, days in time_zones.items():
-        pred_date = pd.to_datetime(current_date) + timedelta(days=int(days))
-        predictions[fib] = pred_date.strftime('%Y-%m-%d')
-    return {'avg_wave_duration': avg_duration, 'fibonacci_days': time_zones, 'predicted_dates': predictions}
-
-def analyze_elliott_volume_confluence(symbol_data, wave_structure):
-    closes = clean_array(symbol_data['close'].values)
-    volumes = clean_array(symbol_data['volume'].values)
-    volume_profile = {}
-    for price, vol in zip(closes[-100:], volumes[-100:]):
-        if price <= 0:
-            continue
-        price_level = round(price, -1)
-        volume_profile[price_level] = volume_profile.get(price_level, 0) + vol
-    sorted_profile = sorted(volume_profile.items(), key=lambda x: x[1], reverse=True)
-    high_volume_levels = [level for level, _ in sorted_profile[:5]]
-    confluence = []
-    wave_points = wave_structure.get('wave_points', {})
-    for wave_name, price in wave_points.items():
-        if price <= 0:
-            continue
-        for hvn in high_volume_levels:
-            if abs(price - hvn) / price < 0.02:
-                confluence.append({'wave': wave_name, 'price': price, 'volume_node': hvn, 'strength': 'STRONG'})
-    return {'high_volume_levels': high_volume_levels, 'confluence_points': confluence, 'confluence_score': len(confluence) * 10}
-
-def generate_alternate_wave_count(wave_structure, is_bullish):
-    alternates = []
-    if is_bullish and wave_structure.get('wave_count') == ['Wave 1', 'Wave 2', 'Wave 3', 'Wave 4', 'Wave 5']:
-        alternates.append({
-            'scenario': 'CORRECTIVE A-B-C',
-            'description': 'If price breaks below Wave 1 start, structure becomes A-B-C corrective',
-            'invalidation_level': wave_structure.get('wave_points', {}).get('start', 0),
-            'probability': '30%'
-        })
-    if 'Wave 3' in str(wave_structure.get('wave_count', [])):
-        alternates.append({
-            'scenario': 'EXTENDED WAVE 3',
-            'description': 'If price continues strong without significant pullback',
-            'probability': '25%'
-        })
-    if 'Wave 5' in str(wave_structure.get('wave_count', [])):
-        alternates.append({
-            'scenario': 'TRUNCATED WAVE 5',
-            'description': 'If Wave 5 fails to exceed Wave 3 high',
-            'probability': '15%'
-        })
-    return alternates
-
-def ml_elliott_pattern_match(symbol_data, lookback=200):
-    if not SKLEARN_AVAILABLE:
-        return None
-    closes = clean_array(symbol_data['close'].values[-lookback:])
-    if len(closes) < 10:
-        return None
-    min_val = safe_min(closes, 0)
-    max_val = safe_max(closes, 1)
-    if max_val - min_val <= 0:
-        normalized = np.zeros_like(closes)
-    else:
-        normalized = (closes - min_val) / (max_val - min_val)
-    templates = {
-        'ideal_impulse': generate_ideal_impulse(len(closes)),
-        'ideal_zigzag': generate_ideal_zigzag(len(closes)),
-        'ideal_flat': generate_ideal_flat(len(closes)),
-    }
-    best_match = None
-    best_score = float('inf')
-    for name, template in templates.items():
-        if len(template) == len(normalized):
-            similarity = cosine(normalized, template)
-            if similarity < best_score:
-                best_score = similarity
-                best_match = name
-    return {'matched_pattern': best_match, 'similarity_score': 1 - best_score, 'confidence': 'HIGH' if best_score < 0.2 else 'MEDIUM' if best_score < 0.4 else 'LOW'}
-
-def generate_ideal_impulse(length):
-    x = np.linspace(0, 4*np.pi, length)
-    wave1 = np.sin(x[:length//5]) * 0.2
-    wave2 = -np.sin(x[:length//5]) * 0.1
-    wave3 = np.sin(x[:length//5]) * 0.5
-    wave4 = -np.sin(x[:length//5]) * 0.15
-    wave5 = np.sin(x[:length//5]) * 0.3
-    ideal = np.concatenate([wave1, wave1[-1]+wave2, wave2[-1]+wave3, wave3[-1]+wave4, wave4[-1]+wave5])
-    min_val = safe_min(ideal, 0)
-    max_val = safe_max(ideal, 1)
-    if max_val - min_val > 0:
-        return (ideal - min_val) / (max_val - min_val)
-    return ideal
-
-def generate_ideal_zigzag(length):
-    x = np.linspace(0, 3*np.pi, length)
-    wave_a = -np.sin(x[:length//3]) * 0.4
-    wave_b = np.sin(x[:length//3]) * 0.2
-    wave_c = -np.sin(x[:length//3]) * 0.5
-    ideal = np.concatenate([wave_a, wave_a[-1]+wave_b, wave_b[-1]+wave_c])
-    min_val = safe_min(ideal, 0)
-    max_val = safe_max(ideal, 1)
-    if max_val - min_val > 0:
-        return (ideal - min_val) / (max_val - min_val)
-    return ideal
-
-def generate_ideal_flat(length):
-    x = np.linspace(0, 3*np.pi, length)
-    wave_a = -np.sin(x[:length//3]) * 0.2
-    wave_b = np.sin(x[:length//3]) * 0.3
-    wave_c = -np.sin(x[:length//3]) * 0.25
-    ideal = np.concatenate([wave_a, wave_a[-1]+wave_b, wave_b[-1]+wave_c])
-    min_val = safe_min(ideal, 0)
-    max_val = safe_max(ideal, 1)
-    if max_val - min_val > 0:
-        return (ideal - min_val) / (max_val - min_val)
-    return ideal
-
-def analyze_elliott_order_flow(symbol_data, wave_structure):
-    closes = clean_array(symbol_data['close'].values)
-    opens = clean_array(symbol_data['open'].values)
-    volumes = clean_array(symbol_data['volume'].values)
-    buy_pressure = []
-    sell_pressure = []
-    for i in range(len(closes)):
-        if closes[i] > opens[i]:
-            buy_pressure.append(volumes[i] if i < len(volumes) else 0)
-            sell_pressure.append(0)
-        else:
-            buy_pressure.append(0)
-            sell_pressure.append(volumes[i] if i < len(volumes) else 0)
-    wave_analysis = {}
-    if len(buy_pressure) >= 50 and len(sell_pressure) >= 50:
-        wave_analysis['wave1_buy_pressure'] = float(np.sum(buy_pressure[-50:-30]))
-        wave_analysis['wave2_sell_pressure'] = float(np.sum(sell_pressure[-30:-10]))
-        total_buy = wave_analysis['wave1_buy_pressure']
-        total_sell = wave_analysis['wave2_sell_pressure']
-        if total_buy > total_sell * 1.5:
-            wave_analysis['imbalance'] = 'BULLISH (Strong buying)'
-        elif total_sell > total_buy * 1.5:
-            wave_analysis['imbalance'] = 'BEARISH (Strong selling)'
-        else:
-            wave_analysis['imbalance'] = 'NEUTRAL'
-    return wave_analysis
-
-def confirm_elliott_with_indicators(symbol_data, wave_structure, idx):
-    closes = clean_array(symbol_data['close'].values)
-    rsi_values = calculate_rsi_series(closes)
-    macd_line, macd_signal, _ = calculate_macd_series(closes)
-    current_wave = wave_structure.get('wave_count', [])[-1] if wave_structure.get('wave_count') else 'Unknown'
-    confirmations = {'rsi_divergence': False, 'macd_divergence': False, 'volume_confirmation': False, 'overall_confidence': 0}
-    if current_wave == 'Wave 5':
-        rsi_div = detect_rsi_divergence(closes[-50:], rsi_values[-50:])
-        macd_div = detect_macd_divergence(closes[-50:], macd_line[-50:])
-        if rsi_div in ['Bearish', 'Hidden Bearish']:
-            confirmations['rsi_divergence'] = True
-            confirmations['overall_confidence'] += 25
-        if macd_div == 'Bearish':
-            confirmations['macd_divergence'] = True
-            confirmations['overall_confidence'] += 25
-    elif current_wave == 'Wave 3':
-        volumes = clean_array(symbol_data['volume'].values[-50:])
-        current_vol = volumes[-1] if len(volumes) > 0 else 0
-        avg_vol = safe_mean(volumes, 1)
-        if current_vol > avg_vol * 1.5:
-            confirmations['volume_confirmation'] = True
-            confirmations['overall_confidence'] += 30
-    return confirmations
-
-def calculate_elliott_confidence_score(wave_structure, confirmations, volume_data):
-    score = 0
-    if wave_structure.get('wave_count'):
-        score += 20
-        if len(wave_structure['wave_count']) >= 5:
-            score += 20
-    fib_ratios = wave_structure.get('fib_ratios', {})
-    if fib_ratios.get('wave3_vs_wave1', 0) >= 1.618:
-        score += 15
-    if 0.382 <= fib_ratios.get('wave2_retrace', 0) <= 0.618:
-        score += 10
-    if confirmations.get('rsi_divergence'):
-        score += 10
-    if confirmations.get('macd_divergence'):
-        score += 10
-    if confirmations.get('volume_confirmation'):
-        score += 15
-    return {'total_score': score, 'percentage': score, 'rating': 'A+' if score >= 85 else 'A' if score >= 70 else 'B' if score >= 55 else 'C'}
-
-def generate_elliott_prediction_text(wave_structure, is_bullish):
-    if not wave_structure:
-        return "Insufficient data for Elliott Wave analysis."
-    wave_count = wave_structure.get('wave_count', [])
-    fib_ratios = wave_structure.get('fib_ratios', {})
-    sub_waves = wave_structure.get('sub_waves', {})
-    confidence = wave_structure.get('confidence', 50)
-    fib_time = wave_structure.get('fib_time_zones', {})
-    volume_conf = wave_structure.get('volume_confluence', {})
-    alternates = wave_structure.get('alternates', [])
-    order_flow = wave_structure.get('order_flow', {})
-    confidence_score = wave_structure.get('confidence_score', {})
-    ml_match = wave_structure.get('ml_match', {})
-    current_wave = wave_count[-1] if wave_count else 'Unknown'
-    text = f"""
-📐 ELLIOTT WAVE COMPLETE ANALYSIS:
-================================================================================
-
-🔍 WAVE COUNT DETECTED:
-────────────────────────────────────────────────────────────────────────────────
-Complete Wave Structure: {' → '.join(wave_count) if wave_count else 'Not detected'}
-Current Wave Position: {current_wave}
-Direction: {'BULLISH (Impulse Up)' if is_bullish else 'BEARISH (Impulse Down)'}
-Confidence: {confidence}%
-
-📊 FIBONACCI RATIOS (Actual from Data):
-────────────────────────────────────────────────────────────────────────────────
-"""
-    for key, value in fib_ratios.items():
-        if isinstance(value, (int, float)):
-            text += f"• {key}: {value:.3f} "
-            if key == 'wave3_vs_wave1':
-                text += "✅ (Ideal)" if 1.618 <= value <= 2.618 else "⚠️ (Valid)" if value > 1.0 else "❌ (Invalid)"
-            elif key == 'wave2_retrace':
-                text += "✅ (Ideal)" if 0.382 <= value <= 0.618 else "⚠️ (Valid)" if value < 1.0 else "❌ (Invalid)"
-            text += "\n"
-    if fib_time:
-        text += f"""
-⏰ FIBONACCI TIME ZONES:
-────────────────────────────────────────────────────────────────────────────────
-Avg Wave Duration: {fib_time.get('avg_wave_duration', 7):.1f} days
-Predicted Completion Dates:
-"""
-        for fib, date in fib_time.get('predicted_dates', {}).items():
-            text += f"  • {fib}: {date}\n"
-    text += f"""
-🔬 SUB-WAVE STRUCTURE:
-────────────────────────────────────────────────────────────────────────────────
-"""
-    for wave_name, sub_structure in sub_waves.items():
-        text += f"• {wave_name}: {sub_structure.get('structure', 'Unknown')}\n"
-        text += f"  Sub-waves: {'-'.join(sub_structure.get('sub_waves', []))}\n"
-    if volume_conf:
-        text += f"""
-📊 VOLUME CONFLUENCE:
-────────────────────────────────────────────────────────────────────────────────
-High Volume Levels: {', '.join([str(l) for l in volume_conf.get('high_volume_levels', [])])}
-Confluence Score: {volume_conf.get('confluence_score', 0)}/100
-"""
-    if order_flow:
-        text += f"""
-📈 ORDER FLOW ANALYSIS:
-────────────────────────────────────────────────────────────────────────────────
-Imbalance: {order_flow.get('imbalance', 'NEUTRAL')}
-"""
-    if ml_match:
-        text += f"""
-🤖 ML PATTERN MATCHING:
-────────────────────────────────────────────────────────────────────────────────
-Matched Pattern: {ml_match.get('matched_pattern', 'None')}
-Similarity: {ml_match.get('similarity_score', 0)*100:.1f}%
-Confidence: {ml_match.get('confidence', 'LOW')}
-"""
-    if confidence_score:
-        text += f"""
-🎯 CONFIDENCE SCORE:
-────────────────────────────────────────────────────────────────────────────────
-Total Score: {confidence_score.get('total_score', 0)}/100 ({confidence_score.get('percentage', 0):.0f}%)
-Rating: {confidence_score.get('rating', 'C')}
-"""
-    text += f"""
-⚠️ INVALIDATION LEVELS:
-────────────────────────────────────────────────────────────────────────────────
-"""
-    for level, price in wave_structure.get('invalidation', {}).items():
-        text += f"• {level}: {price:.2f}\n"
-    if alternates:
-        text += f"""
-🔄 ALTERNATE SCENARIOS:
-────────────────────────────────────────────────────────────────────────────────
-"""
-        for alt in alternates:
-            text += f"• {alt.get('scenario', '')} (Probability: {alt.get('probability', 'N/A')})\n"
-            text += f"  {alt.get('description', '')}\n"
-    text += f"""
-🎯 PREDICTION:
-────────────────────────────────────────────────────────────────────────────────
-"""
-    if current_wave == 'Wave 1':
-        text += "Currently in Wave 1. Expect Wave 2 pullback (38-62% retracement)."
-    elif current_wave == 'Wave 2':
-        text += "Currently in Wave 2. Expect Wave 3 strong impulse soon."
-    elif current_wave == 'Wave 3':
-        text += "Currently in Wave 3 - Strongest impulse! Expect continued momentum."
-    elif current_wave == 'Wave 4':
-        text += "Currently in Wave 4. Expect Wave 5 final impulse."
-    elif current_wave == 'Wave 5':
-        text += "Currently in Wave 5 - Final impulse. Watch for divergence Ugc!"
-    return text
-
-
-# =========================================================
-# SMC PATTERN DETECTION
-# =========================================================
-
-def detect_order_block(df, idx):
-    if df is None or idx < 5:
-        return None
-    recent = df.iloc[max(0, idx-5):idx+1]
-    result = []
-    for i in range(len(recent)-2, 0, -1):
-        if recent.iloc[i]['close'] < recent.iloc[i]['open']:
-            next_candles = recent.iloc[i+1:]
-            if len(next_candles) > 0:
-                avg_gain = (next_candles['close'].values - next_candles['open'].values).mean()
-                if avg_gain > 0:
-                    result.append('Bullish Order Block')
-            break
-    for i in range(len(recent)-2, 0, -1):
-        if recent.iloc[i]['close'] > recent.iloc[i]['open']:
-            next_candles = recent.iloc[i+1:]
-            if len(next_candles) > 0:
-                avg_loss = (next_candles['open'].values - next_candles['close'].values).mean()
-                if avg_loss > 0:
-                    result.append('Bearish Order Block')
-            break
-    return result if result else None
-
-def detect_fair_value_gap(df, idx):
-    if df is None or idx < 3:
-        return None
-    candle1 = df.iloc[idx-2]
-    candle3 = df.iloc[idx]
-    result = []
-    if candle1['low'] > candle3['high']:
-        result.append('Bullish FVG')
-    if candle1['high'] < candle3['low']:
-        result.append('Bearish FVG')
-    return result if result else None
-
-def detect_liquidity_pools(df, idx):
-    if df is None or idx < 20:
-        return None
-    recent = df.iloc[idx-20:idx]
-    highs = clean_array(recent['high'].values)
-    lows = clean_array(recent['low'].values)
-    result = []
-    high_tolerance = safe_mean(highs, 0) * 0.005
-    for i in range(len(highs)-1):
-        for j in range(i+1, len(highs)):
-            if abs(highs[i] - highs[j]) <= high_tolerance:
-                result.append('Buy Side Liquidity')
-                result.append('Equal Highs')
-                break
-        if 'Buy Side Liquidity' in result:
-            break
-    low_tolerance = safe_mean(lows, 0) * 0.005
-    for i in range(len(lows)-1):
-        for j in range(i+1, len(lows)):
-            if abs(lows[i] - lows[j]) <= low_tolerance:
-                result.append('Sell Side Liquidity')
-                result.append('Equal Lows')
-                break
-        if 'Sell Side Liquidity' in result:
-            break
-    current_price = df.iloc[idx]['close']
-    if current_price > safe_max(highs, current_price) * 1.001 or current_price < safe_min(lows, current_price) * 0.999:
-        result.append('Liquidity Sweep')
-    return result if result else None
-
-def detect_market_structure_smc(df, idx):
-    if df is None or idx < 30:
-        return None
-    recent = df.iloc[idx-30:idx]
-    highs = clean_array(recent['high'].values)
-    lows = clean_array(recent['low'].values)
-    result = []
-    swing_highs, swing_lows = find_swing_points(highs, lows, window=2)
-    if len(swing_highs) >= 2:
-        result.append('Higher High (HH)' if swing_highs[-1] > swing_highs[-2] else 'Lower High (LH)')
-    if len(swing_lows) >= 2:
-        result.append('Higher Low (HL)' if swing_lows[-1] > swing_lows[-2] else 'Lower Low (LL)')
-    if len(swing_highs) >= 2 and swing_highs[-1] > swing_highs[-2]:
-        result.append('Break of Structure (BOS)')
-    closes = clean_array(recent['close'].values)
-    current_price = closes[-1] if len(closes) > 0 else 0.0
-    if len(swing_highs) >= 2 and len(swing_lows) >= 2:
-        if current_price < swing_lows[-2] or current_price > swing_highs[-2]:
-            result.append('Change of Character (CHoCH) Ugc')
-    return result if result else None
-
-def detect_ote_entry(df, idx):
-    if df is None or idx < 20:
-        return None
-    recent = df.iloc[idx-20:idx]
-    swing_high = recent['high'].max()
-    swing_low = recent['low'].min()
-    current_price = df.iloc[idx]['close']
-    range_size = swing_high - swing_low
-    if range_size <= 0:
-        return None
-    result = []
-    fib_618 = swing_low + range_size * 0.618
-    fib_786 = swing_low + range_size * 0.786
-    if fib_618 <= current_price <= fib_786:
-        result.append('Optimal Trade Entry (OTE)')
-    return result if result else None
-
-
-# =========================================================
-# ORIGINAL PATTERN DETECTION
-# =========================================================
-
-def detect_cup_and_handle(df, idx):
-    if idx < 50: return False
-    recent = df.iloc[idx-50:idx]
-    highs, lows = clean_array(recent['high'].values), clean_array(recent['low'].values)
-    cup_bottom_idx = np.argmin(lows)
-    if cup_bottom_idx < 10 or cup_bottom_idx > 40: return False
-    left_rim = safe_max(highs[:cup_bottom_idx+5], 0)
-    right_rim = safe_max(highs[cup_bottom_idx+5:], 0)
-    if left_rim > 0 and abs(left_rim - right_rim) / left_rim > 0.05: return False
-    handle_high = safe_max(highs[-15:], 0)
-    return df.iloc[idx]['close'] > handle_high * 1.01
-
-def detect_double_bottom(df, idx):
-    if idx < 40: return False
-    lows = clean_array(df.iloc[idx-40:idx]['low'].values)
-    sorted_lows = np.argsort(lows)
-    if len(sorted_lows) < 2: return False
-    b1, b2 = sorted_lows[0], sorted_lows[1]
-    if abs(b1 - b2) < 10 or abs(b1 - b2) > 30: return False
-    if lows[b1] > 0 and abs(lows[b1] - lows[b2]) / lows[b1] > 0.03: return False
-    neckline = safe_max(df.iloc[idx-40:idx]['high'].values[min(b1,b2):max(b1,b2)+1], 0)
-    return df.iloc[idx]['close'] > neckline * 1.01
-
-def detect_head_and_shoulders(df, idx):
-    if idx < 60: return False
-    highs = clean_array(df.iloc[idx-60:idx]['high'].values)
-    peaks = [(i, highs[i]) for i in range(5, len(highs)-5) if highs[i] == max(highs[i-5:i+6])]
-    if len(peaks) < 3: return False
-    head = sorted(peaks, key=lambda x: x[1], reverse=True)[0]
-    left = right = None
-    for p in peaks:
-        if p[0] < head[0] and (left is None or p[1] > left[1]): left = p
-        elif p[0] > head[0] and (right is None or p[1] > right[1]): right = p
-    if left is None or right is None: return False
-    if left[1] > 0 and abs(left[1] - right[1]) / left[1] > 0.05: return False
-    if head[1] <= left[1] * 1.02: return False
-    return df.iloc[idx]['close'] < min(left[1], right[1]) * 0.99
-
-def detect_bull_flag(df, idx):
-    if idx < 30: return False
-    closes = clean_array(df.iloc[idx-30:idx]['close'].values)
-    highs = clean_array(df.iloc[idx-30:idx]['high'].values)
-    lows = clean_array(df.iloc[idx-30:idx]['low'].values)
-    if len(closes) <= 15: return False
-    if closes[0] > 0 and (closes[15] - closes[0]) / closes[0] < 0.10: return False
-    flag_high = safe_max(highs[-15:], 0)
-    flag_low = safe_min(lows[-15:], 0)
-    if flag_low > 0 and (flag_high - flag_low) / flag_low > 0.10: return False
-    return df.iloc[idx]['close'] > flag_high * 1.01
-
-def detect_ascending_triangle(df, idx):
-    if idx < 30: return False
-    highs = clean_array(df.iloc[idx-30:idx]['high'].values)
-    lows = clean_array(df.iloc[idx-30:idx]['low'].values)
-    resistance = np.percentile(highs, 90)
-    if sum(1 for h in highs if h >= resistance * 0.99) < 3: return False
-    if lows[0] > 0 and (lows[-1] - lows[0]) / lows[0] < 0.03: return False
-    return df.iloc[idx]['close'] > resistance * 1.01
-
-def detect_descending_triangle(df, idx):
-    if idx < 30: return False
-    highs = clean_array(df.iloc[idx-30:idx]['high'].values)
-    lows = clean_array(df.iloc[idx-30:idx]['low'].values)
-    support = np.percentile(lows, 10)
-    if sum(1 for l in lows if l <= support * 1.01) < 3: return False
-    if highs[0] > 0 and (highs[-1] - highs[0]) / highs[0] > -0.03: return False
-    return df.iloc[idx]['close'] < support * 0.99
-
-def detect_symmetrical_triangle(df, idx):
-    if idx < 30: return False
-    highs = clean_array(df.iloc[idx-30:idx]['high'].values)
-    lows = clean_array(df.iloc[idx-30:idx]['low'].values)
-    x = np.arange(len(highs))
-    try:
-        high_slope, _ = np.polyfit(x, highs, 1)
-        low_slope, _ = np.polyfit(x, lows, 1)
-        if high_slope < -0.001 and low_slope > 0.001:
-            return df.iloc[idx]['close'] > highs[-1] * 1.01 or df.iloc[idx]['close'] < lows[-1] * 0.99
-    except:
-        pass
-    return False
-
-def detect_rounding_bottom(df, idx):
-    if idx < 50: return False
-    closes = clean_array(df.iloc[idx-50:idx]['close'].values)
-    min_idx = np.argmin(closes)
-    left, right = closes[:min_idx], closes[min_idx+1:]
-    if len(left) < 10 or len(right) < 10: return False
-    left_trend = safe_divide(left[-1] - left[0], left[0]) if left[0] > 0 else 0
-    right_trend = safe_divide(right[-1] - right[0], right[0]) if right[0] > 0 else 0
-    if left_trend < -0.05 and right_trend > 0.05:
-        return df.iloc[idx]['close'] > np.percentile(closes, 90)
-    return False
-
-def detect_bullish_engulfing(df, idx):
-    if idx < 1: return False
-    prev, curr = df.iloc[idx-1], df.iloc[idx]
-    return (prev['close'] < prev['open'] and curr['close'] > curr['open'] and 
-            curr['open'] < prev['close'] and curr['close'] > prev['open'])
-
-def detect_hammer(df, idx):
-    row = df.iloc[idx]
-    body = abs(row['close'] - row['open'])
-    lower_shadow = min(row['open'], row['close']) - row['low']
-    return lower_shadow > body * 2 and row['high'] - max(row['open'], row['close']) < body * 0.3
-
-def detect_morning_star(df, idx):
-    if idx < 2: return False
-    c1, c2, c3 = df.iloc[idx-2], df.iloc[idx-1], df.iloc[idx]
-    return (c1['close'] < c1['open'] and abs(c2['close'] - c2['open']) < (c2['high'] - c2['low']) * 0.3 and
-            c3['close'] > c3['open'] and c3['close'] > (c1['open'] + c1['close']) / 2)
-
-def detect_doji(df, idx):
-    row = df.iloc[idx]
-    body = abs(row['close'] - row['open'])
-    total_range = row['high'] - row['low']
-    return total_range > 0 and body <= total_range * 0.1
-
-def detect_piercing_line(df, idx):
-    if idx < 1: return False
-    prev, curr = df.iloc[idx-1], df.iloc[idx]
-    return (prev['close'] < prev['open'] and curr['close'] > curr['open'] and
-            curr['open'] < prev['low'] and curr['close'] > (prev['open'] + prev['close']) / 2)
-
-def detect_three_white_soldiers(df, idx):
-    if idx < 2: return False
-    c1, c2, c3 = df.iloc[idx-2], df.iloc[idx-1], df.iloc[idx]
-    return (c1['close'] > c1['open'] and c2['close'] > c2['open'] and c3['close'] > c3['open'] and
-            c2['close'] > c1['close'] and c3['close'] > c2['close'])
-
-def detect_volume_spike(df, idx):
-    if idx < 20: return False
-    recent = clean_array(df['volume'].iloc[idx-20:idx].values)
-    std_recent = np.std(recent)
-    if std_recent == 0:
-        return False
-    zscore = (df.iloc[idx]['volume'] - safe_mean(recent, 0)) / std_recent
-    return zscore > 2.0
-
-def detect_bollinger_squeeze(df, idx):
-    if idx < 20 or 'bb_upper' not in df.columns: 
-        return False
-    recent = df.iloc[idx-20:idx]
-    if recent['bb_middle'].isna().any() or (recent['bb_middle'] == 0).any():
-        return False
-    bandwidth = (recent['bb_upper'] - recent['bb_lower']) / recent['bb_middle'].replace(0, np.nan)
-    bandwidth = bandwidth.dropna()
-    if len(bandwidth) < 5:
-        return False
-    current_bw = bandwidth.iloc[-1]
-    avg_bw = bandwidth.mean()
-    return current_bw < avg_bw * 0.5
-
-
-# =========================================================
-# COMPLETE PATTERN DETECTION
-# =========================================================
-
-def detect_all_patterns(df, idx):
-    detected = []
-    if detect_cup_and_handle(df, idx): detected.append('Cup and Handle')
-    if detect_double_bottom(df, idx): detected.append('Double Bottom')
-    if detect_head_and_shoulders(df, idx): detected.append('Head and Shoulders')
-    if detect_bull_flag(df, idx): detected.append('Bull Flag')
-    if detect_ascending_triangle(df, idx): detected.append('Ascending Triangle')
-    if detect_descending_triangle(df, idx): detected.append('Descending Triangle')
-    if detect_symmetrical_triangle(df, idx): detected.append('Symmetrical Triangle')
-    if detect_rounding_bottom(df, idx): detected.append('Rounding Bottom')
-    if detect_bullish_engulfing(df, idx): detected.append('Bullish Engulfing')
-    if detect_hammer(df, idx): detected.append('Hammer')
-    if detect_morning_star(df, idx): detected.append('Morning Star')
-    if detect_doji(df, idx): detected.append('Doji')
-    if detect_piercing_line(df, idx): detected.append('Piercing Line')
-    if detect_three_white_soldiers(df, idx): detected.append('Three White Soldiers')
-    if detect_volume_spike(df, idx): detected.append('Volume Climax')
-    if detect_bollinger_squeeze(df, idx): detected.append('Bollinger Band Squeeze')
-    for func in [detect_order_block, detect_fair_value_gap, detect_liquidity_pools, detect_market_structure_smc, detect_ote_entry]:
-        try:
-            res = func(df, idx)
-            if res: detected.extend(res)
-        except:
-            pass
-    try:
-        candlestick_patterns = detect_all_candlestick_patterns(df, idx)
-        detected.extend(candlestick_patterns)
-    except:
-        pass
-    final_patterns = list(set(detected))
-    if final_patterns and idx % 100 == 0:
-        symbol = df.iloc[idx].get('symbol', 'UNKNOWN') if 'symbol' in df.columns else 'UNKNOWN'
-        print(f"      ✅ {symbol} at idx {idx}: {len(final_patterns)} patterns")
-    return final_patterns
-
-
-# =========================================================
-# DATA GENERATION FUNCTIONS
-# =========================================================
-
-def generate_elliott_wave_data(symbol, df_row, pattern_type, config, indicator_values, metrics, variation_idx=0, symbol_data=None, idx=None):
-    if config.get('category') not in ['Motive Wave', 'Corrective Wave', 'Wave Relationships', 'Combination']:
-        return generate_complete_pattern_data(symbol, df_row, pattern_type, config, indicator_values, metrics, variation_idx, symbol_data, idx)
-    current_price = float(df_row['close']) if not np.isnan(df_row['close']) else 100.0
-    current_date = df_row['date']
-    sector = df_row.get('sector', 'Unknown')
-    rsi = float(indicator_values.get('rsi', 50))
-    macd = float(indicator_values.get('macd', 0))
-    macd_signal = float(indicator_values.get('macd_signal', 0))
-    stoch_k = float(indicator_values.get('stoch_k', 50))
-    stoch_d = float(indicator_values.get('stoch_d', 50))
-    atr = float(indicator_values.get('atr', current_price * 0.02))
-    volume = float(indicator_values.get('volume', 1000000))
-    rsi_div = indicator_values.get('rsi_divergence', 'None')
-    macd_div = indicator_values.get('macd_divergence', 'None')
-    avg_vol = float(indicator_values.get('avg_volume', volume))
-    ema_20 = float(indicator_values.get('ema_20', current_price))
-    sma_20 = float(indicator_values.get('sma_20', current_price))
-    atr_value = atr if atr > 0 else current_price * 0.02
-    if config['bias'] == 'Bullish':
-        entry, stop = current_price, current_price - atr_value * 1.5
-        target = entry + abs(entry - stop) * random.uniform(1.5, 3.0)
-    elif config['bias'] == 'Bearish':
-        entry, stop = current_price, current_price + atr_value * 1.5
-        target = entry - abs(entry - stop) * random.uniform(1.5, 3.0)
-    else:
-        entry, stop = current_price, current_price - atr_value * 2
-        target = entry + abs(entry - stop) * random.uniform(1.0, 2.0)
-    confidence = 50
-    confidence += (macd > macd_signal and config['bias'] == 'Bullish') * 10
-    confidence += (macd < macd_signal and config['bias'] == 'Bearish') * 10
-    confidence += (rsi < 40 and config['bias'] == 'Bullish') * 5
-    confidence += (rsi > 60 and config['bias'] == 'Bearish') * 5
-    confidence += (volume > avg_vol * 1.5) * 5
-    confidence += (metrics.get('relative_strength', 0) > 0.6) * 5
-    confidence += (rsi_div != 'None') * random.randint(3, 6)
-    confidence += (macd_div != 'None') * random.randint(2, 5)
-    sector_analysis = get_sector_analysis(sector, symbol, current_price)
-    confidence += sector_analysis.get('confidence_boost', 0)
-    confidence = min(95, max(30, confidence + random.uniform(-5, 5)))
-    rr_ratio = safe_divide(abs(target - entry), abs(entry - stop), 1)
-    volume_spike = "Yes" if volume > avg_vol * 1.5 else "No"
-    variation_note = f" [VARIATION {variation_idx + 1}]" if variation_idx > 0 else " [ORIGINAL SEQUENCE]"
-    pattern_display = pattern_type if random.random() < 0.5 else "Unknown Pattern"
-    price_header = "PRICE SNAPSHOT:" if random.random() < 0.3 else "📊 PRICE DATA:"
-    sector_details = f"""
-🏭 SECTOR INFORMATION:
-────────────────────────────────────────────────────────────────────────────────
-Sector: {sector}
-Sector Strength: {sector_analysis.get('strength', 'Neutral')}
-Sector Rotation Signal: {sector_analysis.get('rotation', 'None')}
-Peer Comparison: {sector_analysis.get('peer_rank', 'N/A')}
-"""
-    price_sequence_text = ""
-    if symbol_data is not None and idx is not None:
-        price_sequence_text, bos_detected, vol_spike, high_vol = generate_advanced_price_sequence(symbol_data, idx)
-        if bos_detected: confidence += 10
-        if vol_spike: confidence += 5
-        if high_vol: confidence += 3
-    wyckoff_text = ""
-    if symbol_data is not None and idx is not None:
-        wyckoff_text, wyckoff_data = detect_volume_price_cycle(symbol_data, idx)
-        confidence += wyckoff_data.get('confidence_boost', 0)
-    forward_text = ""
-    if symbol_data is not None and idx is not None:
-        forward_text = generate_forward_looking_analysis(symbol_data, idx)
-    pa_report, trend_lines, channels, rays, fib_ext, vol_profile, pa_predictions = "", None, None, None, None, None, None
-    try:
-        pa_report, trend_lines, channels, rays, fib_ext, vol_profile, pa_predictions = analyze_price_action_complete(symbol_data, idx)
-    except:
-        pass
-    liquidity_info = detect_fixed_range_liquidity(symbol_data) if symbol_data is not None else None
-    gap_info = analyze_gaps(symbol_data, idx) if symbol_data is not None else None
-    vol_skew = analyze_volatility_skew(symbol_data) if symbol_data is not None else None
-    zscore_info = calculate_zscore_signals(symbol_data) if symbol_data is not None else None
-    lstm_pred = predict_price_lstm(symbol_data) if symbol_data is not None else None
-    risk_metrics = calculate_risk_metrics(symbol_data) if symbol_data is not None else None
-    supply_demand = detect_supply_demand_zones(symbol_data, idx) if symbol_data is not None else None
-    anchor_idx = max(0, idx - 50) if idx is not None else 0
-    anchored_vwap = calculate_anchored_vwap(symbol_data, anchor_idx) if symbol_data is not None else None
-    order_book = simulate_order_book(symbol_data, idx) if symbol_data is not None else None
-    additional_analysis = ""
-    if liquidity_info:
-        additional_analysis += f"""
-💧 FIXED RANGE LIQUIDITY:
-────────────────────────────────────────────────────────────────────────────────
-Highest Liquidity: {liquidity_info['highest_liquidity']}
-Current Position: {liquidity_info['current_position']}
-Top Levels: {', '.join([str(l[0]) for l in liquidity_info['liquidity_levels'][:3]])}
-"""
-    if gap_info and gap_info['type'] != 'NO_GAP':
-        additional_analysis += f"""
-🚀 GAP ANALYSIS:
-────────────────────────────────────────────────────────────────────────────────
-Type: {gap_info['type']}
-Gap: {gap_info['gap_percent']:.2f}%
-Fill Probability: {gap_info['fill_probability']:.1f}%
-Expected Fill: {gap_info['expected_fill_days']} days
-"""
-    if vol_skew:
-        additional_analysis += f"""
-📉 VOLATILITY SKEW:
-────────────────────────────────────────────────────────────────────────────────
-5d Vol: {vol_skew['vol_5d']:.2f}% | 20d Vol: {vol_skew['vol_20d']:.2f}%
-Term Structure: {vol_skew['term_structure']}
-Signal: {vol_skew['signal']}
-"""
-    if zscore_info:
-        additional_analysis += f"""
-📊 Z-SCORE (Mean Reversion):
-────────────────────────────────────────────────────────────────────────────────
-Z-Score: {zscore_info['zscore']:.2f}
-Signal: {zscore_info['signal']}
-Target: {zscore_info['mean_reversion_target']:.2f}
-Confidence: {zscore_info['confidence']:.1f}%
-"""
-    if lstm_pred:
-        additional_analysis += f"""
-🤖 LSTM PRICE PREDICTION:
-────────────────────────────────────────────────────────────────────────────────
-Method: {lstm_pred['method']}
-Forecast ({lstm_pred['forecast_days']} days): {', '.join([f'{p:.2f}' for p in lstm_pred['predictions'][:3]])}
-Trend: {lstm_pred['trend']} | Confidence: {lstm_pred['confidence']:.1f}%
-"""
-    if risk_metrics:
-        additional_analysis += f"""
-⚠️ RISK METRICS:
-────────────────────────────────────────────────────────────────────────────────
-VaR (95%): {risk_metrics['var_95']:.2f}% | CVaR: {risk_metrics['cvar_95']:.2f}%
-Sharpe: {risk_metrics['sharpe_ratio']:.2f} | Sortino: {risk_metrics['sortino_ratio']:.2f}
-Max Drawdown: {risk_metrics['max_drawdown']:.2f}%
-Risk Level: {risk_metrics['risk_level']}
-"""
-    if supply_demand:
-        additional_analysis += f"""
-📦 SUPPLY/DEMAND ZONES:
-────────────────────────────────────────────────────────────────────────────────
-"""
-        for zone in supply_demand[:2]:
-            additional_analysis += f"• {zone['type']}: {zone['level_low']:.2f} - {zone['level_high']:.2f} ({zone['freshness']}, {zone['strength']})\n"
-    if anchored_vwap:
-        additional_analysis += f"""
-⚓ ANCHORED VWAP (50 bars):
-────────────────────────────────────────────────────────────────────────────────
-VWAP: {anchored_vwap['anchored_vwap']:.2f}
-Deviation: {anchored_vwap['deviation']:.2f}%
-Position: {anchored_vwap['position']} | Signal: {anchored_vwap['signal']}
-"""
-    if order_book:
-        additional_analysis += f"""
-📖 ORDER BOOK (Simulated):
-────────────────────────────────────────────────────────────────────────────────
-Bid/Ask Ratio: {order_book['bid_ask_ratio']:.2f}
-Imbalance: {order_book['imbalance']}
-Support: {order_book['nearest_support']:.2f} | Resistance: {order_book['nearest_resistance']:.2f}
-"""
-    elliott_complete_text = ""
-    if symbol_data is not None and idx is not None:
-        try:
-            mt_wave = detect_elliott_wave_multi_timeframe(symbol_data, idx)
-            if mt_wave and mt_wave.get('higher_timeframe'):
-                elliott_complete = mt_wave['higher_timeframe']
-                elliott_complete_text = elliott_complete['prediction_text']
-                confidence += elliott_complete.get('confidence', 0) // 5
-                elliott_complete_text += f"\n\n🔄 MULTI-TIMEFRAME CONFLUENCE: {mt_wave.get('confluence_score', 0)}%\n"
-                elliott_complete_text += f"Recommendation: {mt_wave.get('recommendation', 'MODERATE')} Ugc"
-        except:
-            pass
-    global elliott_backtester
-    if elliott_backtester is None:
-        elliott_backtester = ElliottWaveBacktester()
-    pred_id = elliott_backtester.add_prediction(symbol, current_date, pattern_type, target, current_price)
-    training_text = f"""
-================================================================================
-Elliott Wave Pattern: {pattern_display}{variation_note}
-Symbol: {symbol}
-Date: {current_date}
-================================================================================
-
-{sector_details}
-{price_sequence_text}
-{wyckoff_text}
-{pa_report}
-{additional_analysis}
-{elliott_complete_text}
-{forward_text}
-
-{price_header}
-────────────────────────────────────────────────────────────────────────────────
-Open: {df_row['open']:.2f} | High: {df_row['high']:.2f} | Low: {df_row['low']:.2f}
-Close: {current_price:.2f} | Volume: {volume:,}
-
-📈 TECHNICAL INDICATORS:
-────────────────────────────────────────────────────────────────────────────────
-🔹 RSI (14): {rsi:.1f} | Status: {'Oversold' if rsi < 30 else 'Overbought' if rsi > 70 else 'Neutral'}
-   Divergence: {rsi_div}
-
-🔹 MACD: {macd:.4f} | Signal: {macd_signal:.4f}
-   Status: {'Bullish' if macd > macd_signal else 'Bearish'}
-   Divergence: {macd_div}
-
-🔹 Stochastic: %K={stoch_k:.1f} | %D={stoch_d:.1f}
-🔹 ATR: {atr_value:.2f} | ATR %: {(atr_value / current_price * 100):.2f}%
-🔹 Volume Spike: {volume_spike}
-
-📐 ELLIOTT WAVE ANALYSIS:
-────────────────────────────────────────────────────────────────────────────────
-Pattern Type: {pattern_type}
-Category: {config['category']}
-Wave Structure: {config['structure']}
-Bias: {config['bias']}
-Wave Degree: {config['degree']}
-Fibonacci Ratios: {config['fib_ratios']}
-
-🎯 WAVE SPECIFICATIONS:
-────────────────────────────────────────────────────────────────────────────────
-{config['specifications']}
-
-💰 TRADING SETUP:
-────────────────────────────────────────────────────────────────────────────────
-Entry Price: {entry:.2f}
-Stop Loss: {stop:.2f}
-Target: {target:.2f}
-Risk-Reward Ratio: {rr_ratio:.2f}
-Signal Strength: {confidence:.1f}%
-
-📝 RECOMMENDATION:
-────────────────────────────────────────────────────────────────────────────────
-{'✅ BUY - Wave ' + config['wave_position'] if config['bias'] == 'Bullish' else '❌ SELL - Wave ' + config['wave_position'] if config['bias'] == 'Bearish' else '⏳ WAIT - Wave ' + config['wave_position']}
-
-Wave Count: {config['wave_count']}
-Invalidation Level: {config['invalidation']}
-
-Additional Confirmation:
-{'- RSI divergence confirms' if rsi_div != 'None' else '- No divergence'}
-{'- Volume supports' if volume_spike == 'Yes' else '- Volume needs confirmation'}
-{sector_analysis.get('additional_note', '')}
-
-================================================================================
-"""
-    return training_text
-
-
-def get_elliott_wave_patterns():
-    return {
-        'Impulse Wave': {'category': 'Motive Wave', 'structure': '5-3-5-3-5', 'bias': 'Bullish', 'degree': 'Primary/Intermediate/Minor', 'fib_ratios': 'Wave 2: 0.382-0.618, Wave 3: 1.618-2.618', 'specifications': 'Wave 1: Initial move\nWave 2: Retracement\nWave 3: Strongest\nWave 4: Correction\nWave 5: Divergence', 'wave_position': '3', 'wave_count': '1-2-3-4-5', 'invalidation': 'Below Wave 1 start'},
-        'Leading Diagonal': {'category': 'Motive Wave', 'structure': '5-3-5-3-5', 'bias': 'Bullish/Bearish', 'degree': 'Primary/Intermediate', 'fib_ratios': 'Wave 3: 1.0-1.618', 'specifications': 'Occurs in Wave 1 or A\nOverlapping waves', 'wave_position': '1 or A', 'wave_count': '1-2-3-4-5', 'invalidation': 'Structural violation'},
-        'Ending Diagonal': {'category': 'Motive Wave', 'structure': '3-3-3-3-3', 'bias': 'Bullish/Bearish', 'degree': 'Intermediate/Minor', 'fib_ratios': 'Wave 3: 1.0-1.382', 'specifications': 'Occurs in Wave 5 or C\nTerminal pattern', 'wave_position': '5 or C', 'wave_count': '1-2-3-4-5', 'invalidation': 'Pattern expansion'},
-        '3rd Wave Extension': {'category': 'Motive Wave', 'structure': '5-3-5-3-5', 'bias': 'Bullish', 'degree': 'Primary/Intermediate', 'fib_ratios': 'Wave 3 = 1.618-2.618 x Wave 1', 'specifications': 'Most common extension\nStrongest momentum', 'wave_position': '3', 'wave_count': '1-2-[3-3-3-3-3]-4-5', 'invalidation': 'Below Wave 1 high'},
-        '5th Wave Extension': {'category': 'Motive Wave', 'structure': '5-3-5-3-5', 'bias': 'Bullish/Bearish', 'degree': 'Intermediate/Minor', 'fib_ratios': 'Wave 5 = 0.618-1.618 x Wave 1', 'specifications': 'Terminal move\nDivergence', 'wave_position': '5', 'wave_count': '1-2-3-4-[5-5-5-5-5]', 'invalidation': 'Divergence confirmed'},
-        'Single Zigzag': {'category': 'Corrective Wave', 'structure': '5-3-5', 'bias': 'Neutral', 'degree': 'Any', 'fib_ratios': 'Wave B = 0.382-0.786, Wave C = 0.618-1.618', 'specifications': 'Sharp correction', 'wave_position': 'ABC', 'wave_count': 'A-B-C', 'invalidation': 'Complex structure'},
-        'Double Zigzag': {'category': 'Corrective Wave', 'structure': '5-3-5-3-5', 'bias': 'Neutral', 'degree': 'Intermediate/Minor', 'fib_ratios': 'Wave Y = 0.618-1.618 x Wave W', 'specifications': 'Two zigzags connected', 'wave_position': 'W-X-Y', 'wave_count': 'W-X-Y', 'invalidation': 'Triple zigzag'},
-        'Regular Flat': {'category': 'Corrective Wave', 'structure': '3-3-5', 'bias': 'Neutral', 'degree': 'Any', 'fib_ratios': 'Wave B = 0.90-1.05, Wave C = 1.0 x Wave A', 'specifications': 'Sideways correction', 'wave_position': 'A-B-C', 'wave_count': 'A-B-C', 'invalidation': 'B > 1.05 x A'},
-        'Expanded Flat': {'category': 'Corrective Wave', 'structure': '3-3-5', 'bias': 'Neutral', 'degree': 'Intermediate/Minor', 'fib_ratios': 'Wave B = 1.05-1.382 x Wave A', 'specifications': 'Wave B exceeds A start', 'wave_position': 'A-B-C', 'wave_count': 'A-B-C', 'invalidation': 'Wave C extreme'},
-        'Contracting Triangle': {'category': 'Corrective Wave', 'structure': '3-3-3-3-3', 'bias': 'Neutral', 'degree': 'Any', 'fib_ratios': 'Wave E = 0.618-0.786 x Wave C', 'specifications': '5 waves contracting', 'wave_position': '4 or B', 'wave_count': 'A-B-C-D-E', 'invalidation': 'Triangle expands'},
-        'Expanding Triangle': {'category': 'Corrective Wave', 'structure': '3-3-3-3-3', 'bias': 'Neutral', 'degree': 'Intermediate/Minor', 'fib_ratios': 'Wave E = 1.236-1.382 x Wave C', 'specifications': '5 waves expanding', 'wave_position': '4 or B', 'wave_count': 'A-B-C-D-E', 'invalidation': 'Triangle contracts'},
-    }
-
-
-def get_all_patterns():
-    patterns = {
-        'Cup and Handle': {'category': 'Continuation', 'bias': 'Bullish', 'timeframe': 'Swing', 'entry': 'Breakout above handle', 'stop': 'Below handle low', 'target': 'Measure cup depth'},
-        'Ascending Triangle': {'category': 'Continuation', 'bias': 'Bullish', 'timeframe': 'Swing', 'entry': 'Breakout above resistance', 'stop': 'Below higher low', 'target': 'Height of triangle'},
-        'Bull Flag': {'category': 'Continuation', 'bias': 'Bullish', 'timeframe': 'Short-term', 'entry': 'Breakout of flag', 'stop': 'Below flag low', 'target': 'Flagpole length'},
-        'Double Bottom': {'category': 'Reversal', 'bias': 'Bullish', 'timeframe': 'Swing', 'entry': 'Break above neckline', 'stop': 'Below bottom', 'target': 'Pattern height'},
-        'Head and Shoulders': {'category': 'Reversal', 'bias': 'Bearish', 'timeframe': 'Swing', 'entry': 'Breakdown neckline', 'stop': 'Above right shoulder', 'target': 'Height'},
-        'Hammer': {'category': 'Candlestick', 'bias': 'Bullish', 'timeframe': 'Intraday', 'entry': 'Confirm next green', 'stop': 'Below wick', 'target': 'Recent resistance'},
-        'Bullish Engulfing': {'category': 'Candlestick', 'bias': 'Bullish', 'timeframe': 'Intraday', 'entry': 'Engulfing close', 'stop': 'Below candle', 'target': 'Resistance'},
-        'Doji': {'category': 'Candlestick', 'bias': 'Neutral', 'timeframe': 'Intraday', 'entry': 'Wait breakout', 'stop': 'High/low', 'target': 'Next move'},
-        'Volume Climax': {'category': 'Volume', 'bias': 'Reversal', 'timeframe': 'Any', 'entry': 'Spike volume', 'stop': 'Recent extreme', 'target': 'Reversal zone'},
-        'Bollinger Band Squeeze': {'category': 'Volatility', 'bias': 'Breakout', 'timeframe': 'Any', 'entry': 'Expansion', 'stop': 'Opp band', 'target': 'Move'},
-        'Break of Structure (BOS)': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Swing', 'entry': 'Retest', 'stop': 'Beyond swing', 'target': 'Next structure'},
-        'Bullish Order Block': {'category': 'SMC', 'bias': 'Bullish', 'timeframe': 'Any', 'entry': 'OB retest', 'stop': 'Below OB', 'target': 'Next liquidity'},
-        'Fair Value Gap (FVG)': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'FVG fill', 'stop': 'Beyond FVG', 'target': 'Next OB'},
-        'Optimal Trade Entry (OTE)': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Short-term', 'entry': '0.618-0.786 Fib', 'stop': 'Beyond 0.786', 'target': 'Swing high/low'},
-    }
-    patterns.update(get_elliott_wave_patterns())
-    return patterns
-
-
-def generate_complete_pattern_data(symbol, df_row, pattern_type, config, indicator_values, metrics, variation_idx=0, symbol_data=None, idx=None):
-    current_price = float(df_row['close']) if not np.isnan(df_row['close']) else 100.0
-    current_date = df_row['date']
-    sector = df_row.get('sector', 'Unknown')
-    rsi = float(indicator_values.get('rsi', 50))
-    macd = float(indicator_values.get('macd', 0))
-    macd_signal = float(indicator_values.get('macd_signal', 0))
-    stoch_k = float(indicator_values.get('stoch_k', 50))
-    atr = float(indicator_values.get('atr', current_price * 0.02))
-    volume = float(indicator_values.get('volume', 1000000))
-    rsi_div = indicator_values.get('rsi_divergence', 'None')
-    avg_vol = float(indicator_values.get('avg_volume', volume))
-    atr_value = atr if atr > 0 else current_price * 0.02
-    if config['bias'] == 'Bullish':
-        entry, stop = current_price, current_price - atr_value * 1.5
-        target = entry + abs(entry - stop) * random.uniform(1.5, 3.0)
-    elif config['bias'] == 'Bearish':
-        entry, stop = current_price, current_price + atr_value * 1.5
-        target = entry - abs(entry - stop) * random.uniform(1.5, 3.0)
-    else:
-        entry, stop = current_price, current_price - atr_value * 2
-        target = entry + abs(entry - stop) * random.uniform(1.0, 2.0)
-    confidence = 50
-    confidence += (macd > macd_signal and config['bias'] == 'Bullish') * 10
-    confidence += (macd < macd_signal and config['bias'] == 'Bearish') * 10
-    confidence += (rsi < 40 and config['bias'] == 'Bullish') * 5
-    confidence += (rsi > 60 and config['bias'] == 'Bearish') * 5
-    confidence += (volume > avg_vol * 1.5) * 5
-    sector_analysis = get_sector_analysis(sector, symbol, current_price)
-    confidence += sector_analysis.get('confidence_boost', 0)
-    confidence = min(95, max(30, confidence + random.uniform(-5, 5)))
-    rr_ratio = safe_divide(abs(target - entry), abs(entry - stop), 1)
-    volume_spike = "Yes" if volume > avg_vol * 1.5 else "No"
-    variation_note = f" [VARIATION {variation_idx + 1}]" if variation_idx > 0 else " [ORIGINAL SEQUENCE]"
-    pattern_display = pattern_type if random.random() < 0.5 else "Unknown Pattern"
-    sector_details = f"""
-🏭 SECTOR: {sector} | Strength: {sector_analysis.get('strength', 'Neutral')} | Rotation: {sector_analysis.get('rotation', 'None')}
-"""
-    price_sequence_text = ""
-    if symbol_data is not None and idx is not None:
-        try:
-            price_sequence_text, _, _, _ = generate_advanced_price_sequence(symbol_data, idx)
-        except:
-            pass
-    wyckoff_text = ""
-    if symbol_data is not None and idx is not None:
-        try:
-            wyckoff_text, _ = detect_volume_price_cycle(symbol_data, idx)
-        except:
-            pass
-    forward_text = ""
-    if symbol_data is not None and idx is not None:
-        try:
-            forward_text = generate_forward_looking_analysis(symbol_data, idx)
-        except:
-            pass
-    pa_report = ""
-    try:
-        if symbol_data is not None and idx is not None:
-            pa_report, _, _, _, _, _, _ = analyze_price_action_complete(symbol_data, idx)
-    except:
-        pass
-    liquidity_info = detect_fixed_range_liquidity(symbol_data) if symbol_data is not None else None
-    zscore_info = calculate_zscore_signals(symbol_data) if symbol_data is not None else None
-    risk_metrics = calculate_risk_metrics(symbol_data) if symbol_data is not None else None
-    additional_analysis = ""
-    if liquidity_info:
-        additional_analysis += f"\n💧 Highest Liquidity: {liquidity_info['highest_liquidity']} ({liquidity_info['current_position']})"
-    if zscore_info:
-        additional_analysis += f"\n📊 Z-Score: {zscore_info['zscore']:.2f} ({zscore_info['signal']})"
-    if risk_metrics:
-        additional_analysis += f"\n⚠️ VaR: {risk_metrics['var_95']:.2f}% | Sharpe: {risk_metrics['sharpe_ratio']:.2f}"
-    return f"""
-================================================================================
-Pattern: {pattern_display}{variation_note}
-Symbol: {symbol}
-Date: {current_date}
-================================================================================
-
-{sector_details}
-{price_sequence_text}
-{wyckoff_text}
-{pa_report}
-{forward_text}
-{additional_analysis}
-
-📊 PRICE DATA:
-────────────────────────────────────────────────────────────────────────────────
-Open: {df_row['open']:.2f} | High: {df_row['high']:.2f} | Low: {df_row['low']:.2f}
-Close: {current_price:.2f} | Volume: {volume:,}
-
-📈 TECHNICAL INDICATORS:
-────────────────────────────────────────────────────────────────────────────────
-🔹 RSI (14): {rsi:.1f} | Divergence: {rsi_div}
-🔹 MACD: {macd:.4f} | Signal: {macd_signal:.4f}
-🔹 Stochastic: %K={stoch_k:.1f}
-🔹 ATR: {atr_value:.2f} | Volume Spike: {volume_spike}
-
-🎯 PATTERN ANALYSIS:
-────────────────────────────────────────────────────────────────────────────────
-Pattern: {pattern_type} | Category: {config['category']} | Bias: {config['bias']}
-Entry: {config['entry']} | Stop: {config['stop']} | Target: {config['target']}
-
-💰 TRADING SETUP:
-────────────────────────────────────────────────────────────────────────────────
-Entry: {entry:.2f} | Stop: {stop:.2f} | Target: {target:.2f}
-Risk-Reward: {rr_ratio:.2f} | Confidence: {confidence:.1f}%
-
-📝 RECOMMENDATION:
-────────────────────────────────────────────────────────────────────────────────
-{'✅ BUY' if config['bias'] == 'Bullish' else '❌ SELL' if config['bias'] == 'Bearish' else '⏳ WAIT'} at {entry:.2f}
-{sector_analysis.get('additional_note', '')}
-
-================================================================================
-"""
-
-
-# =========================================================
-# MAIN FUNCTION
-# =========================================================
-
-def main():
-    global elliott_backtester, TOTAL_PATTERNS, MAX_PER_SYMBOL
-    elliott_backtester = ElliottWaveBacktester()
-
-    print("="*80)
-    print("🚀 COMPLETE PATTERN TRAINING DATA GENERATOR (AUTO CONFIG)")
-    print("   (130+ Patterns + Elliott Wave + SMC + Price Action + Multi-Timeframe + ML + Backtesting + Risk Metrics)")
-    print("="*80)
-
-    csv_path = "./csv/mongodb.csv"
-    if not os.path.exists(csv_path):
-        print(f"❌ {csv_path} not found!")
-        return
-
-    df = pd.read_csv(csv_path)
-    df['date'] = pd.to_datetime(df['date'])
-    
-    essential_cols = ['open', 'high', 'low', 'close', 'volume']
-    df = df.dropna(subset=essential_cols)
-    df = df.replace([np.inf, -np.inf], np.nan)
-    df = df.dropna(subset=essential_cols)
-    
-    print(f"✅ Loaded {len(df)} rows, {df['symbol'].nunique()} symbols")
-
-    all_patterns = get_all_patterns()
-    TOTAL_PATTERNS = len(all_patterns)
-    print(f"✅ Loaded {TOTAL_PATTERNS} pattern configurations")
-
-    # Priority-based limits
-    pattern_limits = {}
-    for pattern_name in all_patterns.keys():
-        min_ex, max_ex, multiplier = get_pattern_limits(pattern_name)
-        pattern_limits[pattern_name] = {'min': min_ex, 'max': max_ex, 'multiplier': multiplier}
-
-    NUM_VARIATIONS = 4
-    MAX_PER_SYMBOL = TOTAL_PATTERNS * BASE_MIN_EXAMPLES * NUM_VARIATIONS // MAX_SYMBOLS * 3
-    print(f"✅ Auto MAX_PER_SYMBOL: {MAX_PER_SYMBOL}")
-    print(f"✅ NUM_VARIATIONS: {NUM_VARIATIONS}")
-    print(f"✅ Priority-based: Elliott Wave (3.0x) | SMC (2.5x) | Divergence (2.0x) | Candlestick (1.5x)")
-    print("="*80)
-
-    training_data = []
-    symbols_processed = 0
-    pattern_counts = defaultdict(int)
-    symbol_pattern_counts = defaultdict(lambda: defaultdict(int))
-    category_counts = defaultdict(int)
-
-    for symbol in df['symbol'].unique():
-        symbol_data = df[df['symbol'] == symbol].sort_values('date').reset_index(drop=True)
-
-        if len(symbol_data) < 30:
-            print(f"   ⚠️ {symbol}: only {len(symbol_data)} rows - SKIPPED")
-            continue
-
-        print(f"\n🔄 Processing {symbol} ({len(symbol_data)} rows)")
-
-        close_prices = symbol_data['close']
-        high_prices = symbol_data['high']
-        low_prices = symbol_data['low']
-        volumes = symbol_data['volume']
-
-        rsi_series = calculate_rsi(close_prices)
-        macd_line, macd_signal, macd_hist = calculate_macd(close_prices)
-        stoch_k, stoch_d = calculate_stochastic(high_prices, low_prices, close_prices)
-        obv_series = calculate_obv(close_prices, volumes)
-        ema_20 = calculate_ema(close_prices, 20)
-        sma_20 = calculate_sma(close_prices, 20)
-        bb_upper, bb_middle, bb_lower = calculate_bollinger_bands(close_prices)
-        atr_series = calculate_atr(high_prices, low_prices, close_prices)
-        avg_volume = volumes.rolling(20).mean()
-
-        symbol_data['rsi'] = rsi_series
-        symbol_data['bb_upper'] = bb_upper
-        symbol_data['bb_middle'] = bb_middle
-        symbol_data['bb_lower'] = bb_lower
-
-        market_regime = detect_market_regime(close_prices)
-        print(f"   📊 Market regime: {market_regime}")
-
-        row_count = 0
-        step = 1 if len(symbol_data) < 500 else 2
-
-        for idx in range(50, len(symbol_data), step):
-            detected_patterns = detect_all_patterns(symbol_data, idx)
-
-            if not detected_patterns:
-                continue
-
-            row = symbol_data.iloc[idx]
-            indicator_values = {
-                'rsi': float(rsi_series.iloc[idx]) if idx < len(rsi_series) and not np.isnan(rsi_series.iloc[idx]) else 50,
-                'macd': float(macd_line.iloc[idx]) if idx < len(macd_line) and not np.isnan(macd_line.iloc[idx]) else 0,
-                'macd_signal': float(macd_signal.iloc[idx]) if idx < len(macd_signal) and not np.isnan(macd_signal.iloc[idx]) else 0,
-                'stoch_k': float(stoch_k.iloc[idx]) if idx < len(stoch_k) and not np.isnan(stoch_k.iloc[idx]) else 50,
-                'stoch_d': float(stoch_d.iloc[idx]) if idx < len(stoch_d) and not np.isnan(stoch_d.iloc[idx]) else 50,
-                'obv': float(obv_series.iloc[idx]) if idx < len(obv_series) and not np.isnan(obv_series.iloc[idx]) else 0,
-                'atr': float(atr_series.iloc[idx]) if idx < len(atr_series) and not np.isnan(atr_series.iloc[idx]) else row['close'] * 0.02,
-                'ema_20': float(ema_20.iloc[idx]) if idx < len(ema_20) and not np.isnan(ema_20.iloc[idx]) else row['close'],
-                'sma_20': float(sma_20.iloc[idx]) if idx < len(sma_20) and not np.isnan(sma_20.iloc[idx]) else row['close'],
-                'volume': float(volumes.iloc[idx]) if not np.isnan(volumes.iloc[idx]) else 1000000,
-                'avg_volume': float(avg_volume.iloc[idx]) if idx < len(avg_volume) and not np.isnan(avg_volume.iloc[idx]) else float(volumes.iloc[idx]),
-                'rsi_divergence': 'None',
-                'macd_divergence': 'None',
-            }
-
-            pattern_high, pattern_low = float(row['high']), float(row['low'])
-            real_sequence = close_prices.iloc[max(0, idx-30):idx+1].values
-
-            sorted_patterns = sorted(detected_patterns, key=lambda p: PATTERN_PRIORITY.get(p, DEFAULT_PRIORITY), reverse=True)
-
-            for pattern_name in sorted_patterns[:5]:
-                if pattern_name not in all_patterns:
-                    continue
-
-                limits = pattern_limits.get(pattern_name, {'min': BASE_MIN_EXAMPLES, 'max': BASE_MAX_EXAMPLES})
-                global_pattern_count = pattern_counts[pattern_name]
-                symbol_pattern_count = symbol_pattern_counts[symbol][pattern_name]
-                required_min = limits['min'] * NUM_VARIATIONS
-                required_max = limits['max'] * NUM_VARIATIONS
-
-                if global_pattern_count >= required_max:
-                    continue
-                if symbol_pattern_count >= limits['max']:
-                    continue
-
-                config = all_patterns[pattern_name]
-                metrics = calculate_pattern_metrics(real_sequence, pattern_high, pattern_low, row['close'])
-                is_elliott = pattern_name in get_elliott_wave_patterns()
-
-                try:
-                    if is_elliott:
-                        text = generate_elliott_wave_data(symbol, row, pattern_name, config, indicator_values, metrics, 0, symbol_data, idx)
-                    else:
-                        text = generate_complete_pattern_data(symbol, row, pattern_name, config, indicator_values, metrics, 0, symbol_data, idx)
-
-                    if text:
-                        training_data.append(text)
-                        pattern_counts[pattern_name] += 1
-                        symbol_pattern_counts[symbol][pattern_name] += 1
-                        row_count += 1
-
-                        if pattern_counts[pattern_name] % 10 == 0:
-                            progress_pct = (pattern_counts[pattern_name] / required_min) * 100
-                            priority_star = "⭐" * int(limits['multiplier'])
-                            print(f"      {priority_star} {pattern_name}: {pattern_counts[pattern_name]}/{required_min} ({progress_pct:.0f}%)")
-                except Exception as e:
-                    print(f"   ⚠️ Error generating {pattern_name}: {str(e)[:50]}")
-
-                if row_count >= MAX_PER_SYMBOL:
-                    break
-
-                if len(training_data) >= MAX_EXAMPLES_PER_RUN:
-                    print(f"\n⚠️ Reached MAX_EXAMPLES_PER_RUN ({MAX_EXAMPLES_PER_RUN})")
-                    break
-
-            if row_count >= MAX_PER_SYMBOL:
-                break
-            if len(training_data) >= MAX_EXAMPLES_PER_RUN:
-                break
-
-        print(f"   📈 {symbol}: Generated {row_count} examples")
-        symbols_processed += 1
-
-        if symbols_processed >= MAX_SYMBOLS:
-            break
-        if len(training_data) >= MAX_EXAMPLES_PER_RUN:
-            break
-
-    # Coverage Report
-    print("\n" + "="*80)
-    print("📊 PATTERN COVERAGE REPORT:")
-    print("="*80)
-    covered_patterns = len(pattern_counts)
-    fully_covered = sum(1 for p in all_patterns.keys() if pattern_counts.get(p, 0) >= pattern_limits.get(p, {'min': BASE_MIN_EXAMPLES})['min'] * NUM_VARIATIONS)
-    print(f"   Total Patterns: {TOTAL_PATTERNS}")
-    print(f"   Patterns with examples: {covered_patterns} ({safe_divide(covered_patterns, TOTAL_PATTERNS)*100:.1f}%)")
-    print(f"   Fully covered: {fully_covered}")
-
-    output_file = "./csv/training_texts.txt"
-    os.makedirs("./csv", exist_ok=True)
-
-    with open(output_file, "w", encoding="utf-8") as f:
-        f.write("\n".join(training_data))
-
-    print(f"\n📊 Training data saved: {output_file}")
-    print(f"   Total examples: {len(training_data):,}")
-
-    if elliott_backtester:
-        print(elliott_backtester.get_performance_report())
-
-    print("\n" + "="*80)
-    print("📤 NEXT STEPS:")
-    print("="*80)
-    print("1. Upload training_texts.txt to Hugging Face dataset")
-    print("2. Then retrain your LLM: python scripts/llm_train.py")
-    print("="*80)
-
-
-if __name__ == "__main__":
-    main()
+    return {'liquidity_levels': liquidity_levels, 'bid_ask_ratio': safe_divide(total_bids, total_asks, 1),
+            'imbalance': 'BUY_PRESSURE' if total_bids > total_asks * 1.2 else 'SELL_PRESSURE' if total_asks > total_bids * 1.2 else 'BALANCED',
+            'nearest_support': float(liquidity_levels['bids'][0]['price']),
+            'nearest_resistance': float(liquidity_levels['asks'][0]['price'])}
