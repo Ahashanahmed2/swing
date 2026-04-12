@@ -28,11 +28,11 @@ from typing import Dict, List, Tuple, Optional, Any, Union
 LOOKBACK_CANDLES = 252  # ১ বছরের ট্রেডিং দিন
 DETAILED_CANDLES = 60   # শেষ ৬০টি ক্যান্ডেল বিস্তারিত দেখাবে
 CHUNK_SIZE = 21         # প্রতি ২১ দিন (১ মাস) এর সামারি
-MIN_REQUIRED_CANDLES =120
+MIN_REQUIRED_CANDLES =60
 BASE_MIN_EXAMPLES = 100
 BASE_MAX_EXAMPLES = 200
 MAX_EXAMPLES_PER_RUN = 200000
-NUM_VARIATIONS = 5
+NUM_VARIATIONS = 3
 
 PATTERN_PRIORITY = {
     'Impulse Wave': 5.0, 'Leading Diagonal': 4.5, 'Ending Diagonal': 4.5,
@@ -151,8 +151,8 @@ except:
 # ✅ TOTAL_PATTERNS পরে main() এ সেট হবে
 TOTAL_PATTERNS = None
 # ✅ প্যাটার্ন কভারেজ কনফিগ
-MIN_EXAMPLES_PER_PATTERN = 15
-MAX_EXAMPLES_PER_PATTERN = 30
+MIN_EXAMPLES_PER_PATTERN = 5
+MAX_EXAMPLES_PER_PATTERN = 15
 MAX_PER_SYMBOL = None        # main() এ TOTAL_PATTERNS * MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS
 
       
