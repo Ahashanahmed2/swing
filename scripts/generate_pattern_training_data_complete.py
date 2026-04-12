@@ -40,7 +40,7 @@ PATTERN_PRIORITY = {
     'Hammer': 2.5, 'Shooting Star': 2.5, 'Doji': 2.5, 'Engulfing': 1.5,
     'Bullish Engulfing': 3, 'Morning Star': 3, 'Evening Star': 3,
     'Three White Soldiers': 2.5, 'Three Black Crows': 2.5, 'Piercing Line': 1.5,
-z    'Cup and Handle': 1.0, 'Double Bottom': 1.0, 'Head and Shoulders': 1.0,
+    'Cup and Handle': 1.0, 'Double Bottom': 1.0, 'Head and Shoulders': 1.0,
     'Bull Flag': 1.0, 'Ascending Triangle': 1.0, 'Descending Triangle': 1.0,
     'Symmetrical Triangle': 1.0, 'Rounding Bottom': 1.0,
     'Volume Climax': 1.2, 'Bollinger Band Squeeze': 1.2,
@@ -137,13 +137,16 @@ try:
     MAX_SYMBOLS = df_temp['symbol'].nunique()
     print(f"✅ Auto-detected {MAX_SYMBOLS} symbols from mongodb.csv")
 except:
-    MAX_SYMBOLS =  MX_SYMBOLS  # Fallback
+    MAX_SYMBOLS =  None  # Fallback
     print(f"⚠️ Using fallback: {MAX_SYMBOLS} symbols")
 
 # ✅ TOTAL_PATTERNS পরে main() এ সেট হবে
 TOTAL_PATTERNS = None
-
-MAX_PER_SYMBOL = None             # main() এ TOTAL_PATTERNS * MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS
+# ✅ প্যাটার্ন কভারেজ কনফিগ
+MIN_EXAMPLES_PER_PATTERN = 15
+MAX_EXAMPLES_PER_PATTERN = 30
+TOTAL_PATTERNS = None
+MAX_PER_SYMBOL = None        # main() এ TOTAL_PATTERNS * MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS
 
       
 
