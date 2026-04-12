@@ -44,18 +44,18 @@ jobs:
         echo "=== Checking ./csv/ppo_models/per_symbol ==="
         ls -la ./csv/ppo_models/per_symbol/
 
-    - name: Delete old checkpoints (Python)
-      run: |
-        python -c "
-        import os
-        import shutil
-        checkpoint_dir = './csv/checkpoints'
-        if os.path.exists(checkpoint_dir):
-            shutil.rmtree(checkpoint_dir)
-            print('🗑️ Deleted old  .  #checkpoints, starting fresh!')
-        else:
-            print('ℹ️ No checkpoints found, #ready for fresh training')
-        "
+    # name: Delete old checkpoints (Python)
+      #run: |
+        #python -c "
+        #import os
+        #import shutil
+        #checkpoint_dir = './csv/checkpoints'
+        #if os.path.exists(checkpoint_dir):
+            #shutil.rmtree(checkpoint_dir)
+            #print('🗑️ Deleted old  .  #checkpoints, starting fresh!')
+        #else:
+            #print('ℹ️ No checkpoints found, #ready for fresh training')
+        #"
         
     - name: Install dependencies
       run: |
