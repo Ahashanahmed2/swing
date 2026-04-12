@@ -4257,8 +4257,9 @@ def detect_elliott_wave_patterns_from_complete(df, idx):
 # COMPLETE PATTERN DETECTION
 # =========================================================
 def detect_all_patterns(df, idx):
+    """Detect all patterns"""
     detected = []
-    
+
     # Basic Patterns
     if detect_cup_and_handle(df, idx): detected.append('Cup and Handle')
     if detect_double_bottom(df, idx): detected.append('Double Bottom')
@@ -4295,13 +4296,18 @@ def detect_all_patterns(df, idx):
     if detect_bollinger_squeeze(df, idx): detected.append('Bollinger Band Squeeze')
 
     # Divergence
-    rsi_div = detect_rsi_divergence(df['close'].values, df['rsi'].values if 'rsi' in df.columns else [])
-    macd_div = detect_macd_divergence(df['close'].values, df['macd'].values if 'macd' in df.columns else [])
-    if rsi_div in ['Bullish', 'Bearish']: detected.append('RSI Divergence')
-    if macd_div in ['Bullish', 'Bearish']: detected.append('MACD Divergence')
-    if 'Hidden' in str(rsi_div) or 'Hidden' in str(macd_div): detected.append('Hidden Divergence')
+    if 'rsi' in df.columns and 'close' in df.columns:
+        rsi_div = detect_rsi_divergence(df['close'].values, df['rsi'].values)
+        if rsi_div in ['Bullish', 'Bearish']: 
+            detected.append('RSI Divergence')
+    if 'macd' in df.columns and 'close' in df.columns:
+        macd_div = detect_macd_divergence(df['close'].values, df['macd'].values)
+        if macd_div in ['Bullish', 'Bearish']: 
+            detected.append('MACD Divergence')
+    if 'Hidden' in str(rsi_div) or 'Hidden' in str(macd_div): 
+        detected.append('Hidden Divergence')
 
-    # SMC Patterns - সব ফাংশন কল করুন
+    # SMC Patterns
     for func in [detect_order_block, detect_fair_value_gap, detect_liquidity_pools, 
                  detect_market_structure_smc, detect_ote_entry, detect_smc_manipulation, detect_smc_hybrid,
                  detect_breaker_block, detect_mitigation_block, detect_rejection_block, detect_vacuum_block,
@@ -4312,33 +4318,26 @@ def detect_all_patterns(df, idx):
                  detect_daily_bias, detect_market_maker_model, detect_institutional_candles,
                  detect_smc_divergence, detect_liquidity_void]:
         res = func(df, idx)
-        if res:
+        if res: 
             detected.extend(res)
 
-    # Elliott Wave
-    elliott_wave_patterns = detect_elliott_wave_patterns_from_complete(df, idx)
-    detected.extend(elliott_wave_patterns)
-
-    return list(set(detected))
-
-    # New Candlestick Patterns
+    # New Candlestick Patterns (from detect_all_candlestick_patterns)
     candlestick_patterns = detect_all_candlestick_patterns(df, idx)
     detected.extend(candlestick_patterns)
 
-    # ✅ Elliott Wave Complete Detection
+    # Elliott Wave Patterns
     elliott_wave_patterns = detect_elliott_wave_patterns_from_complete(df, idx)
     detected.extend(elliott_wave_patterns)
 
+    # ✅ সব শেষে একবার রিটার্ন
     final_patterns = list(set(detected))
 
-    # ✅ ডিবাগ
+    # ডিবাগ
     if final_patterns and idx % 100 == 0:
         symbol = df.iloc[idx].get('symbol', 'UNKNOWN') if 'symbol' in df.columns else 'UNKNOWN'
         print(f"      ✅ {symbol} at idx {idx}: {len(final_patterns)} patterns")
 
     return final_patterns
-
-
 # =========================================================
 # NO PATTERN EXAMPLE
 # =========================================================
