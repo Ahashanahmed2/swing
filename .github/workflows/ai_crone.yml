@@ -2,7 +2,7 @@ name: swing_stock
 
 on:
   schedule:
-    - cron: "18 6,12,18,1 * * *"
+    - cron: "26 6,12,18,1 * * *"
     # cron: "30 11 * * *"  # প্রতিদিন 9PM BST (3PM UTC)
   workflow_dispatch:  # ম্যানুয়ালি চালাতে পারবে
 
