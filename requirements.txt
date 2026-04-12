@@ -16,3 +16,4 @@ shimmy
 numpy
 datasets>=2.12.0
 matplotlib>=3.5.0
+fastdtw
