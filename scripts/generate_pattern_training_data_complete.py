@@ -776,7 +776,6 @@ def predict_price_from_trend_lines(trend_lines, current_price, days_forward=10):
 
     return predictions
 
-
 def analyze_price_action_complete(symbol_data, idx, lookback=100):
     """Complete Price Action Analysis with all tools"""
 
@@ -820,20 +819,30 @@ def analyze_price_action_complete(symbol_data, idx, lookback=100):
 """
         if trend_lines.get('current_support'):
             s = trend_lines['current_support']
+            current_level = s.get('current_level') or 0
+            slope = s.get('slope') or 0
+            strength = s.get('strength') or 'UNKNOWN'
+            touches = s.get('touches') or 0
+            
             report += f"""
 🔹 SUPPORT TREND LINE:
-   Current Level: {s['current_level']:.2f}
-   Slope: {s['slope']:.4f} ({'ASCENDING' if s['slope'] > 0 else 'DESCENDING'})
-   Strength: {s['strength']} ({s['touches']} touches)
+   Current Level: {current_level:.2f}
+   Slope: {slope:.4f} ({'ASCENDING' if slope > 0 else 'DESCENDING'})
+   Strength: {strength} ({touches} touches)
 """
 
         if trend_lines.get('current_resistance'):
             r = trend_lines['current_resistance']
+            current_level = r.get('current_level') or 0
+            slope = r.get('slope') or 0
+            strength = r.get('strength') or 'UNKNOWN'
+            touches = r.get('touches') or 0
+            
             report += f"""
 🔸 RESISTANCE TREND LINE:
-   Current Level: {r['current_level']:.2f}
-   Slope: {r['slope']:.4f} ({'ASCENDING' if r['slope'] > 0 else 'DESCENDING'})
-   Strength: {r['strength']} ({r['touches']} touches)
+   Current Level: {current_level:.2f}
+   Slope: {slope:.4f} ({'ASCENDING' if slope > 0 else 'DESCENDING'})
+   Strength: {strength} ({touches} touches)
 """
 
     # Channels Section
@@ -843,13 +852,22 @@ def analyze_price_action_complete(symbol_data, idx, lookback=100):
 ────────────────────────────────────────────────────────────────────────────────
 """
         for i, ch in enumerate(channels[:2]):
+            # ✅ সেফ ফরম্যাটিং
+            ch_type = ch.get('type') or 'UNKNOWN'
+            support = ch.get('support_line') or ch.get('channel_bottom') or 0
+            resistance = ch.get('channel_top') or ch.get('resistance_line') or 0
+            mid_line = ch.get('mid_line') or 0
+            width = ch.get('width') or 0
+            width_percent = ch.get('width_percent') or 0
+            position = ch.get('position') or 'UNKNOWN'
+            
             report += f"""
-🔹 CHANNEL {i+1} ({ch['type']}):
-   Support: {ch.get('support_line', ch.get('channel_bottom', 0)):.2f}
-   Resistance: {ch.get('channel_top', ch.get('resistance_line', 0)):.2f}
-   Mid Line: {ch['mid_line']:.2f}
-   Width: {ch['width']:.2f} ({ch['width_percent']:.1f}%)
-   Position: {ch['position']}
+🔹 CHANNEL {i+1} ({ch_type}):
+   Support: {support:.2f}
+   Resistance: {resistance:.2f}
+   Mid Line: {mid_line:.2f}
+   Width: {width:.2f} ({width_percent:.1f}%)
+   Position: {position}
 """
 
     # Rays Section
@@ -859,11 +877,17 @@ def analyze_price_action_complete(symbol_data, idx, lookback=100):
 ────────────────────────────────────────────────────────────────────────────────
 """
         for ray in rays[:3]:
+            # ✅ সেফ ফরম্যাটিং
+            ray_type = ray.get('type') or 'UNKNOWN'
+            current_level = ray.get('current_support') or ray.get('current_resistance') or 0
+            slope = ray.get('slope') or 0
+            angle = ray.get('angle') or 0
+            
             report += f"""
-🔹 {ray['type']}:
-   Current Level: {ray.get('current_support', ray.get('current_resistance', 0)):.2f}
-   Slope: {ray['slope']:.4f}
-   Angle: {ray['angle']:.1f}°
+🔹 {ray_type}:
+   Current Level: {current_level:.2f}
+   Slope: {slope:.4f}
+   Angle: {angle:.1f}°
 """
             if ray.get('projections'):
                 report += "   Future Projections:\n"
@@ -872,33 +896,48 @@ def analyze_price_action_complete(symbol_data, idx, lookback=100):
 
     # Trend-based Fibonacci Section
     if fib_ext:
+        # ✅ সেফ ফরম্যাটিং
+        fib_trend = fib_ext.get('trend') or 'UNKNOWN'
+        swing_low = fib_ext.get('swing_low') or 0
+        swing_high = fib_ext.get('swing_high') or 0
+        current_zone = fib_ext.get('current_zone') or 'UNKNOWN'
+        
         report += f"""
 📐 TREND-BASED FIBONACCI EXTENSION:
 ────────────────────────────────────────────────────────────────────────────────
-Trend: {fib_ext['trend']}
-Swing Low: {fib_ext['swing_low']:.2f}
-Swing High: {fib_ext['swing_high']:.2f}
-Current Zone: {fib_ext['current_zone']}
+Trend: {fib_trend}
+Swing Low: {swing_low:.2f}
+Swing High: {swing_high:.2f}
+Current Zone: {current_zone}
 
 Retracement Levels:
 """
-        for level, price in fib_ext['retracement'].items():
+        for level, price in fib_ext.get('retracement', {}).items():
             report += f"   • {level}: {price:.2f}\n"
 
         report += "\nExtension Targets:\n"
-        for level, price in fib_ext['extension'].items():
+        for level, price in fib_ext.get('extension', {}).items():
             report += f"   • {level}: {price:.2f}\n"
 
     # Volume Profile Section
     if vol_profile:
+        # ✅ সেফ ফরম্যাটিং
+        range_low = vol_profile.get('range_low') or 0
+        range_high = vol_profile.get('range_high') or 0
+        poc = vol_profile.get('poc') or 0
+        vah = vol_profile.get('value_area_high') or 0
+        val = vol_profile.get('value_area_low') or 0
+        current_position = vol_profile.get('current_position') or 'UNKNOWN'
+        total_volume = vol_profile.get('total_volume') or 0
+        
         report += f"""
 📊 FIXED RANGE VOLUME PROFILE:
 ────────────────────────────────────────────────────────────────────────────────
-Range: {vol_profile['range_low']:.2f} - {vol_profile['range_high']:.2f}
-POC (Point of Control): {vol_profile['poc']:.2f}
-Value Area: {vol_profile['value_area_low']:.2f} - {vol_profile['value_area_high']:.2f}
-Current Position: {vol_profile['current_position']}
-Total Volume: {vol_profile['total_volume']:,.0f}
+Range: {range_low:.2f} - {range_high:.2f}
+POC (Point of Control): {poc:.2f}
+Value Area: {val:.2f} - {vah:.2f}
+Current Position: {current_position}
+Total Volume: {total_volume:,.0f}
 """
 
     # Price Predictions Section
@@ -908,12 +947,19 @@ Total Volume: {vol_profile['total_volume']:,.0f}
 ────────────────────────────────────────────────────────────────────────────────
 """
         for pred in predictions:
+            # ✅ সেফ ফরম্যাটিং
+            pred_type = pred.get('type') or 'UNKNOWN'
+            direction = pred.get('expected_direction') or 'UNKNOWN'
+            target = pred.get('target') or 0
+            invalidation = pred.get('invalidation') or 0
+            confidence = pred.get('confidence') or 'UNKNOWN'
+            
             report += f"""
-🔹 {pred['type']}:
-   Direction: {pred['expected_direction']}
-   Target: {pred['target']:.2f}
-   Invalidation: {pred['invalidation']:.2f}
-   Confidence: {pred['confidence']}
+🔹 {pred_type}:
+   Direction: {direction}
+   Target: {target:.2f}
+   Invalidation: {invalidation:.2f}
+   Confidence: {confidence}
 """
 
     report += """
@@ -921,6 +967,7 @@ Total Volume: {vol_profile['total_volume']:,.0f}
 """
 
     return report, trend_lines, channels, rays, fib_ext, vol_profile, predictions
+
 
 
 # =========================================================
