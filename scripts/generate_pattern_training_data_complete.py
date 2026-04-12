@@ -4062,8 +4062,7 @@ def generate_elliott_wave_data(symbol, df_row, pattern_type, config, indicator_v
     volume_spike = "Yes" if volume > avg_vol * 1.5 else "No"
     variation_note = f" [VARIATION {variation_idx + 1}]" if variation_idx > 0 else " [ORIGINAL SEQUENCE]"
     pattern_display = pattern_type if random.random() < 0.5 else "Unknown Pattern"
-    price_header = "PRICE SNAPSHOT:" if random.random() < 0.3 else "📊 PRICE DATA:"
-
+    
     sector_details = ""
     if template["include_sector"] :
         sector_details = f"""
@@ -4433,7 +4432,7 @@ Date: {current_date}
 {forward_text}
 {additional_analysis}
 
-📊 PRICE DATA:
+{price_header}
 ────────────────────────────────────────────────────────────────────────────────
 Open: {df_row['open']:.2f} | High: {df_row['high']:.2f} | Low: {df_row['low']:.2f}
 Close: {current_price:.2f} | Volume: {volume:,}
@@ -4503,9 +4502,7 @@ def main():
         df = df[(df[col] >= lower) & (df[col] <= upper)]
     
     print(f"✅ After quality filter: {len(df)} rows, {df['symbol'].nunique()} symbols")
-    # ... rest of main ...w
     
-
     all_patterns = get_all_patterns()
     TOTAL_PATTERNS = len(all_patterns)
     print(f"✅ Loaded {TOTAL_PATTERNS} pattern configurations")
