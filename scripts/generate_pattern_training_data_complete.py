@@ -20,7 +20,15 @@ from typing import Dict, List, Tuple, Optional, Any, Union
 # =========================================================
 # 🎯 PRIORITY-BASED TRAINING CONFIGURATION (NEW)
 # =========================================================
+# =========================================================
+# TRAINING CONFIGURATION - AUTO (সব প্যাটার্ন + সব সিম্বল)
+# =========================================================
 
+# ✅ ক্যান্ডেল লুকব্যাক কনফিগ (১ বছর ≈ ২৫২ ট্রেডিং দিন)
+LOOKBACK_CANDLES = 252  # ১ বছরের ট্রেডিং দিন
+DETAILED_CANDLES = 60   # শেষ ৬০টি ক্যান্ডেল বিস্তারিত দেখাবে
+CHUNK_SIZE = 21         # প্রতি ২১ দিন (১ মাস) এর সামারি
+MIN_REQUIRED_CANDLES =120
 BASE_MIN_EXAMPLES = 100
 BASE_MAX_EXAMPLES = 200
 MAX_EXAMPLES_PER_RUN = 200000
@@ -1891,62 +1899,304 @@ def generate_advanced_price_sequence(symbol_data, idx, lookback=150):
             fib_price = low_150 + (fib_range * level)
             text += f"  {level:.3f} ({level*100:.1f}%): {fib_price:.2f}\n"
 
-    # Volume Analysis
-    text += "\n📊 VOLUME ANALYSIS:\n"
-    text += "─"*80 + "\n"
+def generate_advanced_price_sequence(symbol_data, idx, lookback=252):
+    """1 Year (252 candles) price analysis - FULL DATA VISIBLE TO LLM"""
+    start_idx = max(0, idx - lookback)
+    sequence_data = symbol_data.iloc[start_idx:idx+1].copy()
 
-    avg_volume_20 = np.mean(volumes[-20:]) if len(volumes) >= 20 else np.mean(volumes)
-    avg_volume_50 = np.mean(volumes[-50:]) if len(volumes) >= 50 else avg_volume_20
-    current_volume = volumes[-1]
+    if len(sequence_data) < 50:
+        return "Insufficient data for 1-year candle analysis.", False, False, False
 
-    text += f"Current Volume: {current_volume:,.0f}\n"
-    text += f"Avg Volume (20): {avg_volume_20:,.0f} ({'ABOVE' if current_volume > avg_volume_20 else 'BELOW'} average)\n"
-    text += f"Avg Volume (50): {avg_volume_50:,.0f}\n"
-    text += f"Volume Trend: {'INCREASING 📈' if avg_volume_20 > avg_volume_50 else 'DECREASING 📉'}\n"
+    closes = sequence_data['close'].values
+    highs = sequence_data['high'].values
+    lows = sequence_data['low'].values
+    volumes = sequence_data['volume'].values
+    opens = sequence_data['open'].values
+    dates = sequence_data['date'].values
+    current_price = closes[-1]
+    
+    # ✅ অতিরিক্ত কলাম চেক
+    has_value = 'value' in sequence_data.columns
+    has_trades = 'trades' in sequence_data.columns
+    has_change = 'change' in sequence_data.columns
+    has_marketCap = 'marketCap' in sequence_data.columns
+    has_sector = 'sector' in sequence_data.columns
+    has_bb = 'bb_upper' in sequence_data.columns
+    has_macd = 'macd' in sequence_data.columns
+    has_rsi = 'rsi' in sequence_data.columns
+    has_atr = 'atr' in sequence_data.columns
+    has_ema200 = 'ema_200' in sequence_data.columns
+    has_patterns = 'Hammer' in sequence_data.columns
 
-    volume_spikes = []
-    for i in range(20, len(volumes)):
-        if volumes[i] > np.mean(volumes[i-20:i]) * 1.5:
-            volume_spikes.append((i, volumes[i]))
+    text = "📊 1-YEAR COMPREHENSIVE PRICE ANALYSIS (252 Trading Days - FULL DATA):\n"
+    text += "="*80 + "\n\n"
+    
+    # ✅ স্টক ওভারভিউ
+    symbol = sequence_data.iloc[-1].get('symbol', 'UNKNOWN')
+    sector = sequence_data.iloc[-1].get('sector', 'Unknown') if has_sector else 'Unknown'
+    market_cap = sequence_data.iloc[-1].get('marketCap', 0) if has_marketCap else 0
+    
+    text += f"""
+🏢 STOCK OVERVIEW:
+════════════════════════════════════════════════════════════════════════════════
+Symbol: {symbol}
+Sector: {sector}
+Market Cap: {market_cap:,.0f} (₹ {market_cap/10000000:.2f} Cr)
+Current Price: {current_price:.2f}
+"""
 
-    has_volume_spike = len(volume_spikes) > 0
+    # ============================================================
+    # সেকশন ১: শেষ ৬০ ক্যান্ডেল বিস্তারিত টেবিল
+    # ============================================================
+    detailed_candles = min(DETAILED_CANDLES, len(sequence_data))
+    text += f"\n📋 DETAILED PRICE DATA (Last {detailed_candles} candles):\n"
+    text += "─"*100 + "\n"
+    
+    # ✅ হেডার - উপলব্ধ কলাম অনুযায়ী
+    header = "Date       | Open   | High   | Low    | Close  | Volume   | Change%"
+    if has_value:
+        header += " | Value(M)"
+    if has_trades:
+        header += " | Trades"
+    if has_rsi:
+        header += " | RSI"
+    if has_macd:
+        header += " | MACD"
+    header += "\n"
+    text += header
+    text += "─"*100 + "\n"
 
-    # Volatility Analysis
-    text += "\n📉 VOLATILITY ANALYSIS:\n"
-    text += "─"*80 + "\n"
-
-    atr_values = calculate_atr_series(highs, lows, closes)
-    current_atr = atr_values[-1]
-    avg_atr = np.mean(atr_values)
-
-    text += f"Current ATR: {current_atr:.2f} ({current_atr/current_price*100:.2f}% of price)\n"
-    text += f"Average ATR: {avg_atr:.2f}\n"
-    text += f"Volatility Regime: {'HIGH' if current_atr > avg_atr * 1.2 else 'LOW' if current_atr < avg_atr * 0.8 else 'NORMAL'}\n"
-
-    high_volatility = current_atr > avg_atr * 1.2
-
-    # Pattern Evolution
-    text += "\n🔄 PATTERN EVOLUTION (How the pattern formed):\n"
-    text += "─"*80 + "\n"
-
-    if price_change_20 > 5 and price_change_50 > 10:
-        text += "• Strong uptrend over last 50 candles\n• Multiple higher highs and higher lows formed\n"
-    elif price_change_20 < -5 and price_change_50 < -10:
-        text += "• Strong downtrend over last 50 candles\n• Multiple lower lows and lower highs formed\n"
-    else:
-        text += "• Price has been consolidating\n• Range-bound movement with no clear trend\n"
-
-    last_5 = closes[-5:]
-    if len(last_5) >= 5:
-        if all(last_5[i] > last_5[i-1] for i in range(1, 5)):
-            text += "• Last 5 candles: All bullish (Strong momentum)\n"
-        elif all(last_5[i] < last_5[i-1] for i in range(1, 5)):
-            text += "• Last 5 candles: All bearish (Strong selling pressure)\n"
+    detailed_data = sequence_data.iloc[-detailed_candles:]
+    for i, (_, row) in enumerate(detailed_data.iterrows()):
+        date_str = str(row['date'])[:10]
+        
+        # দিনের পরিবর্তন
+        if i > 0:
+            prev_close = detailed_data.iloc[i-1]['close']
+            change_pct = (row['close'] - prev_close) / prev_close * 100
         else:
-            text += "• Last 5 candles: Mixed (Indecision)\n"
+            change_pct = 0
+        
+        line = f"{date_str} | {row['open']:7.2f} | {row['high']:7.2f} | {row['low']:7.2f} | {row['close']:7.2f} | {int(row['volume']):8,} | {change_pct:+6.2f}%"
+        
+        if has_value:
+            value_m = row.get('value', 0) / 1000000
+            line += f" | {value_m:8.2f}"
+        if has_trades:
+            line += f" | {int(row.get('trades', 0)):7,}"
+        if has_rsi:
+            line += f" | {row.get('rsi', 0):5.1f}"
+        if has_macd:
+            line += f" | {row.get('macd', 0):7.3f}"
+        
+        text += line + "\n"
+
+    # ============================================================
+    # সেকশন ২: টেকনিক্যাল ইন্ডিকেটর সামারি
+    # ============================================================
+    text += "\n📊 TECHNICAL INDICATORS SUMMARY (Current):\n"
+    text += "═"*80 + "\n"
+    
+    latest = sequence_data.iloc[-1]
+    
+    if has_rsi:
+        rsi_val = latest.get('rsi', 50)
+        rsi_status = 'Oversold' if rsi_val < 30 else 'Overbought' if rsi_val > 70 else 'Neutral'
+        text += f"🔹 RSI (14): {rsi_val:.1f} ({rsi_status})\n"
+    
+    if has_macd:
+        macd_val = latest.get('macd', 0)
+        macd_signal = latest.get('macd_signal', 0)
+        macd_hist = latest.get('macd_hist', 0)
+        macd_status = 'Bullish' if macd_val > macd_signal else 'Bearish'
+        text += f"🔹 MACD: {macd_val:.4f} | Signal: {macd_signal:.4f} | Hist: {macd_hist:.4f} ({macd_status})\n"
+    
+    if has_bb:
+        bb_upper = latest.get('bb_upper', 0)
+        bb_middle = latest.get('bb_middle', 0)
+        bb_lower = latest.get('bb_lower', 0)
+        bb_position = (current_price - bb_lower) / (bb_upper - bb_lower) * 100 if bb_upper > bb_lower else 50
+        text += f"🔹 Bollinger Bands: Upper={bb_upper:.2f} | Middle={bb_middle:.2f} | Lower={bb_lower:.2f}\n"
+        text += f"   Position: {bb_position:.1f}% of band\n"
+    
+    if has_atr:
+        atr_val = latest.get('atr', 0)
+        text += f"🔹 ATR: {atr_val:.2f} ({atr_val/current_price*100:.2f}% of price)\n"
+    
+    if has_ema200:
+        ema200 = latest.get('ema_200', current_price)
+        text += f"🔹 EMA 200: {ema200:.2f} | Price vs EMA200: {(current_price/ema200-1)*100:+.1f}%\n"
+
+    # ============================================================
+    # সেকশন ৩: প্যাটার্ন সিগন্যাল
+    # ============================================================
+    if has_patterns:
+        text += "\n🎯 PATTERN SIGNALS (Current Candle):\n"
+        text += "═"*80 + "\n"
+        
+        patterns = []
+        pattern_cols = ['Hammer', 'BullishEngulfing', 'MorningStar', 'Doji', 
+                       'PiercingLine', 'ThreeWhiteSoldiers', 'zigzag']
+        
+        for col in pattern_cols:
+            if col in latest.index:
+                val = latest.get(col, False)
+                if val and val != 'False' and val != '0' and val != 0:
+                    patterns.append(col)
+        
+        if patterns:
+            text += f"Active Patterns: {', '.join(patterns)}\n"
+        else:
+            text += "No active candlestick patterns detected\n"
+
+    # ============================================================
+    # সেকশন ৪: মাসভিত্তিক সামারি
+    # ============================================================
+    older_data = sequence_data.iloc[:-detailed_candles]
+    if len(older_data) > 0:
+        text += f"\n... ({len(older_data)} more trading days) ...\n"
+        text += f"\n📊 MONTHLY SUMMARY (Previous {len(older_data)} days grouped by ~21 trading days):\n"
+        text += "═"*90 + "\n"
+        
+        chunk_size = CHUNK_SIZE
+        month_num = 1
+        
+        for i in range(0, len(older_data), chunk_size):
+            chunk = older_data.iloc[i:i+chunk_size]
+            if len(chunk) > 0:
+                start_date = str(chunk.iloc[0]['date'])[:10]
+                end_date = str(chunk.iloc[-1]['date'])[:10]
+                
+                open_price = chunk.iloc[0]['open']
+                close_price = chunk.iloc[-1]['close']
+                high_price = chunk['high'].max()
+                low_price = chunk['low'].min()
+                avg_volume = chunk['volume'].mean()
+                period_return = (close_price - open_price) / open_price * 100
+                
+                up_days = sum(1 for j in range(1, len(chunk)) 
+                             if chunk.iloc[j]['close'] > chunk.iloc[j-1]['close'])
+                down_days = len(chunk) - 1 - up_days
+                
+                text += f"""
+┌─ MONTH {month_num}: {start_date} to {end_date} ({len(chunk)} days)
+├─ PRICE: Open {open_price:.2f} → Close {close_price:.2f} ({period_return:+.2f}%)
+│  • High: {high_price:.2f} | Low: {low_price:.2f} | Range: {high_price-low_price:.2f}
+├─ VOLUME: Avg {avg_volume:,.0f} | Total {chunk['volume'].sum():,.0f}
+"""
+                if has_value:
+                    avg_value = chunk['value'].mean() / 10000000
+                    text += f"├─ VALUE: Avg ₹{avg_value:.2f} Cr\n"
+                
+                text += f"├─ INTERNALS: Up {up_days} | Down {down_days} | Win Rate {up_days/(up_days+down_days)*100:.1f}%\n"
+                text += f"└─{chr(0x2500)*70}\n"
+                month_num += 1
+
+    # ============================================================
+    # সেকশন ৫: ৫২-উইক লেভেল
+    # ============================================================
+    text += "\n🎯 KEY LEVELS FROM FULL YEAR DATA:\n"
+    text += "═"*80 + "\n"
+    
+    high_52w = sequence_data['high'].max()
+    low_52w = sequence_data['low'].min()
+    high_52w_idx = sequence_data['high'].idxmax()
+    low_52w_idx = sequence_data['low'].idxmin()
+    high_52w_date = sequence_data.loc[high_52w_idx, 'date']
+    low_52w_date = sequence_data.loc[low_52w_idx, 'date']
+    
+    text += f"""
+📈 52-WEEK HIGH: {high_52w:.2f} (on {str(high_52w_date)[:10]})
+   Current vs 52W High: {(current_price/high_52w-1)*100:+.1f}%
+
+📉 52-WEEK LOW: {low_52w:.2f} (on {str(low_52w_date)[:10]})
+   Current vs 52W Low: {(current_price/low_52w-1)*100:+.1f}%
+
+📍 CURRENT POSITION: {(current_price - low_52w) / (high_52w - low_52w) * 100:.1f}% of 52-week range
+"""
+
+    # ============================================================
+    # সেকশন ৬: SMA ট্রেন্ড
+    # ============================================================
+    text += "\n📈 TREND ANALYSIS (SMA):\n"
+    text += "═"*80 + "\n"
+    
+    sma20 = np.mean(closes[-20:]) if len(closes) >= 20 else current_price
+    sma50 = np.mean(closes[-50:]) if len(closes) >= 50 else sma20
+    sma200 = np.mean(closes[-200:]) if len(closes) >= 200 else sma50
+    
+    text += f"""
+SMA 20:  {sma20:.2f} | Price vs SMA20: {(current_price/sma20-1)*100:+.1f}%
+SMA 50:  {sma50:.2f} | Price vs SMA50: {(current_price/sma50-1)*100:+.1f}%
+SMA 200: {sma200:.2f} | Price vs SMA200: {(current_price/sma200-1)*100:+.1f}%
+
+Trend Structure: {
+    'STRONG BULLISH (Price > SMA20 > SMA50 > SMA200)' if current_price > sma20 > sma50 > sma200
+    else 'BULLISH (Price > SMA200)' if current_price > sma200
+    else 'STRONG BEARISH (Price < SMA20 < SMA50 < SMA200)' if current_price < sma20 < sma50 < sma200
+    else 'BEARISH (Price < SMA200)' if current_price < sma200
+    else 'NEUTRAL/CONSOLIDATING'
+}
+"""
+
+    # ============================================================
+    # সেকশন ৭: ভলিউম ও ভ্যালু এনালাইসিস
+    # ============================================================
+    if has_value:
+        text += "\n💰 VOLUME & VALUE ANALYSIS:\n"
+        text += "═"*80 + "\n"
+        
+        avg_volume_20 = np.mean(volumes[-20:]) if len(volumes) >= 20 else np.mean(volumes)
+        current_volume = volumes[-1]
+        volume_ratio = current_volume / avg_volume_20 if avg_volume_20 > 0 else 1
+        
+        values = sequence_data['value'].values
+        avg_value_20 = np.mean(values[-20:]) / 10000000 if len(values) >= 20 else 0
+        current_value = values[-1] / 10000000
+        
+        text += f"""
+Current Volume: {current_volume:,.0f} ({volume_ratio:.2f}x 20-day avg)
+Current Value: ₹{current_value:.2f} Cr
+Avg Value (20d): ₹{avg_value_20:.2f} Cr
+Volume Status: {'HIGH (Above Average)' if volume_ratio > 1.5 else 'LOW (Below Average)' if volume_ratio < 0.5 else 'NORMAL'}
+"""
+
+    # ============================================================
+    # সেকশন ৮: মার্কেট স্ট্রাকচার
+    # ============================================================
+    text += "\n🏗️ MARKET STRUCTURE:\n"
+    text += "═"*80 + "\n"
+    
+    # সুইং পয়েন্ট
+    swing_highs, swing_lows = find_swing_points(highs, lows, window=5)
+    
+    if len(swing_highs) >= 3:
+        recent_highs = swing_highs[-3:]
+        if recent_highs[-1] > recent_highs[-2] > recent_highs[-3]:
+            text += "• Higher Highs (Bullish Structure) 📈\n"
+        elif recent_highs[-1] < recent_highs[-2] < recent_highs[-3]:
+            text += "• Lower Highs (Bearish Structure) 📉\n"
+    
+    if len(swing_lows) >= 3:
+        recent_lows = swing_lows[-3:]
+        if recent_lows[-1] > recent_lows[-2] > recent_lows[-3]:
+            text += "• Higher Lows (Bullish Support) ✅\n"
+        elif recent_lows[-1] < recent_lows[-2] < recent_lows[-3]:
+            text += "• Lower Lows (Bearish Continuation) ❌\n"
+    
+    # BOS ডিটেকশন
+    bos_detected, bos_type = detect_bos_from_swings(swing_highs, swing_lows, current_price)
+    if bos_detected:
+        text += f"\n⚡ {bos_type} DETECTED!\n"
+    
+    # ভলিউম স্পাইক
+    has_volume_spike = current_volume > avg_volume_20 * 1.5 if 'avg_volume_20' in dir() else False
+    
+    # হাই ভলাটিলিটি
+    atr_values = calculate_atr_series(highs, lows, closes) if 'calculate_atr_series' in globals() else np.ones(len(closes))
+    high_volatility = atr_values[-1] > np.mean(atr_values) * 1.2 if len(atr_values) > 0 else False
 
     return text, bos_detected, has_volume_spike, high_volatility
-
 
 # =========================================================
 # WYCKOFF CYCLE & VOLUME-PRICE ANALYSIS
@@ -4481,7 +4731,7 @@ def main():
     # ✅ ডেটা কোয়ালিটি ফিল্টার (NEW)
     # শুধু পর্যাপ্ত ডেটা আছে এমন সিম্বল নিন
     symbol_counts = df.groupby('symbol').size()
-    valid_symbols = symbol_counts[symbol_counts >= 100].index.tolist()
+    valid_symbols = symbol_counts[symbol_counts >= 120].index.tolist()
     df = df[df['symbol'].isin(valid_symbols)]
     
     # Volume > 0 ফিল্টার
