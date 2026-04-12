@@ -2078,6 +2078,9 @@ Current Price: {current_price:.2f}
                              if chunk.iloc[j]['close'] > chunk.iloc[j-1]['close'])
                 down_days = len(chunk) - 1 - up_days
                 
+                total_days = up_days + down_days
+                win_rate = (up_days / total_days * 100) if total_days > 0 else 0.0
+                
                 text += f"""
 ┌─ MONTH {month_num}: {start_date} to {end_date} ({len(chunk)} days)
 ├─ PRICE: Open {open_price:.2f} → Close {close_price:.2f} ({period_return:+.2f}%)
@@ -2088,7 +2091,7 @@ Current Price: {current_price:.2f}
                     avg_value = chunk['value'].mean() / 10000000
                     text += f"├─ VALUE: Avg ₹{avg_value:.2f} Cr\n"
                 
-                text += f"├─ INTERNALS: Up {up_days} | Down {down_days} | Win Rate {up_days/(up_days+down_days)*100:.1f}%\n"
+                text += f"├─ INTERNALS: Up {up_days} | Down {down_days} | Win Rate {win_rate:.1f}%\n"
                 text += f"└─{chr(0x2500)*70}\n"
                 month_num += 1
 
