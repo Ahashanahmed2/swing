@@ -4189,6 +4189,70 @@ def detect_bollinger_squeeze(df, idx):
     return bandwidth.iloc[-1] < bandwidth.mean() * 0.5 if not pd.isna(bandwidth.iloc[-1]) else False
 
 
+def detect_elliott_wave_patterns_from_complete(df, idx):
+    """Extract Elliott Wave patterns from complete detection"""
+    patterns = []
+    
+    # সম্পূর্ণ Elliott Wave ডিটেকশন কল করুন
+    elliott_result = detect_elliott_wave_complete(df, idx, lookback=ELLIOTT_LOOKBACK)
+    
+    if elliott_result:
+        wave_structure = elliott_result.get('wave_structure', {})
+        wave_count = wave_structure.get('wave_count', [])
+        fib_ratios = wave_structure.get('fib_ratios', {})
+        confidence = wave_structure.get('confidence', 0)
+        
+        # শুধু পর্যাপ্ত কনফিডেন্স থাকলে যোগ করুন
+        if confidence >= 40:
+            # Motive Waves (5-wave structure)
+            if len(wave_count) >= 5:
+                patterns.append('Impulse Wave')
+                
+                # Extension check
+                wave3_vs_wave1 = fib_ratios.get('wave3_vs_wave1', 0)
+                wave5_vs_wave1 = fib_ratios.get('wave5_vs_wave1', 0)
+                
+                if wave3_vs_wave1 >= 1.618:
+                    patterns.append('3rd Wave Extension')
+                if wave5_vs_wave1 >= 1.0:
+                    patterns.append('5th Wave Extension')
+            
+            # Leading/Ending Diagonal (overlapping waves)
+            sub_waves = wave_structure.get('sub_waves', {})
+            if sub_waves.get('wave1', {}).get('structure') == '5-wave impulse':
+                if len(wave_count) >= 5 and wave_count[0] == 'Wave 1':
+                    patterns.append('Leading Diagonal')
+                elif len(wave_count) >= 5 and wave_count[-1] == 'Wave 5':
+                    patterns.append('Ending Diagonal')
+            
+            # Corrective Waves
+            if 'A' in str(wave_count) and 'B' in str(wave_count) and 'C' in str(wave_count):
+                if len(wave_count) == 3:
+                    patterns.append('Single Zigzag')
+                elif len(wave_count) == 5:
+                    patterns.append('Double Zigzag')
+            
+            # Flat correction
+            wave_points = wave_structure.get('wave_points', {})
+            if wave_points:
+                # Regular Flat: Wave B near Wave A start
+                if 'w2' in wave_points and 'start' in wave_points:
+                    wave_b = wave_points.get('w2', 0)
+                    wave_a_start = wave_points.get('start', 0)
+                    if wave_b and wave_a_start:
+                        ratio = abs(wave_b - wave_a_start) / wave_a_start if wave_a_start > 0 else 0
+                        if ratio < 0.05:
+                            patterns.append('Regular Flat')
+                        elif ratio > 0.05:
+                            patterns.append('Expanded Flat')
+            
+            # Triangle (5 waves A-B-C-D-E)
+            if len(wave_count) >= 5 and all(w in ['A', 'B', 'C', 'D', 'E'] for w in wave_count[:5]):
+                patterns.append('Contracting Triangle')
+                patterns.append('Expanding Triangle')
+    
+    return list(set(patterns))
+
 # =========================================================
 # COMPLETE PATTERN DETECTION
 # =========================================================
@@ -4197,6 +4261,7 @@ def detect_all_patterns(df, idx):
     """Detect all patterns"""
     detected = []
 
+    # Basic Patterns
     if detect_cup_and_handle(df, idx): detected.append('Cup and Handle')
     if detect_double_bottom(df, idx): detected.append('Double Bottom')
     if detect_head_and_shoulders(df, idx): detected.append('Head and Shoulders')
@@ -4230,6 +4295,10 @@ def detect_all_patterns(df, idx):
     # New Candlestick Patterns
     candlestick_patterns = detect_all_candlestick_patterns(df, idx)
     detected.extend(candlestick_patterns)
+
+    # ✅ Elliott Wave Complete Detection
+    elliott_wave_patterns = detect_elliott_wave_patterns_from_complete(df, idx)
+    detected.extend(elliott_wave_patterns)
 
     final_patterns = list(set(detected))
 
