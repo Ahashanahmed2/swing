@@ -4256,12 +4256,10 @@ def detect_elliott_wave_patterns_from_complete(df, idx):
 # =========================================================
 # COMPLETE PATTERN DETECTION
 # =========================================================
-
 def detect_all_patterns(df, idx):
-    """Detect all patterns"""
     detected = []
-
-    # Basic Patterns (৭টি)
+    
+    # Basic Patterns
     if detect_cup_and_handle(df, idx): detected.append('Cup and Handle')
     if detect_double_bottom(df, idx): detected.append('Double Bottom')
     if detect_head_and_shoulders(df, idx): detected.append('Head and Shoulders')
@@ -4271,32 +4269,39 @@ def detect_all_patterns(df, idx):
     if detect_symmetrical_triangle(df, idx): detected.append('Symmetrical Triangle')
     if detect_rounding_bottom(df, idx): detected.append('Rounding Bottom')
 
-    # Candlestick Patterns (৯টি)
+    # Candlestick Patterns
     if detect_bullish_engulfing(df, idx): detected.append('Bullish Engulfing')
     if detect_hammer(df, idx): detected.append('Hammer')
-    if detect_shooting_star(df, idx): detected.append('Shooting Star')  # ✅ যোগ করুন
+    if detect_shooting_star(df, idx): detected.append('Shooting Star')
     if detect_morning_star(df, idx): detected.append('Morning Star')
-    if detect_evening_star(df, idx): detected.append('Evening Star')    # ✅ যোগ করুন
+    if detect_evening_star(df, idx): detected.append('Evening Star')
     if detect_doji(df, idx): detected.append('Doji')
     if detect_piercing_line(df, idx): detected.append('Piercing Line')
     if detect_three_white_soldiers(df, idx): detected.append('Three White Soldiers')
-    if detect_three_black_crows(df, idx): detected.append('Three Black Crows')  # ✅ যোগ করুন
+    if detect_three_black_crows(df, idx): detected.append('Three Black Crows')
+    if detect_engulfing(df, idx): detected.append('Engulfing')
+    if detect_harami(df, idx): detected.append('Harami')
+    if detect_dark_cloud_cover(df, idx): detected.append('Dark Cloud Cover')
+    if detect_spinning_top(df, idx): detected.append('Spinning Top')
+    if detect_marubozu(df, idx): detected.append('Marubozu')
+    if detect_tweezer_top_bottom(df, idx): detected.append('Tweezer')
+    if detect_abandoned_baby(df, idx): detected.append('Abandoned Baby')
+    if detect_three_inside_up_down(df, idx):
+        detected.append('Three Inside Up')
+        detected.append('Three Inside Down')
 
-    # Volume/Volatility Patterns (২টি)
+    # Volume/Volatility
     if detect_volume_spike(df, idx): detected.append('Volume Climax')
     if detect_bollinger_squeeze(df, idx): detected.append('Bollinger Band Squeeze')
 
-    # Divergence Patterns (৩টি) - ✅ যোগ করুন
-    rsi_div = detect_rsi_divergence(df['close'].values, df['rsi'].values if 'rsi' in df.columns else np.ones(len(df)))
-    macd_div = detect_macd_divergence(df['close'].values, df['macd'].values if 'macd' in df.columns else np.ones(len(df)))
-    if rsi_div == 'Bullish' or rsi_div == 'Bearish':
-        detected.append('RSI Divergence')
-    if macd_div == 'Bullish' or macd_div == 'Bearish':
-        detected.append('MACD Divergence')
-    if rsi_div in ['Bullish (Hidden)', 'Bearish (Hidden)'] or macd_div in ['Bullish (Hidden)', 'Bearish (Hidden)']:
-        detected.append('Hidden Divergence')
+    # Divergence
+    rsi_div = detect_rsi_divergence(df['close'].values, df['rsi'].values if 'rsi' in df.columns else [])
+    macd_div = detect_macd_divergence(df['close'].values, df['macd'].values if 'macd' in df.columns else [])
+    if rsi_div in ['Bullish', 'Bearish']: detected.append('RSI Divergence')
+    if macd_div in ['Bullish', 'Bearish']: detected.append('MACD Divergence')
+    if 'Hidden' in str(rsi_div) or 'Hidden' in str(macd_div): detected.append('Hidden Divergence')
 
-    # SMC Patterns (লুপে আছে)
+    # SMC Patterns - সব ফাংশন কল করুন
     for func in [detect_order_block, detect_fair_value_gap, detect_liquidity_pools, 
                  detect_market_structure_smc, detect_ote_entry, detect_smc_manipulation, detect_smc_hybrid,
                  detect_breaker_block, detect_mitigation_block, detect_rejection_block, detect_vacuum_block,
@@ -4309,13 +4314,12 @@ def detect_all_patterns(df, idx):
         res = func(df, idx)
         if res:
             detected.extend(res)
-            # SMC থেকে নির্দিষ্ট প্যাটার্ন আলাদা করে যোগ করুন
-            if 'Bearish Order Block' in res:
-                detected.append('Bearish Order Block')
-            if 'Liquidity Sweep' in res:
-                detected.append('Liquidity Sweep')
-            if 'Change of Character' in str(res):
-                detected.append('Change of Character (CHoCH)')
+
+    # Elliott Wave
+    elliott_wave_patterns = detect_elliott_wave_patterns_from_complete(df, idx)
+    detected.extend(elliott_wave_patterns)
+
+    return list(set(detected))
 
     # New Candlestick Patterns
     candlestick_patterns = detect_all_candlestick_patterns(df, idx)
@@ -4698,20 +4702,67 @@ def get_elliott_wave_patterns():
 
 def get_all_patterns():
     patterns = {
-        'Cup and Handle': {'category': 'Continuation', 'bias': 'Bullish', 'timeframe': 'Swing', 'entry': 'Breakout above handle', 'stop': 'Below handle low', 'target': 'Measure cup depth'},
-        'Ascending Triangle': {'category': 'Continuation', 'bias': 'Bullish', 'timeframe': 'Swing', 'entry': 'Breakout above resistance', 'stop': 'Below higher low', 'target': 'Height of triangle'},
-        'Bull Flag': {'category': 'Continuation', 'bias': 'Bullish', 'timeframe': 'Short-term', 'entry': 'Breakout of flag', 'stop': 'Below flag low', 'target': 'Flagpole length'},
-        'Double Bottom': {'category': 'Reversal', 'bias': 'Bullish', 'timeframe': 'Swing', 'entry': 'Break above neckline', 'stop': 'Below bottom', 'target': 'Pattern height'},
-        'Head and Shoulders': {'category': 'Reversal', 'bias': 'Bearish', 'timeframe': 'Swing', 'entry': 'Breakdown neckline', 'stop': 'Above right shoulder', 'target': 'Height'},
-        'Hammer': {'category': 'Candlestick', 'bias': 'Bullish', 'timeframe': 'Intraday', 'entry': 'Confirm next green', 'stop': 'Below wick', 'target': 'Recent resistance'},
-        'Bullish Engulfing': {'category': 'Candlestick', 'bias': 'Bullish', 'timeframe': 'Intraday', 'entry': 'Engulfing close', 'stop': 'Below candle', 'target': 'Resistance'},
-        'Doji': {'category': 'Candlestick', 'bias': 'Neutral', 'timeframe': 'Intraday', 'entry': 'Wait breakout', 'stop': 'High/low', 'target': 'Next move'},
-        'Volume Climax': {'category': 'Volume', 'bias': 'Reversal', 'timeframe': 'Any', 'entry': 'Spike volume', 'stop': 'Recent extreme', 'target': 'Reversal zone'},
-        'Bollinger Band Squeeze': {'category': 'Volatility', 'bias': 'Breakout', 'timeframe': 'Any', 'entry': 'Expansion', 'stop': 'Opp band', 'target': 'Move'},
+        # ... existing patterns ...
+        
+        # ========== SMC PATTERNS ==========
         'Break of Structure (BOS)': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Swing', 'entry': 'Retest', 'stop': 'Beyond swing', 'target': 'Next structure'},
         'Bullish Order Block': {'category': 'SMC', 'bias': 'Bullish', 'timeframe': 'Any', 'entry': 'OB retest', 'stop': 'Below OB', 'target': 'Next liquidity'},
+        'Bearish Order Block': {'category': 'SMC', 'bias': 'Bearish', 'timeframe': 'Any', 'entry': 'OB retest', 'stop': 'Above OB', 'target': 'Next liquidity'},
         'Fair Value Gap (FVG)': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'FVG fill', 'stop': 'Beyond FVG', 'target': 'Next OB'},
         'Optimal Trade Entry (OTE)': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Short-term', 'entry': '0.618-0.786 Fib', 'stop': 'Beyond 0.786', 'target': 'Swing high/low'},
+        'Liquidity Sweep': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'After sweep', 'stop': 'Beyond swept level', 'target': 'Opposite liquidity'},
+        'Change of Character (CHoCH)': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Swing', 'entry': 'CHoCH retest', 'stop': 'Beyond CHoCH', 'target': 'Next structure'},
+        'Breaker Block': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'Breaker retest', 'stop': 'Beyond breaker', 'target': 'Next liquidity'},
+        'Mitigation Block': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'Mitigation level', 'stop': 'Beyond mitigation', 'target': 'Next OB'},
+        'Rejection Block': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'Rejection confirm', 'stop': 'Beyond wick', 'target': 'Opposite side'},
+        'Vacuum Block': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'Vacuum fill', 'stop': 'Beyond vacuum', 'target': 'Next level'},
+        'Turtle Soup': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Short-term', 'entry': 'Trap confirm', 'stop': 'Beyond trap', 'target': 'Opposite liquidity'},
+        'Power of 3': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Daily', 'entry': 'Judas swing', 'stop': 'Asian range', 'target': 'Daily expansion'},
+        'Silver Bullet': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Intraday', 'entry': 'OTE + MSS', 'stop': 'Beyond OTE', 'target': 'Liquidity target'},
+        'MSS Bullish': {'category': 'SMC', 'bias': 'Bullish', 'timeframe': 'Swing', 'entry': 'MSS confirm', 'stop': 'Below recent low', 'target': 'Next resistance'},
+        'MSS Bearish': {'category': 'SMC', 'bias': 'Bearish', 'timeframe': 'Swing', 'entry': 'MSS confirm', 'stop': 'Above recent high', 'target': 'Next support'},
+        'Re-Accumulation Range': {'category': 'SMC', 'bias': 'Bullish', 'timeframe': 'Swing', 'entry': 'Range breakout', 'stop': 'Below range', 'target': 'Range height'},
+        'SMC Divergence': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'Divergence confirm', 'stop': 'Beyond extreme', 'target': 'Mean reversion'},
+        'Liquidity Void': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'Void fill', 'stop': 'Beyond void', 'target': 'Next level'},
+        'BISI': {'category': 'SMC', 'bias': 'Bullish', 'timeframe': 'Any', 'entry': 'BISI confirm', 'stop': 'Below BISI low', 'target': 'Next resistance'},
+        'SIBI': {'category': 'SMC', 'bias': 'Bearish', 'timeframe': 'Any', 'entry': 'SIBI confirm', 'stop': 'Above SIBI high', 'target': 'Next support'},
+        'Equal Highs': {'category': 'SMC', 'bias': 'Bearish', 'timeframe': 'Any', 'entry': 'Break below', 'stop': 'Above highs', 'target': 'Liquidity below'},
+        'Equal Lows': {'category': 'SMC', 'bias': 'Bullish', 'timeframe': 'Any', 'entry': 'Break above', 'stop': 'Below lows', 'target': 'Liquidity above'},
+        'Fake Breakout': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'Reversal confirm', 'stop': 'Beyond fakeout', 'target': 'Opposite side'},
+        'Killzone Reversal': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Intraday', 'entry': 'KZ reversal', 'stop': 'Beyond KZ', 'target': 'Next KZ'},
+        'ICT Macro': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Macro', 'entry': 'Macro time', 'stop': 'Session range', 'target': 'Next macro'},
+        'Imbalance': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'Imbalance fill', 'stop': 'Beyond imbalance', 'target': 'Next level'},
+        'Market Maker Model': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Swing', 'entry': 'Phase transition', 'stop': 'Phase invalidation', 'target': 'Next phase'},
+        'Three Drives': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Swing', 'entry': '3rd drive complete', 'stop': 'Beyond 3rd drive', 'target': 'Reversal'},
+        'Stop Hunt': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'After hunt', 'stop': 'Beyond hunted level', 'target': 'Opposite liquidity'},
+        'Confluence Zone': {'category': 'SMC', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'Zone retest', 'stop': 'Beyond zone', 'target': 'Next zone'},
+        'Double Top Sweep': {'category': 'SMC', 'bias': 'Bearish', 'timeframe': 'Any', 'entry': 'After sweep', 'stop': 'Above top', 'target': 'Support below'},
+        'Double Bottom Sweep': {'category': 'SMC', 'bias': 'Bullish', 'timeframe': 'Any', 'entry': 'After sweep', 'stop': 'Below bottom', 'target': 'Resistance above'},
+        'OTE LONG': {'category': 'SMC', 'bias': 'Bullish', 'timeframe': 'Short-term', 'entry': 'OTE zone', 'stop': 'Below OTE', 'target': 'Swing high'},
+        'OTE SHORT': {'category': 'SMC', 'bias': 'Bearish', 'timeframe': 'Short-term', 'entry': 'OTE zone', 'stop': 'Above OTE', 'target': 'Swing low'},
+        'BISI FVG': {'category': 'SMC', 'bias': 'Bullish', 'timeframe': 'Any', 'entry': 'FVG fill', 'stop': 'Below FVG', 'target': 'Next resistance'},
+        'SIBI FVG': {'category': 'SMC', 'bias': 'Bearish', 'timeframe': 'Any', 'entry': 'FVG fill', 'stop': 'Above FVG', 'target': 'Next support'},
+        'Daily Bias Bullish': {'category': 'SMC', 'bias': 'Bullish', 'timeframe': 'Daily', 'entry': 'Above OR', 'stop': 'Below OR', 'target': 'Daily expansion'},
+        'Daily Bias Bearish': {'category': 'SMC', 'bias': 'Bearish', 'timeframe': 'Daily', 'entry': 'Below OR', 'stop': 'Above OR', 'target': 'Daily breakdown'},
+        
+        # ========== DIVERGENCE PATTERNS ==========
+        'RSI Divergence': {'category': 'Divergence', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'Divergence confirm', 'stop': 'Beyond extreme', 'target': 'Trend reversal'},
+        'MACD Divergence': {'category': 'Divergence', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'Divergence confirm', 'stop': 'Beyond extreme', 'target': 'Trend reversal'},
+        'Hidden Divergence': {'category': 'Divergence', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'Hidden div confirm', 'stop': 'Beyond extreme', 'target': 'Trend continuation'},
+        
+        # ========== CANDLESTICK PATTERNS ==========
+        'Shooting Star': {'category': 'Candlestick', 'bias': 'Bearish', 'timeframe': 'Any', 'entry': 'Next bearish', 'stop': 'Above high', 'target': 'Recent support'},
+        'Evening Star': {'category': 'Candlestick', 'bias': 'Bearish', 'timeframe': 'Any', 'entry': 'Next bearish', 'stop': 'Above high', 'target': 'Recent support'},
+        'Three Black Crows': {'category': 'Candlestick', 'bias': 'Bearish', 'timeframe': 'Any', 'entry': 'Next bearish', 'stop': 'Above high', 'target': 'Recent support'},
+        'Engulfing': {'category': 'Candlestick', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'Engulfing close', 'stop': 'Beyond candle', 'target': 'Next S/R'},
+        'Harami': {'category': 'Candlestick', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'Harami breakout', 'stop': 'Beyond harami', 'target': 'Next S/R'},
+        'Dark Cloud Cover': {'category': 'Candlestick', 'bias': 'Bearish', 'timeframe': 'Any', 'entry': 'Next bearish', 'stop': 'Above high', 'target': 'Recent support'},
+        'Spinning Top': {'category': 'Candlestick', 'bias': 'Neutral', 'timeframe': 'Any', 'entry': 'Breakout direction', 'stop': 'Range low/high', 'target': 'Next S/R'},
+        'Marubozu': {'category': 'Candlestick', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'Momentum continue', 'stop': '50% of candle', 'target': 'Next S/R'},
+        'Tweezer': {'category': 'Candlestick', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'Tweezer break', 'stop': 'Beyond tweezer', 'target': 'Opposite side'},
+        'Abandoned Baby': {'category': 'Candlestick', 'bias': 'Both', 'timeframe': 'Any', 'entry': 'Baby breakout', 'stop': 'Beyond baby', 'target': 'Next S/R'},
+        'Three Inside Up': {'category': 'Candlestick', 'bias': 'Bullish', 'timeframe': 'Any', 'entry': 'Break above', 'stop': 'Below pattern', 'target': 'Next resistance'},
+        'Three Inside Down': {'category': 'Candlestick', 'bias': 'Bearish', 'timeframe': 'Any', 'entry': 'Break below', 'stop': 'Above pattern', 'target': 'Next support'},
     }
     patterns.update(get_elliott_wave_patterns())
     return patterns
