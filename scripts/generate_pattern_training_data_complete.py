@@ -4261,7 +4261,7 @@ def detect_all_patterns(df, idx):
     """Detect all patterns"""
     detected = []
 
-    # Basic Patterns
+    # Basic Patterns (৭টি)
     if detect_cup_and_handle(df, idx): detected.append('Cup and Handle')
     if detect_double_bottom(df, idx): detected.append('Double Bottom')
     if detect_head_and_shoulders(df, idx): detected.append('Head and Shoulders')
@@ -4270,16 +4270,33 @@ def detect_all_patterns(df, idx):
     if detect_descending_triangle(df, idx): detected.append('Descending Triangle')
     if detect_symmetrical_triangle(df, idx): detected.append('Symmetrical Triangle')
     if detect_rounding_bottom(df, idx): detected.append('Rounding Bottom')
+
+    # Candlestick Patterns (৯টি)
     if detect_bullish_engulfing(df, idx): detected.append('Bullish Engulfing')
     if detect_hammer(df, idx): detected.append('Hammer')
+    if detect_shooting_star(df, idx): detected.append('Shooting Star')  # ✅ যোগ করুন
     if detect_morning_star(df, idx): detected.append('Morning Star')
+    if detect_evening_star(df, idx): detected.append('Evening Star')    # ✅ যোগ করুন
     if detect_doji(df, idx): detected.append('Doji')
     if detect_piercing_line(df, idx): detected.append('Piercing Line')
     if detect_three_white_soldiers(df, idx): detected.append('Three White Soldiers')
+    if detect_three_black_crows(df, idx): detected.append('Three Black Crows')  # ✅ যোগ করুন
+
+    # Volume/Volatility Patterns (২টি)
     if detect_volume_spike(df, idx): detected.append('Volume Climax')
     if detect_bollinger_squeeze(df, idx): detected.append('Bollinger Band Squeeze')
 
-    # SMC Patterns
+    # Divergence Patterns (৩টি) - ✅ যোগ করুন
+    rsi_div = detect_rsi_divergence(df['close'].values, df['rsi'].values if 'rsi' in df.columns else np.ones(len(df)))
+    macd_div = detect_macd_divergence(df['close'].values, df['macd'].values if 'macd' in df.columns else np.ones(len(df)))
+    if rsi_div == 'Bullish' or rsi_div == 'Bearish':
+        detected.append('RSI Divergence')
+    if macd_div == 'Bullish' or macd_div == 'Bearish':
+        detected.append('MACD Divergence')
+    if rsi_div in ['Bullish (Hidden)', 'Bearish (Hidden)'] or macd_div in ['Bullish (Hidden)', 'Bearish (Hidden)']:
+        detected.append('Hidden Divergence')
+
+    # SMC Patterns (লুপে আছে)
     for func in [detect_order_block, detect_fair_value_gap, detect_liquidity_pools, 
                  detect_market_structure_smc, detect_ote_entry, detect_smc_manipulation, detect_smc_hybrid,
                  detect_breaker_block, detect_mitigation_block, detect_rejection_block, detect_vacuum_block,
@@ -4290,7 +4307,15 @@ def detect_all_patterns(df, idx):
                  detect_daily_bias, detect_market_maker_model, detect_institutional_candles,
                  detect_smc_divergence, detect_liquidity_void]:
         res = func(df, idx)
-        if res: detected.extend(res)
+        if res:
+            detected.extend(res)
+            # SMC থেকে নির্দিষ্ট প্যাটার্ন আলাদা করে যোগ করুন
+            if 'Bearish Order Block' in res:
+                detected.append('Bearish Order Block')
+            if 'Liquidity Sweep' in res:
+                detected.append('Liquidity Sweep')
+            if 'Change of Character' in str(res):
+                detected.append('Change of Character (CHoCH)')
 
     # New Candlestick Patterns
     candlestick_patterns = detect_all_candlestick_patterns(df, idx)
@@ -4302,7 +4327,7 @@ def detect_all_patterns(df, idx):
 
     final_patterns = list(set(detected))
 
-    # ✅ ডিবাগ: symbol সহ দেখান
+    # ✅ ডিবাগ
     if final_patterns and idx % 100 == 0:
         symbol = df.iloc[idx].get('symbol', 'UNKNOWN') if 'symbol' in df.columns else 'UNKNOWN'
         print(f"      ✅ {symbol} at idx {idx}: {len(final_patterns)} patterns")
