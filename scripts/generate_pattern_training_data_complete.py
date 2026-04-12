@@ -23,8 +23,8 @@ from typing import Dict, List, Tuple, Optional, Any, Union
 
 BASE_MIN_EXAMPLES = 100
 BASE_MAX_EXAMPLES = 200
-NUM_VARIATIONS = 4
 MAX_EXAMPLES_PER_RUN = 200000
+NUM_VARIATIONS = 5
 
 PATTERN_PRIORITY = {
     'Impulse Wave': 5.0, 'Leading Diagonal': 4.5, 'Ending Diagonal': 4.5,
@@ -40,7 +40,7 @@ PATTERN_PRIORITY = {
     'Hammer': 2.5, 'Shooting Star': 2.5, 'Doji': 2.5, 'Engulfing': 1.5,
     'Bullish Engulfing': 3, 'Morning Star': 3, 'Evening Star': 3,
     'Three White Soldiers': 2.5, 'Three Black Crows': 2.5, 'Piercing Line': 1.5,
-    'Cup and Handle': 1.0, 'Double Bottom': 1.0, 'Head and Shoulders': 1.0,
+z    'Cup and Handle': 1.0, 'Double Bottom': 1.0, 'Head and Shoulders': 1.0,
     'Bull Flag': 1.0, 'Ascending Triangle': 1.0, 'Descending Triangle': 1.0,
     'Symmetrical Triangle': 1.0, 'Rounding Bottom': 1.0,
     'Volume Climax': 1.2, 'Bollinger Band Squeeze': 1.2,
@@ -49,8 +49,7 @@ DEFAULT_PRIORITY = 1.0
 
 def get_pattern_limits(pattern_name):
     multiplier = PATTERN_PRIORITY.get(pattern_name, DEFAULT_PRIORITY)
-    return int(BASE_MIN_EXAMPLES * multiplier), int(BASE_MAX_EXAMPLES * mu.5 multiplier
-
+    return int(BASE_MIN_EXAMPLES * multiplier), int(BASE_MAX_EXAMPLES * multiplier), multiplier
 def get_pattern_category(pattern_name):
     if pattern_name in ['Impulse Wave', 'Leading Diagonal', 'Ending Diagonal', 
                         '3rd Wave Extension', '5th Wave Extension', 'Single Zigzag',
@@ -138,24 +137,15 @@ try:
     MAX_SYMBOLS = df_temp['symbol'].nunique()
     print(f"✅ Auto-detected {MAX_SYMBOLS} symbols from mongodb.csv")
 except:
-    MAX_SYMBOLS = 396  # Fallback
+    MAX_SYMBOLS =  MX_SYMBOLS  # Fallback
     print(f"⚠️ Using fallback: {MAX_SYMBOLS} symbols")
 
 # ✅ TOTAL_PATTERNS পরে main() এ সেট হবে
 TOTAL_PATTERNS = None
 
-# ✅ প্যাটার্ন কভারেজ কনফিগ
-MIN_EXAMPLES_PER_PATTERN = 15      # প্রতি প্যাটার্ন কমপক্ষে ৫টি examples
-MAX_EXAMPLES_PER_PATTERN = 30     # প্রতি প্যাটার্ন সর্বোচ্চ ১০টি
-
-# ✅ VARIATION কনফিগ
-NUM_VARIATIONS = 5                # প্রতি প্যাটার্নের ৩টি variation (main এ ওভাররাইড হবে)
-
-# ✅ MAX_PER_SYMBOL হবে অটো ক্যালকুলেটেড
 MAX_PER_SYMBOL = None             # main() এ TOTAL_PATTERNS * MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS
 
-# Time control
-MAX_EXAMPLES_PER_RUN = 50000      # Max examples to generate (prevents timeout)
+      
 
 # Elliott Wave Configuration
 ELLIOTT_LOOKBACK = 300
