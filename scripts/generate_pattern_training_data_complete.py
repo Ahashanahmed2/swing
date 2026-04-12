@@ -21,25 +21,25 @@ from typing import Dict, List, Tuple, Optional, Any, Union
 # 🎯 PRIORITY-BASED TRAINING CONFIGURATION (NEW)
 # =========================================================
 
-BASE_MIN_EXAMPLES = 50
-BASE_MAX_EXAMPLES = 100
+BASE_MIN_EXAMPLES = 100
+BASE_MAX_EXAMPLES = 200
 NUM_VARIATIONS = 4
-MAX_EXAMPLES_PER_RUN = 100000
+MAX_EXAMPLES_PER_RUN = 200000
 
 PATTERN_PRIORITY = {
-    'Impulse Wave': 3.0, 'Leading Diagonal': 3.0, 'Ending Diagonal': 3.0,
-    '3rd Wave Extension': 3.0, '5th Wave Extension': 3.0, 'Single Zigzag': 3.0,
-    'Double Zigzag': 3.0, 'Regular Flat': 3.0, 'Expanded Flat': 3.0,
-    'Contracting Triangle': 3.0, 'Expanding Triangle': 3.0,
-    'Break of Structure (BOS)': 2.5, 'Bullish Order Block': 2.5,
-    'Bearish Order Block': 2.5, 'Fair Value Gap (FVG)': 2.5,
-    'Optimal Trade Entry (OTE)': 2.5, 'Liquidity Sweep': 2.5,
-    'Change of Character (CHoCH)': 2.5, 'Breaker Block': 2.5,
+    'Impulse Wave': 5.0, 'Leading Diagonal': 4.5, 'Ending Diagonal': 4.5,
+    '3rd Wave Extension': 5.0, '5th Wave Extension': 4.5, 'Single Zigzag': 5.0,
+    'Double Zigzag': 4.0, 'Regular Flat': 3.0, 'Expanded Flat': 3.0,
+    'Contracting Triangle': 4.0, 'Expanding Triangle': 3.0,
+    'Break of Structure (BOS)': 5, 'Bullish Order Block': 5,
+    'Bearish Order Block': 5, 'Fair Value Gap (FVG)': 4.5,
+    'Optimal Trade Entry (OTE)': 4.5, 'Liquidity Sweep': 4.5,
+    'Change of Character (CHoCH)': 4.5, 'Breaker Block': 2.5,
     'Mitigation Block': 2.5, 'Rejection Block': 2.5,
-    'RSI Divergence': 2.0, 'MACD Divergence': 2.0, 'Hidden Divergence': 2.0,
-    'Hammer': 1.5, 'Shooting Star': 1.5, 'Doji': 1.5, 'Engulfing': 1.5,
-    'Bullish Engulfing': 1.5, 'Morning Star': 1.5, 'Evening Star': 1.5,
-    'Three White Soldiers': 1.5, 'Three Black Crows': 1.5, 'Piercing Line': 1.5,
+    'RSI Divergence': 3.5, 'MACD Divergence': 3.5, 'Hidden Divergence': 3.0,
+    'Hammer': 2.5, 'Shooting Star': 2.5, 'Doji': 2.5, 'Engulfing': 1.5,
+    'Bullish Engulfing': 3, 'Morning Star': 3, 'Evening Star': 3,
+    'Three White Soldiers': 2.5, 'Three Black Crows': 2.5, 'Piercing Line': 1.5,
     'Cup and Handle': 1.0, 'Double Bottom': 1.0, 'Head and Shoulders': 1.0,
     'Bull Flag': 1.0, 'Ascending Triangle': 1.0, 'Descending Triangle': 1.0,
     'Symmetrical Triangle': 1.0, 'Rounding Bottom': 1.0,
@@ -49,7 +49,7 @@ DEFAULT_PRIORITY = 1.0
 
 def get_pattern_limits(pattern_name):
     multiplier = PATTERN_PRIORITY.get(pattern_name, DEFAULT_PRIORITY)
-    return int(BASE_MIN_EXAMPLES * multiplier), int(BASE_MAX_EXAMPLES * multiplier), multiplier
+    return int(BASE_MIN_EXAMPLES * multiplier), int(BASE_MAX_EXAMPLES * mu.5 multiplier
 
 def get_pattern_category(pattern_name):
     if pattern_name in ['Impulse Wave', 'Leading Diagonal', 'Ending Diagonal', 
@@ -145,11 +145,11 @@ except:
 TOTAL_PATTERNS = None
 
 # ✅ প্যাটার্ন কভারেজ কনফিগ
-MIN_EXAMPLES_PER_PATTERN = 5      # প্রতি প্যাটার্ন কমপক্ষে ৫টি examples
-MAX_EXAMPLES_PER_PATTERN = 10     # প্রতি প্যাটার্ন সর্বোচ্চ ১০টি
+MIN_EXAMPLES_PER_PATTERN = 15      # প্রতি প্যাটার্ন কমপক্ষে ৫টি examples
+MAX_EXAMPLES_PER_PATTERN = 30     # প্রতি প্যাটার্ন সর্বোচ্চ ১০টি
 
 # ✅ VARIATION কনফিগ
-NUM_VARIATIONS = 3                # প্রতি প্যাটার্নের ৩টি variation (main এ ওভাররাইড হবে)
+NUM_VARIATIONS = 5                # প্রতি প্যাটার্নের ৩টি variation (main এ ওভাররাইড হবে)
 
 # ✅ MAX_PER_SYMBOL হবে অটো ক্যালকুলেটেড
 MAX_PER_SYMBOL = None             # main() এ TOTAL_PATTERNS * MIN_EXAMPLES_PER_PATTERN * NUM_VARIATIONS
@@ -4018,6 +4018,20 @@ def generate_elliott_wave_data(symbol, df_row, pattern_type, config, indicator_v
     ema_20 = indicator_values.get('ema_20', current_price)
     sma_20 = indicator_values.get('sma_20', current_price)
 
+    
+    # ✅ এখানেও VARIATION_TEMPLATES যোগ করুন
+    VARIATION_TEMPLATES = [
+        {"price_header": "📊 PRICE DATA:", "include_sector": True, "include_wyckoff": True},
+        {"price_header": "PRICE SNAPSHOT:", "include_sector": False, "include_wyckoff": False},
+        {"price_header": "📊 DETAILED PRICE ANALYSIS:", "include_sector": True, "include_wyckoff": True},
+        {"price_header": "📈 TECHNICAL DATA:", "include_sector": False, "include_wyckoff": True},
+        {"price_header": "PRICE:", "include_sector": False, "include_wyckoff": False},
+    ]
+    template = VARIATION_TEMPLATES[variation_idx % len(VARIATION_TEMPLATES)]
+    price_header = template["price_header"]
+
+    # ... বাকি কোড ...
+
     atr_value = atr if atr > 0 else current_price * 0.02
 
     if config['bias'] == 'Bullish':
@@ -4050,14 +4064,16 @@ def generate_elliott_wave_data(symbol, df_row, pattern_type, config, indicator_v
     pattern_display = pattern_type if random.random() < 0.5 else "Unknown Pattern"
     price_header = "PRICE SNAPSHOT:" if random.random() < 0.3 else "📊 PRICE DATA:"
 
-    sector_details = f"""
-🏭 SECTOR INFORMATION:
-w────────────────────────────────────────────────────────────────────────────────
-Sector: {sector}
-Sector Strength: {sector_analysis.get('strength', 'Neutral')}
-Sector Rotation Signal: {sector_analysis.get('rotation', 'None')}
-Peer Comparison: {sector_analysis.get('peer_rank', 'N/A')}
-"""
+    sector_details = ""
+    if template["include_sector"] :
+        sector_details = f"""
+    🏭 SECTOR INFORMATION:
+    ────────────────────────────────────────────────────────────────────────────────
+    Sector: {sector}
+    Sector Strength: {sector_analysis.get('strength', 'Neutral')}
+    Sector Rotation Signal: {sector_analysis.get('rotation', 'None')}
+    Peer Comparison: {sector_analysis.get('peer_rank', 'N/A')}
+    """
 
     price_sequence_text = ""
     if symbol_data is not None and idx is not None:
@@ -4330,6 +4346,18 @@ def generate_complete_pattern_data(symbol, df_row, pattern_type, config, indicat
     rsi_div = indicator_values.get('rsi_divergence', 'None')
     avg_vol = indicator_values.get('avg_volume', volume)
 
+    
+    # ✅ এখানে VARIATION_TEMPLATES যোগ করুন (নতুন)
+    VARIATION_TEMPLATES = [
+        {"price_header": "📊 PRICE DATA:", "include_sector": True, "include_wyckoff": True},
+        {"price_header": "PRICE SNAPSHOT:", "include_sector": False, "include_wyckoff": False},
+        {"price_header": "📊 DETAILED PRICE ANALYSIS:", "include_sector": True, "include_wyckoff": True},
+        {"price_header": "📈 TECHNICAL DATA:", "include_sector": False, "include_wyckoff": True},
+        {"price_header": "PRICE:", "include_sector": False, "include_wyckoff": False},
+    ]
+    template = VARIATION_TEMPLATES[variation_idx % len(VARIATION_TEMPLATES)]
+    price_header = template["price_header"]
+    
     atr_value = atr if atr > 0 else current_price * 0.02
 
     if config['bias'] == 'Bullish':
@@ -4358,18 +4386,20 @@ def generate_complete_pattern_data(symbol, df_row, pattern_type, config, indicat
     variation_note = f" [VARIATION {variation_idx + 1}]" if variation_idx > 0 else " [ORIGINAL SEQUENCE]"
     pattern_display = pattern_type if random.random() < 0.5 else "Unknown Pattern"
 
-    sector_details = f"""
-🏭 SECTOR: {sector} | Strength: {sector_analysis.get('strength', 'Neutral')} | Rotation: {sector_analysis.get('rotation', 'None')}
-"""
+    
+    sector_details = ""
+    if template["include_sector"]:  # ✅ টেমপ্লেট অনুযায়ী সেক্টর দেখান
+        sector_details = f"""
+    #🏭 SECTOR: {sector} | Strength: {sector_analysis.get('strength', 'Neutral')} | Rotation: {sector_analysis.get('rotation', 'None')}
+    """
 
     price_sequence_text = ""
     if symbol_data is not None and idx is not None:
         price_sequence_text, _, _, _ = generate_advanced_price_sequence(symbol_data, idx)
 
     wyckoff_text = ""
-    if symbol_data is not None and idx is not None:
+    if template["include_wyckoff"] and symbol_data is not None and idx is not None:  # ✅ টেমপ্লেট অনুযায়ী Wyckoff
         wyckoff_text, _ = detect_volume_price_cycle(symbol_data, idx)
-
     forward_text = ""
     if symbol_data is not None and idx is not None:
         forward_text = generate_forward_looking_analysis(symbol_data, idx)
@@ -4455,6 +4485,26 @@ def main():
     df = pd.read_csv(csv_path)
     df['date'] = pd.to_datetime(df['date'])
     print(f"✅ Loaded {len(df)} rows, {df['symbol'].nunique()} symbols")
+
+    
+    # ✅ ডেটা কোয়ালিটি ফিল্টার (NEW)
+    # শুধু পর্যাপ্ত ডেটা আছে এমন সিম্বল নিন
+    symbol_counts = df.groupby('symbol').size()
+    valid_symbols = symbol_counts[symbol_counts >= 100].index.tolist()
+    df = df[df['symbol'].isin(valid_symbols)]
+    
+    # Volume > 0 ফিল্টার
+    df = df[df['volume'] > 0]
+    
+    # Outlier removal (99th percentile)
+    for col in ['high', 'low', 'close']:
+        upper = df[col].quantile(0.99)
+        lower = df[col].quantile(0.01)
+        df = df[(df[col] >= lower) & (df[col] <= upper)]
+    
+    print(f"✅ After quality filter: {len(df)} rows, {df['symbol'].nunique()} symbols")
+    # ... rest of main ...w
+    
 
     all_patterns = get_all_patterns()
     TOTAL_PATTERNS = len(all_patterns)
