@@ -3,7 +3,7 @@
 
 
 
-#llm_train.py
+#train.py
 import sys
 import subprocess
 import os
