@@ -3,15 +3,12 @@
 
 
 
-#main.py
+#llm_train.py
 import sys
 import subprocess
 import os
 
 scripts = [
-    
-    #"scripts/dse_scraper.py",no
-    "scripts/date_check.py",
     "scripts/hf_download.py",
     "scripts/generate_pattern_training_data_complete.py",
     "scripts/llm_train.py",
