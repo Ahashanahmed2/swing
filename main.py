@@ -54,8 +54,8 @@ scripts = [
     "scripts/dayliMassage.py",
     "scripts/email_reports.py",
     
-    "scripts/generate_pattern_training_data_complete.py",
-    "scripts/llm_train.py",
+    #"scripts/generate_pattern_training_data_complete.py",
+    #"scripts/llm_train.py",
     #"scripts/fix_and_train_missing_symbol.py",no
 ]
 
