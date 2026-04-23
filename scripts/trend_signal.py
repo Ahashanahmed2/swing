@@ -134,8 +134,21 @@ def create_uptrend_downtrend_signals():
     # --------------------------------------------------
     if uptrend_signals:
         new_up_df = pd.DataFrame(uptrend_signals)
-        old_up_df = pd.read_csv(uptrend_file) if os.path.exists(uptrend_file) else None
-
+       # old_up_df = pd.read_csv(uptrend_file) if os.path.exists(uptrend_file) else None
+        
+# সাবধানে পুরোনো ডেটা লোড করা
+old_up_df = None
+if os.path.exists(uptrend_file):
+    try:
+        old_up_df = pd.read_csv(uptrend_file)
+        if old_up_df.empty:  # ফাইল থাকলেও যদি ডেটা খালি হয়
+            old_up_df = None
+    except pd.errors.EmptyDataError:
+        print(f"⚠️ {uptrend_file} ফাইলটি খালি ছিল, নতুন ফাইল তৈরি হচ্ছে")
+        old_up_df = None
+    except Exception as e:
+        print(f"⚠️ {uptrend_file} পড়তে সমস্যা: {e}, নতুন ফাইল তৈরি হচ্ছে")
+        old_up_df = None
         final_up_df, new_up_symbols = merge_and_track_new_symbols(
             old_up_df, new_up_df
         )
@@ -159,8 +172,22 @@ def create_uptrend_downtrend_signals():
     # --------------------------------------------------
     if downtrend_signals:
         new_down_df = pd.DataFrame(downtrend_signals)
-        old_down_df = pd.read_csv(downtrend_file) if os.path.exists(downtrend_file) else None
-
+        #old_down_df = pd.read_csv(downtrend_file) if os.path.exists(downtrend_file) else None
+        
+        # old_down_df = pd.read_csv(downtrend_file) if os.path.exists(downtrend_file) else None
+old_down_df = None
+if os.path.exists(downtrend_file):
+    try:
+        old_down_df = pd.read_csv(downtrend_file)
+        if old_down_df.empty:
+            old_down_df = None
+    except pd.errors.EmptyDataError:
+        print(f"⚠️ {downtrend_file} ফাইলটি খালি ছিল, নতুন ফাইল তৈরি হচ্ছে")
+        old_down_df = None
+    except Exception as e:
+        print(f"⚠️ {downtrend_file} পড়তে সমস্যা: {e}, নতুন ফাইল তৈরি হচ্ছে")
+        old_down_df = None
+        
         final_down_df, new_down_symbols = merge_and_track_new_symbols(
             old_down_df, new_down_df
         )
