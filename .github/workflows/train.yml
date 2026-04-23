@@ -2,11 +2,11 @@ name: LLM Train
 
 on:
   schedule:
-      - cron: "0 13,19,3 * * *"
+      - cron: "0 3,9,15,21 * * *"
   workflow_dispatch:  # ম্যানুয়ালি চালাতে পারবে
 
 permissions:
-  contents: write  # কমিট ও পুশের অনুমতি
+  contents: write  # কমিট ও পুশের অনুমতি15
 
 jobs:
   analyze_stocks:
