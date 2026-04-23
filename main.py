@@ -19,7 +19,7 @@ scripts = [
     #"scripts/add_ai_value_support_resistance.py",
     "scripts/sync_emails.py",
     "scripts/trand.py",
-    "scripts/trend_signal.py",no
+    "scripts/trend_signal.py",
    
     #"scripts/pattarn.py",no
     "scripts/elliott_wave.py",
