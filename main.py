@@ -55,9 +55,10 @@ scripts = [
     "scripts/upload_csv.py",
     "scripts/dayliMassage.py",
     "scripts/email_reports.py",
+    "scripts/save_to_mongodb.py"
     
     #"scripts/generate_pattern_training_data_complete.py",
-    #"scripts/llm_train.py",
+    #"scripts/llm_tra"in.py",
     #"scripts/fix_and_train_missing_symbol.py",no
 ]
 
