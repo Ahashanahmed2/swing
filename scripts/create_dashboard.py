@@ -304,6 +304,20 @@ async def dashboard():
 </body>
 </html>
 """
+def get_signal_class(signal):
+    if not signal:
+        return ''
+    if 'STRONG BUY' in signal:
+        return 'signal-SB'
+    elif 'BUY' in signal:
+        return 'signal-B'
+    elif 'HOLD' in signal:
+        return 'signal-H'
+    elif 'STRONG SELL' in signal:
+        return 'signal-SS'
+    elif 'SELL' in signal:
+        return 'signal-S'
+    return ''
 
 if __name__ == "__main__":
     import uvicorn
