@@ -19,3 +19,5 @@ matplotlib>=3.5.0
 fastdtw
 beautifulsoup4 
 lxml
+fastapi 
+uvicorn
