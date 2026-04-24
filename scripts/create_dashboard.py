@@ -239,15 +239,49 @@ async def dashboard():
     <h2>📋 Trading Signals <span id="tableCount" style="font-size:0.7em;color:#888;"></span></h2>
     <div style="overflow-x:auto;">
         <table id="signalTable">
-            <thead>
-                <tr>
-                    <th>Symbol</th><th>Date</th><th>Price</th><th>Signal</th><th>Score</th>
-                    <th>LLM</th><th>LLM%</th><th>XGB</th><th>AUC</th><th>PPO</th>
-                    <th>Agentic</th><th>Elliott</th><th>Entry</th><th>SL</th><th>TP</th><th>R:R</th>
-                </tr>
-            </thead>
-            <tbody id="tableBody"><tr><td colspan="16" class="loading">📂 Loading from MongoDB...</td></tr></tbody>
-        </table>
+    <thead>
+        <tr>
+            <th>#</th>
+            <th>Symbol</th>
+            <th>Date</th>
+            <th>Price</th>
+            <th>Sector</th>
+            <th>Final Signal</th>
+            <th>Score</th>
+            <th>LLM</th>
+            <th>LLM%</th>
+            <th>LLM Str</th>
+            <th>LLM Bias</th>
+            <th>LLM Avail</th>
+            <th>XGB</th>
+            <th>XGB%</th>
+            <th>XGB Prob</th>
+            <th>AUC</th>
+            <th>XGB Avail</th>
+            <th>PPO</th>
+            <th>PPO%</th>
+            <th>PPO Avail</th>
+            <th>PPO Wt</th>
+            <th>Agentic</th>
+            <th>Agentic Bias</th>
+            <th>Agentic Avail</th>
+            <th>Elliott Acc</th>
+            <th>Elliott Total</th>
+            <th>Elliott Wave</th>
+            <th>Sub-Waves</th>
+            <th>Current Wave</th>
+            <th>Wave Conf</th>
+            <th>Bullish?</th>
+            <th>Wave Pos</th>
+            <th>Models</th>
+            <th>Entry</th>
+            <th>SL</th>
+            <th>TP</th>
+            <th>R:R</th>
+        </tr>
+    </thead>
+    <tbody id="tableBody"></tbody>
+</table>
     </div>
 
     <footer>🤖 AI Trading System | MongoDB + FastAPI | Auto-Generated Daily</footer>
@@ -309,40 +343,61 @@ async def dashboard():
         }
 
         function renderTable() {
-            const signalFilter = document.getElementById('signalFilter').value;
-            const minScore = parseFloat(document.getElementById('minScore').value) || 0;
-            
-            let filtered = currentData;
-            if (signalFilter) filtered = filtered.filter(r => (r.final_signal || '').includes(signalFilter));
-            if (minScore > 0) filtered = filtered.filter(r => (r.final_combined_score || 0) >= minScore);
-            
-            const tbody = document.getElementById('tableBody');
-            if (filtered.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="16" style="text-align:center;padding:40px;color:#888;">No signals match filters</td></tr>';
-                return;
-            }
-            
-            tbody.innerHTML = filtered.map(r => `
-                <tr>
-                    <td><strong>${r.symbol}</strong></td>
-                    <td>${r.analysis_date || ''}</td>
-                    <td>${(r.current_price || 0).toFixed(2)}</td>
-                    <td class="${getSignalClass(r.final_signal)}">${r.final_signal || 'N/A'}</td>
-                    <td><strong>${(r.final_combined_score || 0).toFixed(1)}</strong></td>
-                    <td>${r.llm_signal || 'N/A'}</td>
-                    <td>${(r.llm_confidence || 0).toFixed(0)}%</td>
-                    <td>${r.xgb_signal || 'N/A'}</td>
-                    <td>${(r.xgb_auc || 0).toFixed(3)}</td>
-                    <td>${r.ppo_signal || 'N/A'}</td>
-                    <td>${(r.agentic_score || 0).toFixed(1)}</td>
-                    <td>${r.elliott_current_wave || 'N/A'}</td>
-                    <td>${(r.entry_price || 0).toFixed(2)}</td>
-                    <td>${(r.stop_loss || 0).toFixed(2)}</td>
-                    <td>${(r.target_price || 0).toFixed(2)}</td>
-                    <td>${r.risk_reward_ratio || 0}</td>
-                </tr>
-            `).join('');
-        }
+    const signalFilter = document.getElementById('signalFilter').value;
+    const minScore = parseFloat(document.getElementById('minScore').value) || 0;
+    
+    let filtered = currentData;
+    if (signalFilter) filtered = filtered.filter(r => (r.final_signal || '').includes(signalFilter));
+    if (minScore > 0) filtered = filtered.filter(r => (r.final_combined_score || 0) >= minScore);
+    
+    const tbody = document.getElementById('tableBody');
+    if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="38" style="text-align:center;padding:40px;color:#888;">No signals match filters</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = filtered.map((r, i) => `
+        <tr>
+            <td>${i + 1}</td>
+            <td><strong>${r.symbol}</strong></td>
+            <td>${r.analysis_date || r.date || ''}</td>
+            <td>${(r.current_price || 0).toFixed(2)}</td>
+            <td>${r.sector || 'N/A'}</td>
+            <td class="${getSignalClass(r.final_signal)}">${r.final_signal || 'N/A'}</td>
+            <td><strong>${(r.final_combined_score || 0).toFixed(1)}</strong></td>
+            <td>${r.llm_signal || 'N/A'}</td>
+            <td>${(r.llm_confidence || 0).toFixed(0)}%</td>
+            <td>${r.llm_strength || 'N/A'}</td>
+            <td>${r.llm_bias || 'N/A'}</td>
+            <td>${r.llm_available ? '✅' : '❌'}</td>
+            <td>${r.xgb_signal || 'N/A'}</td>
+            <td>${(r.xgb_confidence || 0).toFixed(0)}%</td>
+            <td>${(r.xgb_prob_up || 0).toFixed(3)}</td>
+            <td>${(r.xgb_auc || 0).toFixed(3)}</td>
+            <td>${r.xgb_available ? '✅' : '❌'}</td>
+            <td>${r.ppo_signal || 'N/A'}</td>
+            <td>${(r.ppo_confidence || 0).toFixed(0)}%</td>
+            <td>${r.ppo_available ? '✅' : '❌'}</td>
+            <td>${r.ppo_weight || 0}</td>
+            <td>${(r.agentic_score || 0).toFixed(1)}</td>
+            <td>${r.agentic_bias || 'N/A'}</td>
+            <td>${r.agentic_available ? '✅' : '❌'}</td>
+            <td>${(r.elliott_accuracy || 0).toFixed(1)}%</td>
+            <td>${r.elliott_total_predictions || 0}</td>
+            <td style="font-size:0.7em;">${r.elliott_wave_count || 'N/A'}</td>
+            <td style="font-size:0.7em;max-width:150px;overflow:hidden;text-overflow:ellipsis;">${r.elliott_sub_waves || 'N/A'}</td>
+            <td>${r.elliott_current_wave || 'N/A'}</td>
+            <td>${(r.elliott_wave_confidence || 0).toFixed(0)}%</td>
+            <td>${r.elliott_is_bullish ? '✅' : '❌'}</td>
+            <td>${r.elliott_wave_position || 'N/A'}</td>
+            <td>${r.model_availability || 'N/A'}</td>
+            <td>${(r.entry_price || 0).toFixed(2)}</td>
+            <td>${(r.stop_loss || 0).toFixed(2)}</td>
+            <td>${(r.target_price || 0).toFixed(2)}</td>
+            <td>${r.risk_reward_ratio || 0}</td>
+        </tr>
+    `).join('');
+}
 
         function updateCharts() {
             // Signal Distribution
