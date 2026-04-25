@@ -29,8 +29,8 @@ XGB_CONFIDENCE_PATH = "./csv/xgb_confidence.csv"
 AGENTIC_LOOP_STATE = "./csv/agentic_loop_state.json"
 ELLIOTT_BACKTEST_PATH = "./csv/elliott_backtest.json"
 
-FINAL_OUTPUT_PATH = "./output/ai_signal/FINAL_AI_SIGNALS.csv"
-os.makedirs("./output/ai_signal", exist_ok=True)
+FINAL_OUTPUT_PATH = "./csv/FINAL_AI_SIGNALS.csv"
+#os.makedirs("./output/ai_signal", exist_ok=True)
 
 # =========================================================
 # এআই মডেল ওজন (Weight)
