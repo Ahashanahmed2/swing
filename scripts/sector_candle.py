@@ -1,9 +1,7 @@
-# sector_candle.csv
 import pandas as pd
 import numpy as np
 import os
 from datetime import datetime, timedelta
-import glob
 
 # কনফিগারেশন
 INPUT_CSV = './csv/mongodb.csv'
@@ -15,12 +13,57 @@ PROCESSED_TRACKER = './csv/sector/processed_dates.txt'
 os.makedirs(OUTPUT_DAILY_DIR, exist_ok=True)
 os.makedirs(OUTPUT_WEEKLY_DIR, exist_ok=True)
 
+def calculate_rsi(close_prices, period=14):
+    """RSI (Relative Strength Index) হিসাব করে"""
+    if len(close_prices) < period + 1:
+        return [None] * len(close_prices)
+    
+    deltas = close_prices.diff()
+    
+    gains = deltas.copy()
+    losses = deltas.copy()
+    gains[gains < 0] = 0
+    losses[losses > 0] = 0
+    losses = abs(losses)
+    
+    avg_gain = gains.iloc[:period].mean()
+    avg_loss = losses.iloc[:period].mean()
+    
+    rsi_values = [None] * period
+    
+    if avg_loss == 0:
+        rsi = 100
+    else:
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+    rsi_values.append(round(rsi, 2))
+    
+    for i in range(period + 1, len(close_prices)):
+        avg_gain = (avg_gain * (period - 1) + gains.iloc[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses.iloc[i]) / period
+        
+        if avg_loss == 0:
+            rsi = 100
+        else:
+            rs = avg_gain / avg_loss
+            rsi = 100 - (100 / (1 + rs))
+        
+        rsi_values.append(round(rsi, 2))
+    
+    return rsi_values
+
+def calculate_rsi_with_history(existing_closes, new_closes, period=14):
+    """হিস্ট্রি ডাটা সহ RSI হিসাব করে"""
+    all_closes = pd.concat([existing_closes, new_closes])
+    all_rsi = calculate_rsi(all_closes, period)
+    return all_rsi[-len(new_closes):]
+
 def load_processed_dates():
     """কোন তারিখ পর্যন্ত প্রসেস করা হয়েছে ট্র্যাক করে"""
     if os.path.exists(PROCESSED_TRACKER):
         with open(PROCESSED_TRACKER, 'r') as f:
             dates = f.read().strip().split(',')
-            return set(pd.to_datetime(dates))
+            return set(pd.to_datetime([d for d in dates if d]))
     return set()
 
 def save_processed_dates(dates):
@@ -34,11 +77,16 @@ def load_existing_sector_data(sector, period='daily'):
     filepath = os.path.join(OUTPUT_DAILY_DIR if period == 'daily' else OUTPUT_WEEKLY_DIR, 
                             f"{safe_name}_{period}.csv")
     if os.path.exists(filepath):
-        return pd.read_csv(filepath, parse_dates=['date', 'week_end_date'] if period == 'weekly' else ['date'])
+        df = pd.read_csv(filepath)
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+        if 'week_end_date' in df.columns:
+            df['week_end_date'] = pd.to_datetime(df['week_end_date'])
+        return df
     return pd.DataFrame()
 
 def save_sector_data(sector, df, period='daily'):
-    """সেক্টর ডাটা সেভ করে (existing data-তে নতুন data অ্যাপেন্ড/মার্জ করে)"""
+    """সেক্টর ডাটা সেভ করে"""
     safe_name = sector.replace(' ', '_').replace('/', '_').replace('&', 'and').lower()
     filepath = os.path.join(OUTPUT_DAILY_DIR if period == 'daily' else OUTPUT_WEEKLY_DIR, 
                             f"{safe_name}_{period}.csv")
@@ -46,26 +94,18 @@ def save_sector_data(sector, df, period='daily'):
     existing_df = load_existing_sector_data(sector, period)
     
     if len(existing_df) > 0:
-        # Combine existing and new data
         combined = pd.concat([existing_df, df], ignore_index=True)
-        
-        if period == 'daily':
-            # Remove duplicate dates, keep last entry (newest)
-            combined = combined.drop_duplicates(subset=['date'], keep='last')
-        else:  # weekly
-            combined = combined.drop_duplicates(subset=['date'], keep='last')
-        
-        # Sort by date
+        combined = combined.drop_duplicates(subset=['date'], keep='last')
         combined = combined.sort_values('date').reset_index(drop=True)
     else:
         combined = df.sort_values('date').reset_index(drop=True)
     
-    # Select appropriate columns
+    # Select appropriate columns (active_symbols বাদ)
     if period == 'daily':
-        columns = ['sector', 'date', 'open', 'close', 'high', 'low', 'volume', 'value', 'trades', 'change', 'active_symbols']
+        columns = ['sector', 'date', 'open', 'close', 'high', 'low', 'volume', 'value', 'trades', 'change', 'rsi']
     else:
-        columns = ['sector', 'date', 'week_end_date', 'dse_year', 'dse_week_num', 'trading_days', 'active_symbols',
-                  'open', 'close', 'high', 'low', 'volume', 'value', 'trades', 'change']
+        columns = ['sector', 'date', 'week_end_date', 'dse_year', 'dse_week_num', 'trading_days', 
+                  'open', 'close', 'high', 'low', 'volume', 'value', 'trades', 'change', 'rsi']
     
     available_columns = [col for col in columns if col in combined.columns]
     combined[available_columns].to_csv(filepath, index=False)
@@ -74,7 +114,6 @@ def save_sector_data(sector, df, period='daily'):
 
 def aggregate_daily_sector(df_new, processed_dates):
     """নতুন ডাটা থেকে ডেইলি সেক্টর ক্যান্ডেল তৈরি"""
-    # শুধু নতুন তারিখের ডাটা নিন
     new_dates = set(df_new['date'].unique()) - processed_dates
     
     if not new_dates:
@@ -83,92 +122,77 @@ def aggregate_daily_sector(df_new, processed_dates):
     
     df_new_dates = df_new[df_new['date'].isin(new_dates)]
     
-    sector_candles = {}
-    unique_sectors = df_new_dates['sector'].unique()
-    
-    for sector in unique_sectors:
+    for sector in df_new_dates['sector'].unique():
         sector_df = df_new_dates[df_new_dates['sector'] == sector]
         
-        # প্রতিটি তারিখের জন্য aggregation
-        for date in sorted(sector_df['date'].unique()):
-            day_data = sector_df[sector_df['date'] == date]
-            active_symbols = day_data['symbol'].nunique()
-            
-            candle = {
-                'sector': sector,
-                'date': date,
-                'open': day_data['open'].iloc[0],  # প্রথম active symbol-এর open
-                'high': day_data['high'].max(),
-                'low': day_data['low'].min(),
-                'close': day_data['close'].iloc[-1],  # শেষ active symbol-এর close
-                'volume': day_data['volume'].sum(),
-                'value': day_data['value'].sum(),
-                'trades': day_data['trades'].sum(),
-                'active_symbols': active_symbols
-            }
-            
-            if sector not in sector_candles:
-                sector_candles[sector] = []
-            sector_candles[sector].append(candle)
-    
-    # Change calculate করুন (আগের ডাটার সাথে মিলিয়ে)
-    for sector in list(sector_candles.keys()):
-        sector_df = pd.DataFrame(sector_candles[sector])
-        sector_df = sector_df.sort_values('date')
+        # Date wise aggregate
+        daily_agg = sector_df.groupby('date').agg({
+            'open': 'first',
+            'high': 'max',
+            'low': 'min',
+            'close': 'last',
+            'volume': 'sum',
+            'value': 'sum',
+            'trades': 'sum',
+            'symbol': 'count'  # Temp use for counting
+        }).reset_index()
         
-        # আগের close value নিন existing data থেকে
+        daily_agg['sector'] = sector
+        daily_agg = daily_agg.rename(columns={'symbol': '_temp_count'})
+        daily_agg = daily_agg.sort_values('date')
+        
+        # RSI হিসাব
         existing = load_existing_sector_data(sector, 'daily')
         
-        if len(existing) > 0:
-            last_close = existing['close'].iloc[-1]
-            all_dates = list(existing['date']) + list(sector_df['date'])
-            all_closes = list(existing['close']) + list(sector_df['close'])
+        if len(existing) > 0 and 'close' in existing.columns:
+            historical_closes = existing['close'].tail(14)
+            new_closes = daily_agg['close']
+            rsi_values = calculate_rsi_with_history(historical_closes, new_closes, period=14)
         else:
-            last_close = None
-            all_dates = list(sector_df['date'])
-            all_closes = list(sector_df['close'])
+            rsi_values = calculate_rsi(daily_agg['close'], period=14)
         
-        # Change calculate
-        changes = []
-        for i, close_val in enumerate(all_closes):
-            if i == 0:
-                if last_close is not None:
-                    prev_close = last_close
-                else:
-                    changes.append(0)
-                    continue
-            else:
-                prev_close = all_closes[i-1]
-            changes.append(close_val - prev_close)
+        daily_agg['rsi'] = rsi_values
         
-        # শুধু নতুন এন্ট্রিগুলোর change assign
-        sector_df['change'] = changes[-len(sector_df):] if len(changes) >= len(sector_df) else changes + [0] * (len(sector_df) - len(changes))
-        sector_candles[sector] = sector_df.to_dict('records')
+        # Change হিসাব
+        if len(existing) > 0 and 'close' in existing.columns:
+            all_closes = pd.concat([existing['close'], daily_agg['close']])
+            changes = all_closes.diff().iloc[-len(daily_agg):].fillna(0)
+        else:
+            changes = daily_agg['close'].diff().fillna(0)
+        
+        daily_agg['change'] = changes.values
+        
+        # Temp column বাদ
+        daily_agg = daily_agg.drop(columns=['_temp_count'])
+        
+        # সেভ করুন
+        save_sector_data(sector, daily_agg, 'daily')
+        
+        # RSI স্ট্যাটিসটিক্স
+        valid_rsi = daily_agg['rsi'].dropna()
+        rsi_info = ""
+        if len(valid_rsi) > 0:
+            rsi_info = f" | RSI: {valid_rsi.iloc[-1]:.1f}"
+        
+        print(f"  ✓ {sector}: {len(daily_agg)} নতুন ডেইলি রো{rsi_info}")
     
-    # প্রতিটি সেক্টর সেভ করুন
-    for sector in sector_candles:
-        sector_df = pd.DataFrame(sector_candles[sector])
-        save_sector_data(sector, sector_df, 'daily')
-        print(f"  ✓ {sector}: {len(sector_df)} নতুন ডেইলি রো যোগ হয়েছে")
-    
-    # প্রসেস করা তারিখ আপডেট
     processed_dates.update(new_dates)
     save_processed_dates(processed_dates)
     
-    return sector_candles, processed_dates
+    return {}, processed_dates
 
 def aggregate_weekly_sector(df_new, processed_weekly_dates):
     """নতুন ডাটা থেকে DSE উইকলি সেক্টর ক্যান্ডেল তৈরি"""
-    # শুধু new weeks identify
+    df_new = df_new.copy()
     df_new['weekday'] = (df_new['date'].dt.dayofweek + 1) % 7
     
     def get_dse_week_start(date):
         weekday = (date.dayofweek + 1) % 7
-        if weekday == 0:  # রবিবার
+        if weekday == 0:
             return date
-        elif weekday <= 4:  # সোম-বৃহস্পতি
+        elif weekday <= 4:
             return date - timedelta(days=weekday)
-        else:  # শুক্র-শনি
+        else:
             return date - timedelta(days=weekday) + timedelta(days=7)
     
     df_new['week_start'] = df_new['date'].apply(get_dse_week_start)
@@ -178,21 +202,17 @@ def aggregate_weekly_sector(df_new, processed_weekly_dates):
         print("  -> নতুন কোনো উইকলি ডাটা নেই")
         return {}, processed_weekly_dates
     
-    # সকল সেক্টরের aggregations
-    sector_weekly_candles = {}
-    
     for sector in df_new['sector'].unique():
         sector_data = df_new[df_new['sector'] == sector]
         
+        weekly_list = []
         for week_start in sorted(new_weeks):
             week_data = sector_data[sector_data['week_start'] == week_start]
             
             if len(week_data) == 0:
                 continue
             
-            # DSE ট্রেডিং ডে count (রবি-বৃহস্পতি)
             trading_days = len(week_data[week_data['weekday'].between(0, 4)])
-            active_symbols = week_data['symbol'].nunique()
             
             candle = {
                 'sector': sector,
@@ -201,7 +221,6 @@ def aggregate_weekly_sector(df_new, processed_weekly_dates):
                 'dse_year': week_start.year,
                 'dse_week_num': int(week_start.strftime('%U')) + 1,
                 'trading_days': trading_days,
-                'active_symbols': active_symbols,
                 'open': week_data[week_data['date'] == week_data['date'].min()]['open'].iloc[0],
                 'high': week_data['high'].max(),
                 'low': week_data['low'].min(),
@@ -210,82 +229,130 @@ def aggregate_weekly_sector(df_new, processed_weekly_dates):
                 'value': week_data['value'].sum(),
                 'trades': week_data['trades'].sum()
             }
+            weekly_list.append(candle)
+        
+        if weekly_list:
+            new_weekly_df = pd.DataFrame(weekly_list).sort_values('date')
             
-            if sector not in sector_weekly_candles:
-                sector_weekly_candles[sector] = []
-            sector_weekly_candles[sector].append(candle)
-    
-    # Calculate changes for weekly
-    for sector in sector_weekly_candles:
-        sector_df = pd.DataFrame(sector_weekly_candles[sector]).sort_values('date')
-        
-        existing = load_existing_sector_data(sector, 'weekly')
-        
-        if len(existing) > 0:
-            last_close = existing['close'].iloc[-1]
-            all_closes = list(existing['close']) + list(sector_df['close'])
-        else:
-            last_close = None
-            all_closes = list(sector_df['close'])
-        
-        changes = []
-        for i, close_val in enumerate(all_closes):
-            if i == 0:
-                changes.append(0)
+            # Weekly RSI
+            existing = load_existing_sector_data(sector, 'weekly')
+            
+            if len(existing) > 0 and 'close' in existing.columns:
+                historical_closes = existing['close'].tail(14)
+                new_closes = new_weekly_df['close']
+                rsi_values = calculate_rsi_with_history(historical_closes, new_closes, period=14)
             else:
-                changes.append(close_val - all_closes[i-1])
-        
-        sector_df['change'] = changes[-len(sector_df):] if len(changes) >= len(sector_df) else changes + [0] * (len(sector_df) - len(changes))
-        
-        save_sector_data(sector, sector_df, 'weekly')
-        print(f"  ✓ {sector}: {len(sector_df)} নতুন উইকলি রো যোগ হয়েছে")
+                rsi_values = calculate_rsi(new_weekly_df['close'], period=14)
+            
+            new_weekly_df['rsi'] = rsi_values
+            
+            # Weekly change
+            if len(existing) > 0 and 'close' in existing.columns:
+                all_closes = pd.concat([existing['close'], new_weekly_df['close']])
+                changes = all_closes.diff().iloc[-len(new_weekly_df):].fillna(0)
+            else:
+                changes = new_weekly_df['close'].diff().fillna(0)
+            
+            new_weekly_df['change'] = changes.values
+            
+            # সেভ করুন
+            save_sector_data(sector, new_weekly_df, 'weekly')
+            
+            # RSI স্ট্যাটাস
+            valid_rsi = new_weekly_df['rsi'].dropna()
+            rsi_info = ""
+            if len(valid_rsi) > 0:
+                last_rsi = valid_rsi.iloc[-1]
+                if last_rsi > 70:
+                    rsi_info = f" | RSI: {last_rsi:.1f} ⚠"
+                elif last_rsi < 30:
+                    rsi_info = f" | RSI: {last_rsi:.1f} ★"
+                else:
+                    rsi_info = f" | RSI: {last_rsi:.1f}"
+            
+            print(f"  ✓ {sector}: {len(new_weekly_df)} নতুন উইকলি রো{rsi_info}")
     
     processed_weekly_dates.update(new_weeks)
     
-    return sector_weekly_candles, processed_weekly_dates
+    return {}, processed_weekly_dates
 
 # ==== MAIN EXECUTION ====
 print("=" * 60)
-print("সেক্টর ক্যান্ডেল জেনারেটর (ইনক্রিমেন্টাল মোড)")
+print("সেক্টর ক্যান্ডেল জেনারেটর (RSI + ইনক্রিমেন্টাল)")
 print("=" * 60)
 
 # ডাটা লোড
 print("\n1. ডাটা লোড হচ্ছে...")
 df = pd.read_csv(INPUT_CSV)
 df['date'] = pd.to_datetime(df['date'])
-print(f"   মোট রো: {len(df)}")
-print(f"   সিম্বল: {df['symbol'].nunique()}")
-print(f"   সেক্টর: {df['sector'].nunique()}")
-print(f"   তারিখ রেঞ্জ: {df['date'].min()} থেকে {df['date'].max()}")
+
+print(f"   মোট রো: {len(df):,}")
+print(f"   সিম্বল: {df['symbol'].nunique():,}")
+print(f"   সেক্টর: {df['sector'].nunique():,}")
+print(f"   তারিখ: {df['date'].min().strftime('%Y-%m-%d')} থেকে {df['date'].max().strftime('%Y-%m-%d')}")
 
 # প্রসেসড ডাটা ট্র্যাক
 processed_dates = load_processed_dates()
-processed_weekly_dates = set()  # Track করে processed weekly start dates
+processed_weekly_dates = set()
+
+print(f"   পূর্বে প্রসেসড দিন: {len(processed_dates)}")
 
 # ডেইলি সেক্টর ক্যান্ডেল
-print("\n2. ডেইলি সেক্টর ক্যান্ডেল প্রসেসিং...")
-daily_candles, processed_dates = aggregate_daily_sector(df, processed_dates)
+print("\n2. ডেইলি সেক্টর ক্যান্ডেল (RSI 14)...")
+aggregate_daily_sector(df, processed_dates)
 
 # উইকলি সেক্টর ক্যান্ডেল
-print("\n3. উইকলি সেক্টর ক্যান্ডেল প্রসেসিং (DSE Calendar)...")
-weekly_candles, processed_weekly_dates = aggregate_weekly_sector(df, processed_weekly_dates)
+print("\n3. উইকলি সেক্টর ক্যান্ডেল (DSE Calendar + RSI 14)...")
+aggregate_weekly_sector(df, processed_weekly_dates)
 
 # Statistics
 print("\n" + "=" * 60)
 print("প্রসেসিং সম্পন্ন!")
 print("=" * 60)
-print(f"নতুন প্রসেসড ডেইলি তারিখ: {len(processed_dates)}")
-print(f"নতুন প্রসেসড উইকলি: {len(processed_weekly_dates)}")
 
-# উদাহরণ দেখান
-print("\n4. উদাহরণ আউটপুট (প্রথম সেক্টর):")
-for sector in sorted(df['sector'].unique())[:3]:
+# সেক্টর ওভারভিউ
+print("\n4. সেক্টর RSI ওভারভিউ:")
+print("-" * 65)
+print(f"{'সেক্টর':<20} {'ডেইলি':>6} {'উইকলি':>6} {'RSI(D)':>8} {'RSI(W)':>8} {'স্ট্যাটাস':>12}")
+print("-" * 65)
+
+overbought = []
+oversold = []
+
+for sector in sorted(df['sector'].unique()):
     daily = load_existing_sector_data(sector, 'daily')
     weekly = load_existing_sector_data(sector, 'weekly')
-    print(f"\n  {sector}:")
-    print(f"    ডেইলি: {len(daily)} রো")
-    if len(daily) > 0:
-        print(f"    শেষ ডেইলি: {daily['date'].iloc[-1].strftime('%Y-%m-%d')} | Close: {daily['close'].iloc[-1]}")
-    print(f"    উইকলি: {len(weekly)} রো")
-    if len(weekly) > 0:
-        print(f"    শেষ উইকলি: {weekly['date'].iloc[-1].strftime('%Y-%m-%d')} | Close: {weekly['close'].iloc[-1]}")
+    
+    daily_rsi = daily['rsi'].dropna().iloc[-1] if len(daily) > 0 and 'rsi' in daily.columns and len(daily['rsi'].dropna()) > 0 else None
+    weekly_rsi = weekly['rsi'].dropna().iloc[-1] if len(weekly) > 0 and 'rsi' in weekly.columns and len(weekly['rsi'].dropna()) > 0 else None
+    
+    status = "Neutral"
+    if weekly_rsi and weekly_rsi > 70:
+        status = "⚠ Overbought"
+        overbought.append((sector, weekly_rsi))
+    elif weekly_rsi and weekly_rsi < 30:
+        status = "★ Oversold"
+        oversold.append((sector, weekly_rsi))
+    
+    d_count = len(daily) if len(daily) > 0 else 0
+    w_count = len(weekly) if len(weekly) > 0 else 0
+    
+    print(f"{sector:<20} {d_count:>6} {w_count:>6} {daily_rsi:>8.1f} {weekly_rsi:>8.1f} {status:>12}")
+
+if overbought:
+    print(f"\n⚠ Overbought সেক্টর (RSI > 70):")
+    for s, r in sorted(overbought, key=lambda x: x[1], reverse=True):
+        print(f"   {s}: {r:.1f}")
+
+if oversold:
+    print(f"\n★ Oversold সেক্টর (RSI < 30):")
+    for s, r in sorted(oversold, key=lambda x: x[1]):
+        print(f"   {s}: {r:.1f}")
+
+print(f"\n📁 আউটপুট:")
+print(f"   ডেইলি: {OUTPUT_DAILY_DIR}")
+print(f"   উইকলি: {OUTPUT_WEEKLY_DIR}")
+
+print("\n📋 CSV কলাম:")
+print("   ডেইলি: sector, date, open, close, high, low, volume, value, trades, change, rsi")
+print("   উইকলি: sector, date, week_end_date, dse_year, dse_week_num, trading_days, open, close, high, low, volume, value, trades, change, rsi")
