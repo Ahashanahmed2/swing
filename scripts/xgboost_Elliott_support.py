@@ -167,7 +167,7 @@ def filter_by_model_quality(xgb_df, metadata):
     
     filtered_df = xgb_df[xgb_df['symbol'].isin(good_symbols)]
     
-    print(f"   📊 Model filtering: {len(xgb_df)} → {len(filtered_df)} (GOOD models only)")
+    print(f"   📊 Model filtering: {len(xgb_df)} -> {len(filtered_df)} (GOOD models only)")
     return filtered_df
 
 def filter_by_xgb_confidence(xgb_df, min_confidence=6.0):
@@ -210,7 +210,7 @@ def filter_by_elliott_match(xgb_df, elliott_df):
     elliott_buy = elliott_df[elliott_df['signal'] == 'BUY']['symbol'].tolist()
     filtered_df = xgb_df[xgb_df['symbol'].isin(elliott_buy)]
     
-    print(f"   📊 Elliott Wave matching: {len(xgb_df)} → {len(filtered_df)} signals")
+    print(f"   📊 Elliott Wave matching: {len(xgb_df)} -> {len(filtered_df)} signals")
     return filtered_df
 
 def filter_by_support_resistance(signals_df, sr_df):
@@ -233,7 +233,7 @@ def filter_by_support_resistance(signals_df, sr_df):
         print(f"   ⚠️ No price column found in signals")
         return signals_df
     
-    print(f"   📊 Using price column: '{price_column}'")
+    print(f"   � Using price column: '{price_column}'")
     
     # Get latest support/resistance
     if 'current_date' not in sr_df.columns:
