@@ -149,7 +149,7 @@ AGENTIC_LOOP_LOG_DIR = "./csv/agentic_loop_logs"
 # 70+ HOURS EPOCH CONFIGURATION
 # =========================================================
 EPOCHS_CONFIG = {
-    "first_train": 3 ,
+    "first_train": 3 ,#12
     "incremental": 8,
     "weekly_finetune": 6,
     "consolidate": 20,
@@ -157,7 +157,7 @@ EPOCHS_CONFIG = {
 }
 
 LR_CONFIG = {
-    "first_train": 8e-6,
+    "first_train": 2e-6,#8e
     "incremental": 3e-6,
     "weekly_finetune":2e-6,
     "consolidate": 5e-6,
@@ -173,7 +173,7 @@ BATCH_SIZE_CONFIG = {
 }
 
 GRAD_ACCUM_CONFIG = {
-    "first_train": 32,
+    "first_train": 16,#32
     "incremental": 24,
     "weekly_finetune": 16,
     "consolidate": 32,
