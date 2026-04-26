@@ -8,10 +8,7 @@ warnings.filterwarnings('ignore')
 # কনফিগারেশন
 # =========================
 INPUT_FILE = "./csv/mongodb.csv"
-OUTPUT_DIR = "./output/ai_signal"
-OUTPUT_FILE = f"{OUTPUT_DIR}/Elliott_wave.csv"
-
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+OUTPUT_FILE = "./csv/Elliott_wave.csv"
 
 # =========================
 # ফিবোনাচি টুলস
