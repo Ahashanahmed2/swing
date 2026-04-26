@@ -15,6 +15,7 @@ scripts = [
     "scripts/hf_download.py",
     
     "scripts/mongodb.py",
+    "scripts/sector_candle.py",
     "scripts/support_buy.py",
     #"scripts/add_ai_value_support_resistance.py",
     "scripts/sync_emails.py",
