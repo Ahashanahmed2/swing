@@ -13,6 +13,17 @@ PROCESSED_TRACKER = './csv/sector/processed_dates.txt'
 os.makedirs(OUTPUT_DAILY_DIR, exist_ok=True)
 os.makedirs(OUTPUT_WEEKLY_DIR, exist_ok=True)
 
+def clean_sector_name(sector):
+    """সেক্টর নাম ক্লিন এবং সেফ করে"""
+    if pd.isna(sector) or sector == '' or sector is None:
+        return 'Unknown'
+    return str(sector)
+
+def safe_filename(sector):
+    """ফাইল নামের জন্য সেফ স্ট্রিং তৈরি"""
+    name = clean_sector_name(sector)
+    return name.replace(' ', '_').replace('/', '_').replace('&', 'and').replace('(', '').replace(')', '').lower()
+
 def calculate_rsi(close_prices, period=14):
     """RSI (Relative Strength Index) হিসাব করে"""
     if len(close_prices) < period + 1:
@@ -73,23 +84,28 @@ def save_processed_dates(dates):
 
 def load_existing_sector_data(sector, period='daily'):
     """আগে থেকে থাকা সেক্টর ডাটা লোড করে"""
-    safe_name = sector.replace(' ', '_').replace('/', '_').replace('&', 'and').lower()
-    filepath = os.path.join(OUTPUT_DAILY_DIR if period == 'daily' else OUTPUT_WEEKLY_DIR, 
-                            f"{safe_name}_{period}.csv")
+    filename = f"{safe_filename(sector)}_{period}.csv"
+    filepath = os.path.join(OUTPUT_DAILY_DIR if period == 'daily' else OUTPUT_WEEKLY_DIR, filename)
+    
     if os.path.exists(filepath):
-        df = pd.read_csv(filepath)
-        if 'date' in df.columns:
-            df['date'] = pd.to_datetime(df['date'])
-        if 'week_end_date' in df.columns:
-            df['week_end_date'] = pd.to_datetime(df['week_end_date'])
-        return df
+        try:
+            df = pd.read_csv(filepath)
+            if len(df) == 0:
+                return pd.DataFrame()
+            if 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date'])
+            if 'week_end_date' in df.columns:
+                df['week_end_date'] = pd.to_datetime(df['week_end_date'])
+            return df
+        except Exception as e:
+            print(f"  ⚠ Error loading {filepath}: {e}")
+            return pd.DataFrame()
     return pd.DataFrame()
 
 def save_sector_data(sector, df, period='daily'):
     """সেক্টর ডাটা সেভ করে"""
-    safe_name = sector.replace(' ', '_').replace('/', '_').replace('&', 'and').lower()
-    filepath = os.path.join(OUTPUT_DAILY_DIR if period == 'daily' else OUTPUT_WEEKLY_DIR, 
-                            f"{safe_name}_{period}.csv")
+    filename = f"{safe_filename(sector)}_{period}.csv"
+    filepath = os.path.join(OUTPUT_DAILY_DIR if period == 'daily' else OUTPUT_WEEKLY_DIR, filename)
     
     existing_df = load_existing_sector_data(sector, period)
     
@@ -100,7 +116,7 @@ def save_sector_data(sector, df, period='daily'):
     else:
         combined = df.sort_values('date').reset_index(drop=True)
     
-    # Select appropriate columns (active_symbols বাদ)
+    # Select appropriate columns
     if period == 'daily':
         columns = ['sector', 'date', 'open', 'close', 'high', 'low', 'volume', 'value', 'trades', 'change', 'rsi']
     else:
@@ -118,11 +134,16 @@ def aggregate_daily_sector(df_new, processed_dates):
     
     if not new_dates:
         print("  -> নতুন কোনো ডেইলি ডাটা নেই")
-        return {}, processed_dates
+        return processed_dates
     
     df_new_dates = df_new[df_new['date'].isin(new_dates)]
     
-    for sector in df_new_dates['sector'].unique():
+    unique_sectors = df_new_dates['sector'].dropna().unique()
+    
+    for sector in unique_sectors:
+        if pd.isna(sector) or sector == '':
+            continue
+            
         sector_df = df_new_dates[df_new_dates['sector'] == sector]
         
         # Date wise aggregate
@@ -133,12 +154,10 @@ def aggregate_daily_sector(df_new, processed_dates):
             'close': 'last',
             'volume': 'sum',
             'value': 'sum',
-            'trades': 'sum',
-            'symbol': 'count'  # Temp use for counting
+            'trades': 'sum'
         }).reset_index()
         
         daily_agg['sector'] = sector
-        daily_agg = daily_agg.rename(columns={'symbol': '_temp_count'})
         daily_agg = daily_agg.sort_values('date')
         
         # RSI হিসাব
@@ -162,9 +181,6 @@ def aggregate_daily_sector(df_new, processed_dates):
         
         daily_agg['change'] = changes.values
         
-        # Temp column বাদ
-        daily_agg = daily_agg.drop(columns=['_temp_count'])
-        
         # সেভ করুন
         save_sector_data(sector, daily_agg, 'daily')
         
@@ -179,7 +195,7 @@ def aggregate_daily_sector(df_new, processed_dates):
     processed_dates.update(new_dates)
     save_processed_dates(processed_dates)
     
-    return {}, processed_dates
+    return processed_dates
 
 def aggregate_weekly_sector(df_new, processed_weekly_dates):
     """নতুন ডাটা থেকে DSE উইকলি সেক্টর ক্যান্ডেল তৈরি"""
@@ -200,9 +216,14 @@ def aggregate_weekly_sector(df_new, processed_weekly_dates):
     
     if not new_weeks:
         print("  -> নতুন কোনো উইকলি ডাটা নেই")
-        return {}, processed_weekly_dates
+        return processed_weekly_dates
     
-    for sector in df_new['sector'].unique():
+    unique_sectors = df_new['sector'].dropna().unique()
+    
+    for sector in unique_sectors:
+        if pd.isna(sector) or sector == '':
+            continue
+            
         sector_data = df_new[df_new['sector'] == sector]
         
         weekly_list = []
@@ -274,7 +295,7 @@ def aggregate_weekly_sector(df_new, processed_weekly_dates):
     
     processed_weekly_dates.update(new_weeks)
     
-    return {}, processed_weekly_dates
+    return processed_weekly_dates
 
 # ==== MAIN EXECUTION ====
 print("=" * 60)
@@ -286,24 +307,33 @@ print("\n1. ডাটা লোড হচ্ছে...")
 df = pd.read_csv(INPUT_CSV)
 df['date'] = pd.to_datetime(df['date'])
 
+# sector NaN fix - ফাঁকা sector গুলো 'Unknown' হিসেবে সেট
+df['sector'] = df['sector'].apply(clean_sector_name)
+
 print(f"   মোট রো: {len(df):,}")
 print(f"   সিম্বল: {df['symbol'].nunique():,}")
 print(f"   সেক্টর: {df['sector'].nunique():,}")
 print(f"   তারিখ: {df['date'].min().strftime('%Y-%m-%d')} থেকে {df['date'].max().strftime('%Y-%m-%d')}")
 
+# Sector distribution
+print("\n   সেক্টর ডিস্ট্রিবিউশন:")
+for sector, count in df['sector'].value_counts().items():
+    symbols = df[df['sector'] == sector]['symbol'].nunique()
+    print(f"     {sector}: {count:,} rows, {symbols} symbols")
+
 # প্রসেসড ডাটা ট্র্যাক
 processed_dates = load_processed_dates()
 processed_weekly_dates = set()
 
-print(f"   পূর্বে প্রসেসড দিন: {len(processed_dates)}")
+print(f"\n   পূর্বে প্রসেসড দিন: {len(processed_dates)}")
 
 # ডেইলি সেক্টর ক্যান্ডেল
 print("\n2. ডেইলি সেক্টর ক্যান্ডেল (RSI 14)...")
-aggregate_daily_sector(df, processed_dates)
+processed_dates = aggregate_daily_sector(df, processed_dates)
 
 # উইকলি সেক্টর ক্যান্ডেল
 print("\n3. উইকলি সেক্টর ক্যান্ডেল (DSE Calendar + RSI 14)...")
-aggregate_weekly_sector(df, processed_weekly_dates)
+processed_weekly_dates = aggregate_weekly_sector(df, processed_weekly_dates)
 
 # Statistics
 print("\n" + "=" * 60)
@@ -323,8 +353,21 @@ for sector in sorted(df['sector'].unique()):
     daily = load_existing_sector_data(sector, 'daily')
     weekly = load_existing_sector_data(sector, 'weekly')
     
-    daily_rsi = daily['rsi'].dropna().iloc[-1] if len(daily) > 0 and 'rsi' in daily.columns and len(daily['rsi'].dropna()) > 0 else None
-    weekly_rsi = weekly['rsi'].dropna().iloc[-1] if len(weekly) > 0 and 'rsi' in weekly.columns and len(weekly['rsi'].dropna()) > 0 else None
+    d_count = len(daily) if len(daily) > 0 else 0
+    w_count = len(weekly) if len(weekly) > 0 else 0
+    
+    daily_rsi = None
+    weekly_rsi = None
+    
+    if d_count > 0 and 'rsi' in daily.columns:
+        valid = daily['rsi'].dropna()
+        if len(valid) > 0:
+            daily_rsi = valid.iloc[-1]
+    
+    if w_count > 0 and 'rsi' in weekly.columns:
+        valid = weekly['rsi'].dropna()
+        if len(valid) > 0:
+            weekly_rsi = valid.iloc[-1]
     
     status = "Neutral"
     if weekly_rsi and weekly_rsi > 70:
@@ -334,10 +377,10 @@ for sector in sorted(df['sector'].unique()):
         status = "★ Oversold"
         oversold.append((sector, weekly_rsi))
     
-    d_count = len(daily) if len(daily) > 0 else 0
-    w_count = len(weekly) if len(weekly) > 0 else 0
+    daily_rsi_str = f"{daily_rsi:.1f}" if daily_rsi else "N/A"
+    weekly_rsi_str = f"{weekly_rsi:.1f}" if weekly_rsi else "N/A"
     
-    print(f"{sector:<20} {d_count:>6} {w_count:>6} {daily_rsi:>8.1f} {weekly_rsi:>8.1f} {status:>12}")
+    print(f"{sector:<20} {d_count:>6} {w_count:>6} {daily_rsi_str:>8} {weekly_rsi_str:>8} {status:>12}")
 
 if overbought:
     print(f"\n⚠ Overbought সেক্টর (RSI > 70):")
