@@ -1,7 +1,7 @@
-# final_trading_system.py - Complete Trading System
+# xgboost_Elliott_support.py - Complete Trading System
 # Features:
 # 1. XGBoost predictions with GOOD/BAD model filtering
-# 2. Elliott Wave signal filtering (only for GOOD XGBoost models)
+# 2. Elliott Wave signal filtering (AUTO from elliott_wave.py output)
 # 3. Support/Resistance confirmation
 # 4. Final trading signals with confidence scoring
 # 5. Telegram/Email notifications
@@ -23,6 +23,8 @@ PDF_FOLDER = os.path.join(OUTPUT_FOLDER, "pdfs")
 MODEL_METADATA = os.path.join(CSV_FOLDER, "model_metadata.csv")
 XGB_CONFIDENCE = os.path.join(CSV_FOLDER, "xgb_confidence.csv")
 SUPPORT_RESISTANCE = os.path.join(CSV_FOLDER, "support_resistance.csv")
+ELLIOTT_WAVE_OUTPUT = os.path.join(CSV_FOLDER, "Elliott_wave.csv")  # ✅ elliott_wave.py থেকে
+ELLIOTT_SIGNALS = os.path.join(CSV_FOLDER, "elliott_signals.csv")   # ✅ অটো-জেনারেটেড
 FINAL_SIGNALS = os.path.join(CSV_FOLDER, "final_trading_signals.csv")
 
 os.makedirs(CSV_FOLDER, exist_ok=True)
@@ -30,8 +32,8 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 os.makedirs(PDF_FOLDER, exist_ok=True)
 
 # Signal thresholds
-XGB_MIN_CONFIDENCE = 60  # XGBoost minimum confidence for BUY
-ELLIOTT_MIN_CONFIDENCE = 70  # Elliott Wave minimum confidence
+XGB_MIN_CONFIDENCE = 6.0  # XGBoost confidence (0-10 scale)
+ELLIOTT_MIN_CONFIDENCE = 50  # Elliott Wave minimum confidence
 SR_DISTANCE_THRESHOLD = 5  # Support/Resistance distance threshold (%)
 MAX_SIGNALS_PER_DAY = 10  # Maximum signals to generate
 
@@ -70,44 +72,60 @@ def load_support_resistance():
 
 def load_elliott_signals():
     """
-    Load Elliott Wave signals from CSV (if exists)
-    Or create from your PDF data
+    ✅ AUTO: Load Elliott Wave signals from elliott_wave.py output
+    যদি elliott_signals.csv থাকে সেটি ব্যবহার করবে
+    নাহলে elliott_wave.py থেকে জেনারেট করবে
     """
-    elliott_file = os.path.join(CSV_FOLDER, "elliott_signals.csv")
-    
-    if os.path.exists(elliott_file):
-        df = pd.read_csv(elliott_file)
-        df['date'] = pd.to_datetime(df['date'])
+    # প্রথমে elliott_signals.csv চেক করুন (অটো-জেনারেটেড)
+    if os.path.exists(ELLIOTT_SIGNALS):
+        print(f"   ✅ Loading auto-generated Elliott signals: {ELLIOTT_SIGNALS}")
+        df = pd.read_csv(ELLIOTT_SIGNALS)
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'], errors='coerce')
         return df
     
-    # Manual Elliott signals from your PDF (updated with XGBoost filtering)
-    elliott_data = {
-        '1STPRIMFMF': {'signal': 'BUY', 'confidence': 83.4, 'wave': 'Impulse Bullish', 'price': 18.4},
-        'AAMRANET': {'signal': 'BUY', 'confidence': 56.0, 'wave': 'Impulse Bullish', 'price': 16.8},
-        'CITYGENINS': {'signal': 'BUY', 'confidence': 85.6, 'wave': 'Impulse Bullish', 'price': 99.2},
-        'HFL': {'signal': 'BUY', 'confidence': 90.3, 'wave': 'Impulse Bullish', 'price': 12.4},
-        'DOMINAGE': {'signal': 'BUY', 'confidence': 80.8, 'wave': 'Impulse Bullish', 'price': 42.9},
-        'ACMEPL': {'signal': 'BUY', 'confidence': 82.4, 'wave': 'Impulse Bullish', 'price': 21.2},
-        'BDTHAIFOOD': {'signal': 'BUY', 'confidence': 72.2, 'wave': 'Impulse Bullish', 'price': 19.2},
-        'BBSCABLES': {'signal': 'BUY', 'confidence': 72.7, 'wave': 'Impulse Bullish', 'price': 19.3},
-        'YPL': {'signal': 'BUY', 'confidence': 77.2, 'wave': 'Impulse Bullish', 'price': 18.7},
-        'SUNLIFEINS': {'signal': 'BUY', 'confidence': 70.6, 'wave': 'Impulse Bullish', 'price': 60.2},
-        'DSSL': {'signal': 'BUY', 'confidence': 73.3, 'wave': 'Impulse Bullish', 'price': 9.7},
-        'LEGACYFOOT': {'signal': 'BUY', 'confidence': 72.5, 'wave': 'Impulse Bullish', 'price': 61.0},
-        'EXIM1STMF': {'signal': 'BUY', 'confidence': 80.0, 'wave': 'Impulse Bullish', 'price': 3.5},
-        'SALVO': {'signal': 'BUY', 'confidence': 72.5, 'wave': 'Impulse Bullish', 'price': 34.1},
-    }
+    # যদি elliott_signals.csv না থাকে, elliott_wave.py এর আউটপুট থেকে জেনারেট করুন
+    if os.path.exists(ELLIOTT_WAVE_OUTPUT):
+        print(f"   📂 Found elliott_wave.py output: {ELLIOTT_WAVE_OUTPUT}")
+        print(f"   🔄 Generating elliott_signals.csv from Elliott Wave analysis...")
+        
+        wave_df = pd.read_csv(ELLIOTT_WAVE_OUTPUT)
+        
+        # FINAL_AI_SIGNALS থেকে বর্তমান প্রাইস নিন
+        signals_file = os.path.join(CSV_FOLDER, "FINAL_AI_SIGNALS.csv")
+        if os.path.exists(signals_file):
+            signals = pd.read_csv(signals_file)
+            if 'symbol' in signals.columns and 'current_price' in signals.columns:
+                signals = signals[['symbol', 'current_price']].drop_duplicates(subset='symbol')
+                wave_df = wave_df.merge(signals, left_on='SYMBOL', right_on='symbol', how='left')
+        
+        # elliott_signals.csv ফরম্যাটে কনভার্ট
+        elliott_df = pd.DataFrame({
+            'symbol': wave_df['SYMBOL'],
+            'date': pd.Timestamp.now(),
+            'signal': wave_df['WAVE'].apply(
+                lambda x: 'BUY' if 'Bullish' in str(x) 
+                else ('SELL' if 'Bearish' in str(x) else 'HOLD')
+            ),
+            'confidence': wave_df.get('WAVE', '').apply(
+                lambda x: 85 if 'Impulse' in str(x) 
+                else (75 if 'Extension' in str(x) 
+                else (65 if 'Flat' in str(x) 
+                else (55 if 'Triangle' in str(x) else 50))))
+            ),
+            'wave': wave_df['WAVE'].fillna('Unknown'),
+            'sub_wave': wave_df.get('SUB_WAVE', 'N/A').fillna('N/A'),
+            'price': wave_df['current_price'].fillna(0) if 'current_price' in wave_df.columns else 0
+        })
+        
+        # সেভ করুন
+        elliott_df.to_csv(ELLIOTT_SIGNALS, index=False)
+        print(f"   ✅ Generated {len(elliott_df)} Elliott signals: {ELLIOTT_SIGNALS}")
+        return elliott_df
     
-    df = pd.DataFrame([{
-        'symbol': sym,
-        'date': datetime.now(),
-        'signal': data['signal'],
-        'confidence': data['confidence'],
-        'wave': data['wave'],
-        'price': data['price']
-    } for sym, data in elliott_data.items()])
-    
-    return df
+    # কিছুই না পাওয়া গেলে
+    print(f"   ⚠️ No Elliott Wave data found. Run elliott_wave.py first.")
+    return None
 
 # =========================
 # SIGNAL FILTERING FUNCTIONS
@@ -118,22 +136,54 @@ def filter_by_model_quality(xgb_df, metadata):
     if metadata is None:
         return xgb_df
     
-    good_symbols = metadata[metadata['status'] == 'GOOD']['symbol'].tolist()
+    # Check if 'status' or 'auc' column exists
+    if 'status' in metadata.columns:
+        good_symbols = metadata[metadata['status'] == 'GOOD']['symbol'].tolist()
+    elif 'auc' in metadata.columns:
+        good_symbols = metadata[metadata['auc'] >= 0.55]['symbol'].tolist()
+    else:
+        return xgb_df
+    
     filtered_df = xgb_df[xgb_df['symbol'].isin(good_symbols)]
     
     print(f"   📊 Model filtering: {len(xgb_df)} → {len(filtered_df)} (GOOD models only)")
     return filtered_df
 
-def filter_by_xgb_confidence(xgb_df, min_confidence=60):
-    """Filter by XGBoost confidence score"""
-    filtered_df = xgb_df[xgb_df['confidence_score'] >= min_confidence]
-    print(f"   📊 XGBoost confidence filter (>={min_confidence}%): {len(filtered_df)} signals")
+def filter_by_xgb_confidence(xgb_df, min_confidence=6.0):
+    """Filter by XGBoost confidence score (auto-detect scale)"""
+    
+    if xgb_df.empty:
+        return xgb_df
+    
+    # ✅ FIX: Auto-detect confidence score scale
+    max_conf = xgb_df['confidence_score'].max()
+    min_conf = xgb_df['confidence_score'].min()
+    
+    if max_conf <= 1.0:
+        # 0-1 scale
+        threshold = min_confidence / 10
+        print(f"   📊 Detected 0-1 scale (max={max_conf:.3f}), threshold: {threshold:.3f}")
+    elif max_conf <= 10.0:
+        # 0-10 scale (YOUR DATA)
+        threshold = min_confidence
+        print(f"   📊 Detected 0-10 scale (max={max_conf:.2f}), threshold: {threshold:.2f}")
+    elif max_conf <= 100.0:
+        # 0-100 scale
+        threshold = min_confidence * 10
+        print(f"   📊 Detected 0-100 scale (max={max_conf:.1f}), threshold: {threshold:.1f}")
+    else:
+        # Unknown scale
+        threshold = min_confidence
+        print(f"   📊 Unknown scale (max={max_conf:.2f}), using raw threshold: {threshold:.2f}")
+    
+    filtered_df = xgb_df[xgb_df['confidence_score'] >= threshold]
+    print(f"   📊 XGBoost confidence filter (>={threshold:.2f}): {len(filtered_df)} signals")
     return filtered_df
 
 def filter_by_elliott_match(xgb_df, elliott_df):
     """Keep only stocks that have Elliott Wave BUY signals"""
     if elliott_df is None or elliott_df.empty:
-        print(f"   ⚠️ No Elliott signals found")
+        print(f"   ⚠️ No Elliott signals found - skipping Elliott filter")
         return xgb_df
     
     elliott_buy = elliott_df[elliott_df['signal'] == 'BUY']['symbol'].tolist()
@@ -145,10 +195,29 @@ def filter_by_elliott_match(xgb_df, elliott_df):
 def filter_by_support_resistance(signals_df, sr_df):
     """Check if price is near support/resistance levels"""
     if sr_df is None or sr_df.empty:
-        print(f"   ⚠️ No Support/Resistance data")
+        print(f"   ⚠️ No Support/Resistance data - skipping S/R filter")
         return signals_df
     
+    if signals_df.empty:
+        return signals_df
+    
+    # ✅ FIX: Find the correct price column
+    price_column = None
+    for col in ['close', 'current_price', 'price', 'ltp', 'Close']:
+        if col in signals_df.columns:
+            price_column = col
+            break
+    
+    if price_column is None:
+        print(f"   ⚠️ No price column found in signals")
+        return signals_df
+    
+    print(f"   📊 Using price column: '{price_column}'")
+    
     # Get latest support/resistance
+    if 'current_date' not in sr_df.columns:
+        return signals_df
+    
     latest_date = sr_df['current_date'].max()
     latest_sr = sr_df[sr_df['current_date'] == latest_date]
     
@@ -166,28 +235,28 @@ def filter_by_support_resistance(signals_df, sr_df):
     signals_with_sr = []
     for _, row in signals_df.iterrows():
         symbol = row['symbol']
-        price = row['close']
+        price = row[price_column]
+        
+        row_dict = row.to_dict()
         
         if symbol in sr_levels:
             sr_info = sr_levels[symbol]
-            distance = abs(price - sr_info['level']) / price * 100
+            distance = abs(price - sr_info['level']) / price * 100 if price > 0 else 100
             
             if sr_info['type'] == 'support' and price > sr_info['level'] and distance < SR_DISTANCE_THRESHOLD:
-                row['sr_confirmation'] = f"Near support at {sr_info['level']} ({sr_info['strength']})"
-                row['sr_bonus'] = 5 if sr_info['strength'] == 'Strong' else (2 if sr_info['strength'] == 'Moderate' else 1)
-                signals_with_sr.append(row)
+                row_dict['sr_confirmation'] = f"Near support at {sr_info['level']} ({sr_info['strength']})"
+                row_dict['sr_bonus'] = 5 if sr_info['strength'] == 'Strong' else (2 if sr_info['strength'] == 'Moderate' else 1)
             elif sr_info['type'] == 'resistance' and price < sr_info['level'] and distance < SR_DISTANCE_THRESHOLD:
-                row['sr_confirmation'] = f"Below resistance at {sr_info['level']} ({sr_info['strength']})"
-                row['sr_bonus'] = 3 if sr_info['strength'] == 'Strong' else 1
-                signals_with_sr.append(row)
+                row_dict['sr_confirmation'] = f"Below resistance at {sr_info['level']} ({sr_info['strength']})"
+                row_dict['sr_bonus'] = 3 if sr_info['strength'] == 'Strong' else 1
             else:
-                row['sr_confirmation'] = "No significant S/R near"
-                row['sr_bonus'] = 0
-                signals_with_sr.append(row)
+                row_dict['sr_confirmation'] = "No significant S/R near"
+                row_dict['sr_bonus'] = 0
         else:
-            row['sr_confirmation'] = "No S/R data"
-            row['sr_bonus'] = 0
-            signals_with_sr.append(row)
+            row_dict['sr_confirmation'] = "No S/R data"
+            row_dict['sr_bonus'] = 0
+        
+        signals_with_sr.append(row_dict)
     
     result_df = pd.DataFrame(signals_with_sr)
     print(f"   📊 Support/Resistance: {len(result_df)} signals analyzed")
@@ -208,22 +277,28 @@ def calculate_final_score(row):
     elliott_weight = 0.30
     sr_weight = 0.10
     
-    # XGBoost score
-    xgb_score = row.get('confidence_score', 50) / 100
+    # ✅ FIX: Normalize XGBoost score to 0-100
+    xgb_raw = row.get('confidence_score', 5)
+    max_conf = 10.0  # Your scale is 0-10
+    
+    if max_conf > 0:
+        xgb_score = min(100, xgb_raw / max_conf * 100)
+    else:
+        xgb_score = 50
     
     # Elliott score (if available)
     if 'elliott_confidence' in row and pd.notna(row.get('elliott_confidence')):
-        elliott_score = row.get('elliott_confidence', 50) / 100
+        elliott_score = row.get('elliott_confidence', 50)
     else:
-        elliott_score = 0.5
+        elliott_score = 50
     
     # Support/Resistance bonus
-    sr_bonus = row.get('sr_bonus', 0) / 10  # Max 0.5 bonus (5/10)
+    sr_bonus = row.get('sr_bonus', 0)  # Max 5 bonus
     
     # Calculate final score
-    final_score = (xgb_score * xgb_weight + elliott_score * elliott_weight + sr_bonus * sr_weight) * 100
+    final_score = (xgb_score * xgb_weight + elliott_score * elliott_weight + sr_bonus * sr_weight * 10)
     
-    return min(100, final_score)  # Cap at 100
+    return min(100, final_score)
 
 # =========================
 # MAIN SIGNAL GENERATION
@@ -247,7 +322,7 @@ def generate_final_signals():
         return None
     
     metadata = load_model_metadata()
-    elliott_df = load_elliott_signals()
+    elliott_df = load_elliott_signals()  # ✅ AUTO from elliott_wave.py
     sr_df = load_support_resistance()
     
     # Get latest predictions
@@ -259,25 +334,43 @@ def generate_final_signals():
     print("\n🔍 Step 2: Filtering by model quality...")
     filtered_df = filter_by_model_quality(latest_xgb, metadata)
     
+    if filtered_df.empty:
+        print("❌ No signals after model quality filter")
+        return None
+    
     # Step 3: Filter by XGBoost confidence
     print("\n🎯 Step 3: Filtering by XGBoost confidence...")
     filtered_df = filter_by_xgb_confidence(filtered_df, XGB_MIN_CONFIDENCE)
+    
+    if filtered_df.empty:
+        print("❌ No signals after XGBoost confidence filter")
+        return None
     
     # Step 4: Filter by Elliott Wave (only BUY signals)
     print("\n🌊 Step 4: Filtering by Elliott Wave...")
     filtered_df = filter_by_elliott_match(filtered_df, elliott_df)
     
     # Step 5: Add Elliott confidence to signals
-    if elliott_df is not None:
-        elliott_dict = elliott_df.set_index('symbol')[['confidence', 'wave']].to_dict('index')
-        for sym, row in filtered_df.iterrows():
-            symbol = row['symbol']
+    if elliott_df is not None and not elliott_df.empty and not filtered_df.empty:
+        elliott_dict = {}
+        for _, row in elliott_df.iterrows():
+            sym = row['symbol']
+            elliott_dict[sym] = {
+                'confidence': row.get('confidence', 50),
+                'wave': row.get('wave', 'Unknown'),
+                'sub_wave': row.get('sub_wave', 'N/A')
+            }
+        
+        for idx in filtered_df.index:
+            symbol = filtered_df.loc[idx, 'symbol']
             if symbol in elliott_dict:
-                filtered_df.loc[sym, 'elliott_confidence'] = elliott_dict[symbol]['confidence']
-                filtered_df.loc[sym, 'elliott_wave'] = elliott_dict[symbol]['wave']
+                filtered_df.loc[idx, 'elliott_confidence'] = elliott_dict[symbol]['confidence']
+                filtered_df.loc[idx, 'elliott_wave'] = elliott_dict[symbol]['wave']
+                filtered_df.loc[idx, 'elliott_sub_wave'] = elliott_dict[symbol]['sub_wave']
             else:
-                filtered_df.loc[sym, 'elliott_confidence'] = 50
-                filtered_df.loc[sym, 'elliott_wave'] = 'Unknown'
+                filtered_df.loc[idx, 'elliott_confidence'] = 50
+                filtered_df.loc[idx, 'elliott_wave'] = 'Unknown'
+                filtered_df.loc[idx, 'elliott_sub_wave'] = 'N/A'
     
     # Step 6: Check Support/Resistance
     print("\n📊 Step 5: Checking Support/Resistance...")
@@ -291,10 +384,27 @@ def generate_final_signals():
     filtered_df = filtered_df.sort_values('final_score', ascending=False)
     final_signals = filtered_df.head(MAX_SIGNALS_PER_DAY).copy()
     
+    # ✅ FIX: Find the correct price column for entry/SL/TP
+    price_column = None
+    for col in ['close', 'current_price', 'price', 'ltp', 'Close']:
+        if col in final_signals.columns:
+            price_column = col
+            break
+    
+    if price_column:
+        current_price = final_signals[price_column]
+        print(f"   📊 Using price column '{price_column}' for Entry/SL/TP")
+    else:
+        print(f"   ⚠️ No price column found, using Elliott price")
+        if 'price' in final_signals.columns:
+            current_price = final_signals['price']
+        else:
+            current_price = pd.Series([0] * len(final_signals))
+    
     # Add execution levels
-    final_signals['entry_price'] = final_signals['close']
-    final_signals['stop_loss'] = final_signals['close'] * 0.97  # -3%
-    final_signals['take_profit'] = final_signals['close'] * 1.05  # +5%
+    final_signals['entry_price'] = current_price
+    final_signals['stop_loss'] = current_price * 0.97  # -3%
+    final_signals['take_profit'] = current_price * 1.05  # +5%
     
     # Add signal strength
     final_signals['strength'] = final_signals['final_score'].apply(
@@ -312,12 +422,16 @@ def generate_final_signals():
 
 def generate_pdf_report(signals_df):
     """Generate PDF report of final signals"""
-    from fpdf import FPDF
-    from fpdf.enums import XPos, YPos
+    try:
+        from fpdf import FPDF
+        from fpdf.enums import XPos, YPos
+    except ImportError:
+        print("⚠️ fpdf not installed. Skipping PDF generation.")
+        return None
     
     if signals_df is None or signals_df.empty:
         print("⚠️ No signals to generate PDF")
-        return
+        return None
     
     class PDF(FPDF):
         def header(self):
@@ -336,6 +450,9 @@ def generate_pdf_report(signals_df):
     pdf.add_page()
     pdf.set_font('Helvetica', '', 9)
     
+    # Price column
+    price_col = 'entry_price'
+    
     # Table headers
     headers = ['Symbol', 'Price', 'Signal', 'XGB%', 'Elliott%', 'Final%', 'Entry', 'SL', 'TP', 'Strength']
     col_widths = [30, 25, 30, 25, 25, 25, 30, 30, 30, 30]
@@ -348,16 +465,16 @@ def generate_pdf_report(signals_df):
     
     # Data rows
     for _, row in signals_df.iterrows():
-        pdf.cell(col_widths[0], 8, row['symbol'], border=1, align='C')
-        pdf.cell(col_widths[1], 8, f"{row['close']:.2f}", border=1, align='C')
+        pdf.cell(col_widths[0], 8, str(row['symbol']), border=1, align='C')
+        pdf.cell(col_widths[1], 8, f"{row.get(price_col, 0):.2f}", border=1, align='C')
         pdf.cell(col_widths[2], 8, 'BUY', border=1, align='C')
-        pdf.cell(col_widths[3], 8, f"{row['confidence_score']:.0f}%", border=1, align='C')
+        pdf.cell(col_widths[3], 8, f"{row['confidence_score']:.1f}", border=1, align='C')
         pdf.cell(col_widths[4], 8, f"{row.get('elliott_confidence', 50):.0f}%", border=1, align='C')
         pdf.cell(col_widths[5], 8, f"{row['final_score']:.0f}%", border=1, align='C')
         pdf.cell(col_widths[6], 8, f"{row['entry_price']:.2f}", border=1, align='C')
         pdf.cell(col_widths[7], 8, f"{row['stop_loss']:.2f}", border=1, align='C')
         pdf.cell(col_widths[8], 8, f"{row['take_profit']:.2f}", border=1, align='C')
-        pdf.cell(col_widths[9], 8, row['strength'], border=1, align='C')
+        pdf.cell(col_widths[9], 8, str(row['strength']), border=1, align='C')
         pdf.ln()
         
         if pdf.get_y() > 250:
@@ -366,7 +483,7 @@ def generate_pdf_report(signals_df):
     # Save PDF
     pdf_path = os.path.join(PDF_FOLDER, f"trading_signals_{datetime.now().strftime('%Y%m%d')}.pdf")
     pdf.output(pdf_path)
-    print(f"✅ PDF saved: {pdf_path}")
+    print(f"   ✅ PDF saved: {pdf_path}")
     
     return pdf_path
 
@@ -381,16 +498,21 @@ def print_summary(signals_df):
     print("="*70)
     print(f"📅 Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print(f"📈 Total signals: {len(signals_df)}")
-    print(f"   🔥 STRONG: {len(signals_df[signals_df['strength'] == 'STRONG'])}")
-    print(f"   📊 MEDIUM: {len(signals_df[signals_df['strength'] == 'MEDIUM'])}")
-    print(f"   ⚠️ WEAK: {len(signals_df[signals_df['strength'] == 'WEAK'])}")
+    
+    if 'strength' in signals_df.columns:
+        print(f"   🔥 STRONG: {len(signals_df[signals_df['strength'] == 'STRONG'])}")
+        print(f"   📊 MEDIUM: {len(signals_df[signals_df['strength'] == 'MEDIUM'])}")
+        print(f"   ⚠️ WEAK: {len(signals_df[signals_df['strength'] == 'WEAK'])}")
     
     print("\n🔥 TOP 10 STRONGEST SIGNALS:")
     print("-"*70)
     
-    for i, row in signals_df.head(10).iterrows():
-        print(f"\n{i+1}. *{row['symbol']}* @ {row['close']:.2f}")
-        print(f"   📊 XGBoost: {row['confidence_score']:.0f}%")
+    # ✅ FIX: Use correct price column
+    price_col = 'entry_price'
+    
+    for i, (_, row) in enumerate(signals_df.head(min(10, len(signals_df))).iterrows()):
+        print(f"\n{i+1}. *{row['symbol']}* @ {row[price_col]:.2f}")
+        print(f"   📊 XGBoost: {row['confidence_score']:.2f}")
         print(f"   🌊 Elliott: {row.get('elliott_confidence', 50):.0f}% ({row.get('elliott_wave', 'N/A')})")
         print(f"   🎯 Final Score: {row['final_score']:.0f}% ({row['strength']})")
         print(f"   📈 Entry: {row['entry_price']:.2f} | SL: {row['stop_loss']:.2f} | TP: {row['take_profit']:.2f}")
@@ -412,7 +534,7 @@ def send_telegram_alert(signals_df):
         telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID_TRADE")
         
         if not telegram_token or not telegram_chat_id:
-            print("⚠️ Telegram credentials not found")
+            print("   ⚠️ Telegram credentials not found")
             return
         
         if signals_df is None or signals_df.empty:
@@ -423,8 +545,8 @@ def send_telegram_alert(signals_df):
         message += f"📈 Total: {len(signals_df)} signals\n\n"
         message += "*TOP 5 RECOMMENDATIONS:*\n\n"
         
-        for i, row in signals_df.head(5).iterrows():
-            message += f"{i+1}. *{row['symbol']}* @ {row['close']:.2f}\n"
+        for i, (_, row) in enumerate(signals_df.head(min(5, len(signals_df))).iterrows()):
+            message += f"{i+1}. *{row['symbol']}* @ {row['entry_price']:.2f}\n"
             message += f"   🎯 Score: {row['final_score']:.0f}% ({row['strength']})\n"
             message += f"   📈 Entry: {row['entry_price']:.2f}\n"
             message += f"   📉 SL: {row['stop_loss']:.2f} | TP: {row['take_profit']:.2f}\n\n"
@@ -437,12 +559,12 @@ def send_telegram_alert(signals_df):
         })
         
         if response.status_code == 200:
-            print("✅ Telegram alert sent!")
+            print("   ✅ Telegram alert sent!")
         else:
-            print(f"❌ Telegram failed: {response.text}")
+            print(f"   ❌ Telegram failed: {response.text}")
             
     except Exception as e:
-        print(f"❌ Telegram error: {e}")
+        print(f"   ❌ Telegram error: {e}")
 
 # =========================
 # MAIN EXECUTION
@@ -468,12 +590,18 @@ def main():
         print("✅ FINAL TRADING SYSTEM COMPLETE!")
         print("="*70)
         print(f"📊 Signals: {len(signals)}")
-        print(f"📄 PDF: {pdf_path}")
+        if pdf_path:
+            print(f"📄 PDF: {pdf_path}")
         print(f"📁 CSV: {FINAL_SIGNALS}")
         print("="*70)
         
     else:
         print("\n❌ No signals generated. Check your data sources.")
+        print("   Ensure the following files exist:")
+        print(f"   - {XGB_CONFIDENCE}")
+        print(f"   - {MODEL_METADATA}")
+        print(f"   - {ELLIOTT_WAVE_OUTPUT} (Run elliott_wave.py first)")
+        print(f"   - {SUPPORT_RESISTANCE}")
 
 if __name__ == "__main__":
     main()
