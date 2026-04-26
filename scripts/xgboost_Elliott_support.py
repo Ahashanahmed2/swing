@@ -71,6 +71,7 @@ def load_support_resistance():
     return df
 
 def load_elliott_signals():
+def load_elliott_signals():
     """
     ✅ AUTO: Load Elliott Wave signals from elliott_wave.py output
     যদি elliott_signals.csv থাকে সেটি ব্যবহার করবে
@@ -99,20 +100,41 @@ def load_elliott_signals():
                 signals = signals[['symbol', 'current_price']].drop_duplicates(subset='symbol')
                 wave_df = wave_df.merge(signals, left_on='SYMBOL', right_on='symbol', how='left')
         
+        # ✅ FIXED: Confidence logic with proper brackets
+        def get_confidence(wave_str):
+            """Elliott Wave pattern থেকে confidence নির্ধারণ"""
+            wave_str = str(wave_str)
+            if 'Impulse' in wave_str:
+                return 85
+            elif 'Extension' in wave_str:
+                return 75
+            elif 'Flat' in wave_str:
+                return 65
+            elif 'Triangle' in wave_str:
+                return 55
+            elif 'Zigzag' in wave_str:
+                return 60
+            elif 'Diagonal' in wave_str:
+                return 70
+            else:
+                return 50
+        
+        def get_signal(wave_str):
+            """Elliott Wave pattern থেকে BUY/SELL/HOLD নির্ধারণ"""
+            wave_str = str(wave_str)
+            if 'Bullish' in wave_str:
+                return 'BUY'
+            elif 'Bearish' in wave_str:
+                return 'SELL'
+            else:
+                return 'HOLD'
+        
         # elliott_signals.csv ফরম্যাটে কনভার্ট
         elliott_df = pd.DataFrame({
             'symbol': wave_df['SYMBOL'],
             'date': pd.Timestamp.now(),
-            'signal': wave_df['WAVE'].apply(
-                lambda x: 'BUY' if 'Bullish' in str(x) 
-                else ('SELL' if 'Bearish' in str(x) else 'HOLD')
-            ),
-            'confidence': wave_df.get('WAVE', '').apply(
-                lambda x: 85 if 'Impulse' in str(x) 
-                else (75 if 'Extension' in str(x) 
-                else (65 if 'Flat' in str(x) 
-                else (55 if 'Triangle' in str(x) else 50))))
-            ),
+            'signal': wave_df['WAVE'].apply(get_signal),
+            'confidence': wave_df['WAVE'].apply(get_confidence),
             'wave': wave_df['WAVE'].fillna('Unknown'),
             'sub_wave': wave_df.get('SUB_WAVE', 'N/A').fillna('N/A'),
             'price': wave_df['current_price'].fillna(0) if 'current_price' in wave_df.columns else 0
