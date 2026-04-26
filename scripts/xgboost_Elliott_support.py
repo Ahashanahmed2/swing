@@ -71,7 +71,6 @@ def load_support_resistance():
     return df
 
 def load_elliott_signals():
-def load_elliott_signals():
     """
     ✅ AUTO: Load Elliott Wave signals from elliott_wave.py output
     যদি elliott_signals.csv থাকে সেটি ব্যবহার করবে
