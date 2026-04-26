@@ -16,6 +16,7 @@ scripts = [
     
     "scripts/mongodb.py",
     "scripts/sector_candle.py",
+    "scripts/sector_weekly_diver_daily_symbol.py",
     "scripts/support_buy.py",
     #"scripts/add_ai_value_support_resistance.py",
     "scripts/sync_emails.py",
