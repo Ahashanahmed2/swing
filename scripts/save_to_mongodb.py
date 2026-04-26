@@ -1,6 +1,6 @@
 """
 scripts/save_to_mongodb.py
-FINAL_AI_SIGNALS.csv + Support/Resistance + MACD + EMA + Daily Buy সব MongoDB-তে সেইভ করে
+FINAL_AI_SIGNALS.csv + Support/Resistance + MACD + EMA + Daily Buy + SWRSI সব MongoDB-তে সেইভ করে
 """
 
 import os
@@ -56,6 +56,13 @@ FILES_TO_SAVE = [
         "has_date": False,
         "description": "EMA 200 Signals"
     },
+    {
+        "path": "./output/ai_signal/swrsi.csv",
+        "collection": "swrsi_signals",
+        "has_date": True,
+        "date_column": "signal_date",
+        "description": "SWRSI - Sector Weekly + Daily RSI Divergence Signals"
+    },
 ]
 
 # =========================================================
@@ -96,7 +103,7 @@ def load_csv_data(filepath):
 # =========================================================
 # MongoDB-তে সেইভ
 # =========================================================
-def save_to_mongodb(df, client, collection_name, has_date=False, date_column=None, is_ai_signals=False):
+def save_to_mongodb(df, client, collection_name, has_date=False, date_column=None, is_ai_signals=False, is_swrsi=False):
     """DataFrame MongoDB-তে সেইভ করে"""
     if df is None or client is None:
         return False
@@ -129,6 +136,12 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
                 record['analysis_date'] = today
                 record['analysis_datetime'] = today_datetime
 
+            # SWRSI signals এর জন্য extra ফিল্ড
+            if is_swrsi:
+                if 'signal_date' not in record or pd.isna(record.get('signal_date')):
+                    record['analysis_date'] = today
+                record['analysis_datetime'] = today_datetime
+
             # NaN ভ্যালুগুলো None-এ কনভার্ট (MongoDB compatible)
             for key, value in record.items():
                 if pd.isna(value):
@@ -137,9 +150,12 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
         # পুরনো ডেটা ডিলিট
         if is_ai_signals:
             delete_result = collection.delete_many({'analysis_date': today})
+        elif is_swrsi:
+            # SWRSI: সব পুরনো ডিলিট করে নতুন ইনসার্ট (latest signals only)
+            delete_result = collection.delete_many({})
         else:
             delete_result = collection.delete_many({})
-        
+
         print(f"   🗑️ Deleted {delete_result.deleted_count} old records")
 
         # নতুন ডেটা ইনসার্ট
@@ -150,11 +166,15 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
         # ইনডেক্স তৈরি
         if 'symbol' in df.columns:
             collection.create_index([('symbol', 1)])
-        if 'analysis_date' in df.columns or is_ai_signals:
+        if 'analysis_date' in df.columns or is_ai_signals or is_swrsi:
             collection.create_index([('analysis_date', -1)])
         if is_ai_signals:
             collection.create_index([('final_combined_score', -1)])
             collection.create_index([('final_signal', 1)])
+        if is_swrsi:
+            collection.create_index([('composite_score', -1)])
+            collection.create_index([('sector', 1)])
+            collection.create_index([('weekly_strength_label', 1)])
         print(f"   ✅ Indexes created")
 
         return True
@@ -168,16 +188,16 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
 def check_all_collections(client):
     """সব Collection-এর স্ট্যাটাস দেখায়"""
     db = client[DATABASE_NAME]
-    
+
     print(f"\n📊 MONGODB COLLECTIONS STATUS:")
     print("=" * 50)
-    
+
     for file_config in FILES_TO_SAVE:
         collection_name = file_config["collection"]
         collection = db[collection_name]
         count = collection.count_documents({})
         print(f"   📂 {collection_name}: {count} documents")
-    
+
     print("=" * 50)
 
 # =========================================================
@@ -185,7 +205,7 @@ def check_all_collections(client):
 # =========================================================
 def main():
     print("=" * 70)
-    print("💾 MONGODB SAVE SCRIPT - ALL TRADING DATA")
+    print("💾 MONGODB SAVE SCRIPT - ALL TRADING DATA + SWRSI")
     print("=" * 70)
     print(f"📅 Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"📂 Files to save: {len(FILES_TO_SAVE)}")
@@ -209,6 +229,7 @@ def main():
         has_date = file_config.get("has_date", False)
         date_column = file_config.get("date_column", None)
         is_ai_signals = (collection_name == "daily_ai_signals")
+        is_swrsi = (collection_name == "swrsi_signals")
         description = file_config.get("description", "")
 
         print(f"\n{'='*50}")
@@ -219,7 +240,7 @@ def main():
 
         # CSV লোড
         df = load_csv_data(filepath)
-        
+
         if df is None:
             total_skipped += 1
             continue
@@ -229,7 +250,8 @@ def main():
             df, client, collection_name, 
             has_date=has_date, 
             date_column=date_column,
-            is_ai_signals=is_ai_signals
+            is_ai_signals=is_ai_signals,
+            is_swrsi=is_swrsi
         )
 
         if success:
@@ -240,9 +262,33 @@ def main():
     # ৩. স্ট্যাটাস চেক
     check_all_collections(client)
 
-    # ৪. ক্লোজ
+    # ৪. SWRSI Summary (extra)
+    db = client[DATABASE_NAME]
+    swrsi_col = db["swrsi_signals"]
+    if swrsi_col.count_documents({}) > 0:
+        print(f"\n📊 SWRSI SIGNALS SUMMARY:")
+        print("-" * 40)
+        
+        # Total signals
+        total = swrsi_col.count_documents({})
+        print(f"   Total Signals: {total}")
+        
+        # By strength
+        for strength in ['Strong', 'Moderate', 'Weak']:
+            count = swrsi_col.count_documents({'weekly_strength_label': strength})
+            print(f"   {strength}: {count}")
+        
+        # High score signals
+        high_score = swrsi_col.count_documents({'composite_score': {'$gte': 70}})
+        print(f"   High Score (≥70): {high_score}")
+        
+        # By sector
+        sectors = swrsi_col.distinct('sector')
+        print(f"   Sectors: {len(sectors)} ({', '.join(sectors[:5])}{'...' if len(sectors) > 5 else ''})")
+
+    # ৫. ক্লোজ
     client.close()
-    
+
     print("\n" + "=" * 70)
     print(f"✅ SCRIPT COMPLETED")
     print(f"   📂 Saved: {total_saved} files")
