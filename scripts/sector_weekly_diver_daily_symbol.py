@@ -1,4 +1,4 @@
-#sector_weekly_diver_daily_symbol.py
+# sector_weekly-diver_daily_symbol.py
 import pandas as pd
 import numpy as np
 import os
@@ -11,7 +11,7 @@ RSI_DIVER_FILE = './csv/rsi_diver.csv'
 MONGO_CSV = './csv/mongodb.csv'
 OUTPUT_DIR = './output/ai_signal/'
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, 'swrsi.csv')
-SIGNAL_LOG = os.path.join(OUTPUT_DIR, 'swrsi_log.json')
+SIGNAL_LOG = './csv/swrsi_log.json'  # ✅ ./csv/ তে রাখা হলো
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -200,7 +200,7 @@ def check_weekly_divergence(weekly_df):
     }
 
 def load_signal_log():
-    """Signal tracking log"""
+    """Signal tracking log - ./csv/ থেকে লোড"""
     if os.path.exists(SIGNAL_LOG):
         try:
             with open(SIGNAL_LOG, 'r') as f:
@@ -210,7 +210,7 @@ def load_signal_log():
     return {'signals': [], 'last_run': None, 'total_signals_generated': 0}
 
 def save_signal_log(log_data):
-    """Save signal log"""
+    """Save signal log to ./csv/swrsi_log.json"""
     log_data['last_run'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     log_data['total_signals_generated'] = len(log_data['signals'])
     with open(SIGNAL_LOG, 'w') as f:
@@ -243,7 +243,7 @@ def generate_swrsi_signals():
         print("\n❌ Daily RSI Divergence ডাটা নেই। স্ক্রিপ্ট বন্ধ।")
         return pd.DataFrame()
     
-    # 2. Load signal log
+    # 2. Load signal log from ./csv/
     signal_log = load_signal_log()
     
     # 3. Find all weekly sector files
@@ -396,6 +396,7 @@ def generate_swrsi_signals():
     print(f"🔔 Sectors with Weekly Divergence: {sectors_with_divergence}")
     print(f"✅ Total Signals Generated: {len(signals)}")
     
+    # ✅ swrsi.csv → ./output/ai_signal/ (প্রতিদিন নতুন)
     if signals:
         signals_df = pd.DataFrame(signals)
         
@@ -410,7 +411,6 @@ def generate_swrsi_signals():
         # Merge & deduplicate
         if len(existing_df) > 0:
             combined = pd.concat([existing_df, signals_df], ignore_index=True)
-            # Unique by symbol + weekly_curr_date (weekly candle)
             combined = combined.drop_duplicates(subset=['symbol', 'weekly_curr_date'], keep='last')
             combined = combined.sort_values(['composite_score', 'weekly_strength_score'], ascending=[False, False])
         else:
@@ -418,12 +418,14 @@ def generate_swrsi_signals():
         
         combined = combined.reset_index(drop=True)
         
-        # Save
+        # Save to ./output/ai_signal/swrsi.csv
         combined.to_csv(OUTPUT_FILE, index=False)
-        save_signal_log(signal_log)
-        
-        print(f"📁 Saved to: {OUTPUT_FILE}")
+        print(f"📁 Signals saved: {OUTPUT_FILE}")
         print(f"📦 Total signals in file: {len(combined)}")
+        
+        # ✅ swrsi_log.json → ./csv/ (পার্মানেন্ট, ডিলিট হবে না)
+        save_signal_log(signal_log)
+        print(f"📝 Log saved: {SIGNAL_LOG}")
         
         # Show top signals
         print(f"\n🏆 TOP SIGNALS:")
@@ -445,7 +447,9 @@ def generate_swrsi_signals():
         print("\nℹ️ No confluence signals found")
         if sectors_no_symbols:
             print(f"\nSectors with divergence but no symbols mapped: {sectors_no_symbols}")
+        # তারপরও লগ সেভ করি
         save_signal_log(signal_log)
+        print(f"📝 Log saved: {SIGNAL_LOG}")
         return pd.DataFrame()
 
 # ============ RUN ============
