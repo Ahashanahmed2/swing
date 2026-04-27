@@ -112,7 +112,7 @@ FINE_TUNE_INTERVAL = 7
 CONSOLIDATE_INTERVAL = 30
 
 # Learning parameters - 70+ HOURS OPTIMIZED
-MAX_OLD_EXAMPLES = 10000
+MAX_OLD_EXAMPLES = 1000 #10000
 HARD_EXAMPLE_THRESHOLD = 0.25
 HIGH_PRIORITY_THRESHOLD = 0.35
 WEIGHTED_LOSS_ENABLED = True
@@ -125,7 +125,7 @@ FORCE_RETRAIN = False
 
 # LoRA config for distilgpt2 - 70+ HOURS OPTIMIZED
 LORA_CONFIG = {
-    'r': 64,
+    'r': 16, #64
     'lora_alpha': 128,
     'target_modules': ['c_attn', 'c_proj', 'c_fc'],
     'lora_dropout': 0.2,
@@ -150,7 +150,7 @@ AGENTIC_LOOP_LOG_DIR = "./csv/agentic_loop_logs"
 # =========================================================
 EPOCHS_CONFIG = {
     "first_train": 3 ,#12
-    "incremental": 8,
+    "incremental": 3, #8
     "weekly_finetune": 6,
     "consolidate": 20,
     "mistake_learning": 10,
@@ -158,7 +158,7 @@ EPOCHS_CONFIG = {
 
 LR_CONFIG = {
     "first_train": 2e-6,#8e
-    "incremental": 3e-6,
+    "incremental": 2e-6, #5e
     "weekly_finetune":2e-6,
     "consolidate": 5e-6,
     "mistake_learning": 5e-6,
@@ -174,7 +174,7 @@ BATCH_SIZE_CONFIG = {
 
 GRAD_ACCUM_CONFIG = {
     "first_train": 16,#32
-    "incremental": 24,
+    "incremental": 16, #24
     "weekly_finetune": 16,
     "consolidate": 32,
     "mistake_learning": 24,
