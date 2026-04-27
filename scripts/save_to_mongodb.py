@@ -101,10 +101,10 @@ def load_csv_data(filepath):
         return None
 
 # =========================================================
-# MongoDB-তে সেইভ
+# MongoDB-তে সেইভ (Upsert - কোন ডাটা ডিলিট হবে না)
 # =========================================================
 def save_to_mongodb(df, client, collection_name, has_date=False, date_column=None, is_ai_signals=False, is_swrsi=False):
-    """DataFrame MongoDB-তে সেইভ করে"""
+    """DataFrame MongoDB-তে সেইভ করে - ডুপ্লিকেট ছাড়া, কোন ডাটা ডিলিট হয় না"""
     if df is None or client is None:
         return False
 
@@ -147,21 +147,50 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
                 if pd.isna(value):
                     record[key] = None
 
-        # পুরনো ডেটা ডিলিট
-        if is_ai_signals:
-            delete_result = collection.delete_many({'analysis_date': today})
-        elif is_swrsi:
-            # SWRSI: সব পুরনো ডিলিট করে নতুন ইনসার্ট (latest signals only)
-            delete_result = collection.delete_many({})
-        else:
-            delete_result = collection.delete_many({})
+        # কোন ডাটা ডিলিট করা হচ্ছে না - শুধু upsert
+        inserted_count = 0
+        updated_count = 0
 
-        print(f"   🗑️ Deleted {delete_result.deleted_count} old records")
+        for record in records:
+            # ইউনিক আইডেন্টিফায়ার তৈরি করুন (সিম্বল + তারিখ)
+            symbol = record.get('symbol')
+            analysis_date = record.get('analysis_date', today)
+            
+            if symbol and analysis_date:
+                # সিম্বল এবং তারিখ ভিত্তিতে upsert
+                filter_query = {
+                    'symbol': symbol,
+                    'analysis_date': analysis_date
+                }
+                result = collection.update_one(
+                    filter_query,
+                    {'$set': record},
+                    upsert=True
+                )
+                if result.upserted_id:
+                    inserted_count += 1
+                else:
+                    updated_count += 1
+            elif symbol:
+                # শুধু সিম্বল ভিত্তিতে upsert (যেসব ফাইলে তারিখ নেই)
+                filter_query = {'symbol': symbol}
+                result = collection.update_one(
+                    filter_query,
+                    {'$set': record},
+                    upsert=True
+                )
+                if result.upserted_id:
+                    inserted_count += 1
+                else:
+                    updated_count += 1
+            else:
+                # কোন ইউনিক কী না থাকলে সরাসরি ইনসার্ট
+                collection.insert_one(record)
+                inserted_count += 1
 
-        # নতুন ডেটা ইনসার্ট
-        if records:
-            insert_result = collection.insert_many(records)
-            print(f"   ✅ Inserted {len(insert_result.inserted_ids)} new records")
+        print(f"   ✅ Inserted: {inserted_count} new records")
+        print(f"   🔄 Updated: {updated_count} existing records")
+        print(f"   📚 All historical data preserved (no deletion)")
 
         # ইনডেক্স তৈরি
         if 'symbol' in df.columns:
@@ -175,6 +204,11 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
             collection.create_index([('composite_score', -1)])
             collection.create_index([('sector', 1)])
             collection.create_index([('weekly_strength_label', 1)])
+        
+        # ইউনিক কম্পাউন্ড ইনডেক্স (ডুপ্লিকেট প্রতিরোধের জন্য)
+        if 'symbol' in df.columns:
+            collection.create_index([('symbol', 1), ('analysis_date', 1)], unique=True, sparse=True)
+        
         print(f"   ✅ Indexes created")
 
         return True
@@ -268,20 +302,20 @@ def main():
     if swrsi_col.count_documents({}) > 0:
         print(f"\n📊 SWRSI SIGNALS SUMMARY:")
         print("-" * 40)
-        
+
         # Total signals
         total = swrsi_col.count_documents({})
         print(f"   Total Signals: {total}")
-        
+
         # By strength
         for strength in ['Strong', 'Moderate', 'Weak']:
             count = swrsi_col.count_documents({'weekly_strength_label': strength})
             print(f"   {strength}: {count}")
-        
+
         # High score signals
         high_score = swrsi_col.count_documents({'composite_score': {'$gte': 70}})
         print(f"   High Score (≥70): {high_score}")
-        
+
         # By sector
         sectors = swrsi_col.distinct('sector')
         print(f"   Sectors: {len(sectors)} ({', '.join(sectors[:5])}{'...' if len(sectors) > 5 else ''})")
