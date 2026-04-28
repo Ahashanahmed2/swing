@@ -125,10 +125,10 @@ FORCE_RETRAIN = False
 
 # LoRA config for distilgpt2 - 70+ HOURS OPTIMIZED
 LORA_CONFIG = {
-    'r': 64, #64
-    'lora_alpha': 128,
-    'target_modules': ['c_attn', 'c_proj', 'c_fc'],
-    'lora_dropout': 0.2,
+    'r': 128,
+    'lora_alpha': 256,
+    'target_modules': ['c_attn', 'c_proj', 'c_fc', 'wte', 'wpe'],
+    'lora_dropout': 0.05,
     'bias': 'none',
 }
 
