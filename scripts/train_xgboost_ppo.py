@@ -2,6 +2,7 @@
 # ✅ Multi-Agent Ensemble, Risk Management, Performance Metrics, Portfolio Optimizer
 # ✅ Adaptive LR Scheduler, Experience Replay, Market Regime Detector, Hyperparameter Optimizer, Backtesting Engine
 # ✅ Telegram Bot Notifications
+# ✅ NEW: PPO Checkpoint Callback (every 20,000 steps)
 
 import os
 import numpy as np
@@ -16,7 +17,7 @@ import gymnasium as gym
 from gymnasium import spaces
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
-from stable_baselines3.common.callbacks import BaseCallback, EvalCallback
+from stable_baselines3.common.callbacks import BaseCallback, EvalCallback, CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 import warnings
 warnings.filterwarnings('ignore')
@@ -201,6 +202,12 @@ SHARPE_MIN = 0.5  # Minimum Sharpe ratio
 # Experience Replay Parameters
 REPLAY_BUFFER_CAPACITY = 10000
 REPLAY_BATCH_SIZE = 128
+
+# ✅ NEW: Checkpoint config
+CHECKPOINT_SAVE_FREQ = 20000  # Save checkpoint every 20,000 steps
+CHECKPOINT_DIR = "./csv/ppo_models/checkpoints/"
+
+os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 # Global Telegram Notifier
 telegram = TelegramNotifier()
@@ -1259,17 +1266,27 @@ def train_ppo_for_symbol(symbol, data, xgb_model, optimize=False, step=0, total=
         tensorboard_log=LOG_DIR
     )
 
+    # ✅ NEW: Checkpoint callback
+    checkpoint_callback = CheckpointCallback(
+        save_freq=CHECKPOINT_SAVE_FREQ,
+        save_path=f"{CHECKPOINT_DIR}/{symbol}/",
+        name_prefix=f"ppo_{symbol}",
+        save_replay_buffer=False,
+        save_vecnormalize=False
+    )
+    print(f"   📦 Checkpoints will be saved every {CHECKPOINT_SAVE_FREQ} steps to {CHECKPOINT_DIR}/{symbol}/")
+
     # Train
     print("   🚀 Training started...")
     model.learn(
         total_timesteps=TOTAL_TIMESTEPS,
-        callback=TensorboardCallback()
+        callback=[TensorboardCallback(), checkpoint_callback]
     )
 
-    # Save model
+    # Save final model
     save_path = os.path.join(PPO_MODEL_DIR, f"ppo_{symbol}")
     model.save(save_path)
-    print(f"   ✅ Model saved: {save_path}")
+    print(f"   ✅ Final model saved: {save_path}")
 
     return model
 
@@ -1280,11 +1297,12 @@ def train_ppo_for_symbol(symbol, data, xgb_model, optimize=False, step=0, total=
 
 def main():
     print("="*70)
-    print("🚀 PPO + XGBoost Training System (Advanced + Telegram)")
+    print("🚀 PPO + XGBoost Training System (Advanced + Telegram + Checkpoints)")
     print("="*70)
     print(f"📅 Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"💰 Initial Balance: ${INITIAL_BALANCE:,.2f}")
     print(f"📊 Total Timesteps per symbol: {TOTAL_TIMESTEPS:,}")
+    print(f"📦 Checkpoint Save Frequency: {CHECKPOINT_SAVE_FREQ:,} steps")
     print("="*70)
 
     # Step 1: Load data
@@ -1401,7 +1419,8 @@ def main():
     print("📊 TRAINING SUMMARY")
     print("="*70)
     print(f"✅ Successfully trained: {len(trained_models)} agents")
-    print(f"📁 Models saved in: {PPO_MODEL_DIR}")
+    print(f"📁 Final models saved in: {PPO_MODEL_DIR}")
+    print(f"📦 Checkpoints saved in: {CHECKPOINT_DIR}")
     
     # Save performance summary
     if performance_summary:
