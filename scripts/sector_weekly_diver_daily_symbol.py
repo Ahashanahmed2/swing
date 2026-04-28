@@ -128,7 +128,7 @@ def check_weekly_divergence(weekly_df):
         return None
     
     # ⭐ মূল কন্ডিশন: Price Low নিচে ↓ কিন্তু RSI উপরে ↑
-    price_condition = last['low'] < prev['low']      # Lower low in price
+    price_condition = last['low'] <= prev['low']      # Lower low in price
     rsi_condition = last['rsi'] > prev['rsi']        # Higher low in RSI
     
     if not (price_condition and rsi_condition):
