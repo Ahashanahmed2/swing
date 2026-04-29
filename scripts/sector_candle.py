@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 # কনফিগারেশন
 INPUT_CSV = './csv/mongodb.csv'
-OUTPUT_WEEKLY_DIR = './csv/sector/weekly_v2/'  # নতুন ভার্সন
+OUTPUT_WEEKLY_DIR = './csv/sector/weekly/'  # নতুন ভার্সন
 
 os.makedirs(OUTPUT_WEEKLY_DIR, exist_ok=True)
 
@@ -150,9 +150,9 @@ def calculate_sector_index_weekly():
         
         if len(weekly_df) > 0:
             # Change calculate
-            weekly_df = weekly_df.sort_values('week_start')
-            weekly_df['change'] = weekly_df['close'].diff().round(2)
-            
+            # save_sector_data ফাংশনে - ফাইলনেম থেকে _v2 বাদ দিন
+            filename = f"{sector.replace(' ', '_').replace('/', '_').replace('&', 'and').lower()}_weekly.csv"  # v2 বাদ
+            filepath = os.path.join(OUTPUT_WEEKLY_DIR, filename)
             # RSI calculate
             weekly_df['rsi'] = calculate_rsi_series(weekly_df['close'], period=14)
             
