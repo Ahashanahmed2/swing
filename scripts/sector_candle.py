@@ -10,6 +10,47 @@ OUTPUT_WEEKLY_DIR = './csv/sector/weekly/'
 
 os.makedirs(OUTPUT_WEEKLY_DIR, exist_ok=True)
 
+def calculate_rsi_series(close_prices, period=14):
+    """Calculate RSI for a series"""
+    # Drop NaN values for calculation
+    valid_prices = close_prices.dropna().reset_index(drop=True)
+    
+    if len(valid_prices) < period + 1:
+        return [None] * len(close_prices)
+    
+    deltas = valid_prices.diff()
+    gains = deltas.copy()
+    losses = deltas.copy()
+    gains[gains < 0] = 0
+    losses[losses > 0] = 0
+    losses = abs(losses)
+    
+    avg_gain = gains.iloc[1:period+1].mean()
+    avg_loss = losses.iloc[1:period+1].mean()
+    
+    rsi_values = [None] * period
+    
+    if avg_loss == 0:
+        rsi = 100
+    else:
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+    rsi_values.append(round(rsi, 2))
+    
+    for i in range(period + 1, len(valid_prices)):
+        avg_gain = (avg_gain * (period - 1) + gains.iloc[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses.iloc[i]) / period
+        
+        if avg_loss == 0:
+            rsi = 100
+        else:
+            rs = avg_gain / avg_loss
+            rsi = 100 - (100 / (1 + rs))
+        
+        rsi_values.append(round(rsi, 2))
+    
+    return rsi_values
+
 def calculate_sector_index_weekly():
     """
     প্লাটফর্মের মতো সেক্টর ইনডেক্স ক্যান্ডেল তৈরি
@@ -145,10 +186,12 @@ def calculate_sector_index_weekly():
             # Change calculate
             weekly_df['change'] = weekly_df['close'].diff().round(2)
             
-            # RSI calculate
-            weekly_df['rsi'] = calculate_rsi_series(weekly_df['close'], period=14)
+            # ✅ RSI calculate (যোগ করা হয়েছে)
+            close_prices = weekly_df['close']
+            rsi_values = calculate_rsi_series(close_prices, period=14)
+            weekly_df['rsi'] = rsi_values
             
-            # Save (v2 বাদ)
+            # Save
             filename = f"{sector.replace(' ', '_').replace('/', '_').replace('&', 'and').lower()}_weekly.csv"
             filepath = os.path.join(OUTPUT_WEEKLY_DIR, filename)
             
@@ -159,52 +202,13 @@ def calculate_sector_index_weekly():
             
             # Latest candle info
             latest = weekly_df.iloc[-1]
+            rsi_val = latest['rsi'] if pd.notna(latest['rsi']) else 'N/A'
             print(f"  ✓ Saved: {filename}")
             print(f"     Latest Week: {latest['week_start'].strftime('%Y-%m-%d')} | "
                   f"O:{latest['open']:.2f} H:{latest['high']:.2f} L:{latest['low']:.2f} C:{latest['close']:.2f} | "
-                  f"Ch:{latest['change']:+.2f} | RSI:{latest['rsi']:.1f} | Vol:{latest['volume']:,.0f}")
+                  f"Ch:{latest['change']:+.2f} | RSI:{rsi_val} | Vol:{latest['volume']:,.0f}")
     
     print(f"\n✅ Done! Files saved in: {OUTPUT_WEEKLY_DIR}")
-
-def calculate_rsi_series(close_prices, period=14):
-    """Calculate RSI for a series"""
-    close_prices = close_prices.dropna().reset_index(drop=True)
-    
-    if len(close_prices) < period + 1:
-        return [None] * len(close_prices)
-    
-    deltas = close_prices.diff()
-    gains = deltas.copy()
-    losses = deltas.copy()
-    gains[gains < 0] = 0
-    losses[losses > 0] = 0
-    losses = abs(losses)
-    
-    avg_gain = gains.iloc[1:period+1].mean()
-    avg_loss = losses.iloc[1:period+1].mean()
-    
-    rsi_values = [None] * period
-    
-    if avg_loss == 0:
-        rsi = 100
-    else:
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-    rsi_values.append(round(rsi, 2))
-    
-    for i in range(period + 1, len(close_prices)):
-        avg_gain = (avg_gain * (period - 1) + gains.iloc[i]) / period
-        avg_loss = (avg_loss * (period - 1) + losses.iloc[i]) / period
-        
-        if avg_loss == 0:
-            rsi = 100
-        else:
-            rs = avg_gain / avg_loss
-            rsi = 100 - (100 / (1 + rs))
-        
-        rsi_values.append(round(rsi, 2))
-    
-    return rsi_values
 
 # Run
 calculate_sector_index_weekly()
