@@ -18,7 +18,7 @@ scripts = [
     "scripts/sector_candle.py",
     "scripts/sector_weekly_diver_daily_symbol.py",
     "scripts/support_buy.py",
-    #"scripts/add_ai_value_support_resistance.py",
+    "scripts/add_ai_value_support_resistance.py",
     "scripts/sync_emails.py",
     "scripts/trand.py",
     "scripts/trend_signal.py",
@@ -52,7 +52,7 @@ scripts = [
     "scripts/ppo_train.py",
     "scripts/nightly_trader.py",
     #"scripts/agentic_loop.py",no
-    #"scripts/generate_final_ai_signals.py",
+    "scripts/generate_final_ai_signals.py",
     "scripts/generate_pdf.py",
     "scripts/upload_csv.py",
     "scripts/dayliMassage.py",
