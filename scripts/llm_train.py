@@ -112,7 +112,7 @@ FINE_TUNE_INTERVAL = 7
 CONSOLIDATE_INTERVAL = 30
 
 # Learning parameters - 70+ HOURS OPTIMIZED
-MAX_OLD_EXAMPLES = 10 #10000
+MAX_OLD_EXAMPLES = 10000 #10000
 HARD_EXAMPLE_THRESHOLD = 0.25
 HIGH_PRIORITY_THRESHOLD = 0.35
 WEIGHTED_LOSS_ENABLED = True
@@ -149,16 +149,16 @@ AGENTIC_LOOP_LOG_DIR = "./csv/agentic_loop_logs"
 # 70+ HOURS EPOCH CONFIGURATION
 # =========================================================
 EPOCHS_CONFIG = {
-    "first_train": 2 ,#12
-    "incremental": 3, #8
+    "first_train": 12 ,#12
+    "incremental": 8, #8
     "weekly_finetune": 6,
     "consolidate": 20,
     "mistake_learning": 10,
 }
 
 LR_CONFIG = {
-    "first_train": 3e-6,#8e
-    "incremental": 1e-6, #5e
+    "first_train": 8e-6,#8e
+    "incremental": 5e-6, #5e
     "weekly_finetune":2e-6,
     "consolidate": 5e-6,
     "mistake_learning": 5e-6,
@@ -173,8 +173,8 @@ BATCH_SIZE_CONFIG = {
 }
 
 GRAD_ACCUM_CONFIG = {
-    "first_train": 2,#32
-    "incremental": 4, #24
+    "first_train": 32,#32
+    "incremental": 24, #24
     "weekly_finetune": 16,
     "consolidate": 32,
     "mistake_learning": 24,
