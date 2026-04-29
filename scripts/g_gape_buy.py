@@ -78,18 +78,18 @@ for _, r in gape_df.iterrows():
     results.append({
         'symbol': symbol,
         'date': date.date(),
-        'buy_price': buy_price,
-        'SL_price': SL_price
+        'buy': buy_price,
+        'SL': SL_price
     })
 
 # Build new signals DataFrame
 if results:
     new_df = pd.DataFrame(results)
-    new_df['buy_price'] = pd.to_numeric(new_df['buy_price'], errors='coerce')
-    new_df['SL_price'] = pd.to_numeric(new_df['SL_price'], errors='coerce')
+    new_df['buy'] = pd.to_numeric(new_df['buy'], errors='coerce')
+    new_df['SL'] = pd.to_numeric(new_df['SL'], errors='coerce')
 
     # Filter valid signals (buy > SL)
-    new_df = new_df[new_df['buy_price'] > new_df['SL_price']].reset_index(drop=True)
+    new_df = new_df[new_df['buy'] > new_df['SL']].reset_index(drop=True)
 
     if len(new_df) > 0:
         # Sort by date (newest first)
@@ -98,7 +98,7 @@ if results:
 
         # ✅ ফাইনাল কলাম (শুধু buy_price ও SL_price)
         new_df = new_df[[
-            'No', 'symbol', 'date', 'buy_price', 'SL_price'
+            'No', 'symbol', 'date', 'buy', 'SL'
         ]]
     else:
         new_df = pd.DataFrame()
@@ -108,7 +108,7 @@ else:
 # Merge with existing data (remove duplicates based on symbol)
 if not existing_df.empty and not new_df.empty:
     # Check if existing file has the correct format
-    required_cols = ['symbol', 'date', 'buy_price', 'SL_price']
+    required_cols = ['symbol', 'date', 'buy', 'SL']
     if not all(col in existing_df.columns for col in required_cols):
         # If old format, we'll create new file with new format
         print("🔄 Existing file has old format - creating new file with updated format")
@@ -143,7 +143,7 @@ else:
 if not final_df.empty:
     # Ensure correct column order
     column_order = [
-        'No', 'symbol', 'date', 'buy_price', 'SL_price'
+        'No', 'symbol', 'date', 'buy, 'SL'
     ]
     
     # Make sure all columns exist
@@ -169,7 +169,7 @@ if not final_df.empty:
 else:
     # Save empty DataFrame with correct columns
     empty_df = pd.DataFrame(columns=[
-        'No', 'symbol', 'date', 'buy_price', 'SL_price'
+        'No', 'symbol', 'date', 'buy', 'SL'
     ])
     empty_df.to_csv(output_file2, index=False)
     print("⚠️ No signals found - empty file saved")
