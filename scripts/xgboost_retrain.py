@@ -95,7 +95,7 @@ FEEDBACK_DAYS = 5
 MIN_SAMPLES_PER_SYMBOL = 50
 
 # Model quality threshold
-AUC_THRESHOLD = 0.55  # AUC 0.55-এর নিচে হলে মডেল সেভ হবে না
+AUC_THRESHOLD = 0.45  # AUC 0.55-এর নিচে হলে মডেল সেভ হবে না
 RETRAIN_ATTEMPTS = 3  # কতবার চেষ্টা করবে খারাপ মডেল রিট্রেন করতে
 MONTHLY_RETRY_AFTER = 30  # ব্যর্থ হওয়ার পর কত দিন পরে আবার চেষ্টা করবে
 
