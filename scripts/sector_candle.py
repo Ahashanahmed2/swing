@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 # কনফিগারেশন
 INPUT_CSV = './csv/mongodb.csv'
-OUTPUT_WEEKLY_DIR = './csv/sector/weekly/'  # নতুন ভার্সন
+OUTPUT_WEEKLY_DIR = './csv/sector/weekly/'
 
 os.makedirs(OUTPUT_WEEKLY_DIR, exist_ok=True)
 
@@ -36,7 +36,6 @@ def calculate_sector_index_weekly():
     def get_dse_week_start(date):
         """রবিবার থেকে শুরু DSE উইক"""
         weekday = date.dayofweek  # Monday=0, Sunday=6
-        # Sunday=6 -> 0, Monday=0 -> 1, ... Thursday=4 -> 5
         if weekday == 6:  # Sunday
             return date
         else:
@@ -74,7 +73,6 @@ def calculate_sector_index_weekly():
             trading_days = len(week_dates)
             
             # ============= MARKET CAP WEIGHTED INDEX =============
-            # প্লাটফর্মের মতো: Market Cap দিয়ে ওয়েটেড এভারেজ
             
             # প্রথম দিনের ডেটা (Open calculation)
             first_day_data = week_data[week_data['date'] == first_day]
@@ -83,7 +81,6 @@ def calculate_sector_index_weekly():
             last_day_data = week_data[week_data['date'] == last_day]
             
             # Market Cap Weighted Open
-            # Open = ∑(marketCap_i × open_i) / ∑(marketCap_i)
             valid_open = first_day_data.dropna(subset=['marketCap', 'open'])
             if len(valid_open) > 0:
                 total_mcap_open = valid_open['marketCap'].sum()
@@ -99,11 +96,7 @@ def calculate_sector_index_weekly():
             else:
                 weighted_close = np.nan
             
-            # High এবং Low: Market Cap Weighted নয়, বরং Index Method
-            # High = Index এর সর্বোচ্চ পয়েন্ট
-            # Low = Index এর সর্বনিম্ন পয়েন্ট
-            
-            # প্রতিটি দিনের জন্য ইনডেক্স ভ্যালু ক্যালকুলেট
+            # High এবং Low: Daily Index থেকে
             daily_index_values = []
             
             for date in week_dates:
@@ -116,31 +109,28 @@ def calculate_sector_index_weekly():
                     daily_index_values.append(weighted_price)
             
             if daily_index_values:
-                week_high = max(daily_index_values)  # Weekly High Point
-                week_low = min(daily_index_values)   # Weekly Low Point
+                week_high = max(daily_index_values)
+                week_low = min(daily_index_values)
             else:
                 week_high = np.nan
                 week_low = np.nan
             
-            # Volume and Value - Sum (not weighted)
+            # Volume, Value, Trades - Sum
             total_volume = week_data['volume'].sum()
             total_value = week_data['value'].sum()
             total_trades = week_data['trades'].sum()
             
-            # Change calculation
-            week_end_date = last_day
-            
             sector_weekly.append({
                 'sector': sector,
                 'week_start': week_start,
-                'week_end_date': week_end_date,
-                'open': round(weighted_open, 2),
-                'high': round(week_high, 2),
-                'low': round(week_low, 2),
-                'close': round(weighted_close, 2),
-                'volume': total_volume,
-                'value': total_value,
-                'trades': total_trades,
+                'week_end_date': last_day,
+                'open': round(weighted_open, 2) if not np.isnan(weighted_open) else None,
+                'high': round(week_high, 2) if not np.isnan(week_high) else None,
+                'low': round(week_low, 2) if not np.isnan(week_low) else None,
+                'close': round(weighted_close, 2) if not np.isnan(weighted_close) else None,
+                'volume': int(total_volume) if not np.isnan(total_volume) else 0,
+                'value': round(total_value, 2) if not np.isnan(total_value) else 0,
+                'trades': int(total_trades) if not np.isnan(total_trades) else 0,
                 'trading_days': trading_days,
                 'symbols_count': len(symbols)
             })
@@ -149,15 +139,17 @@ def calculate_sector_index_weekly():
         weekly_df = pd.DataFrame(sector_weekly)
         
         if len(weekly_df) > 0:
+            # Sort by week_start
+            weekly_df = weekly_df.sort_values('week_start')
+            
             # Change calculate
-            # save_sector_data ফাংশনে - ফাইলনেম থেকে _v2 বাদ দিন
-            filename = f"{sector.replace(' ', '_').replace('/', '_').replace('&', 'and').lower()}_weekly.csv"  # v2 বাদ
-            filepath = os.path.join(OUTPUT_WEEKLY_DIR, filename)
+            weekly_df['change'] = weekly_df['close'].diff().round(2)
+            
             # RSI calculate
             weekly_df['rsi'] = calculate_rsi_series(weekly_df['close'], period=14)
             
-            # Save
-            filename = f"{sector.replace(' ', '_').replace('/', '_').replace('&', 'and').lower()}_weekly_v2.csv"
+            # Save (v2 বাদ)
+            filename = f"{sector.replace(' ', '_').replace('/', '_').replace('&', 'and').lower()}_weekly.csv"
             filepath = os.path.join(OUTPUT_WEEKLY_DIR, filename)
             
             columns = ['sector', 'week_start', 'week_end_date', 'open', 'high', 'low', 'close', 
@@ -167,14 +159,17 @@ def calculate_sector_index_weekly():
             
             # Latest candle info
             latest = weekly_df.iloc[-1]
-            print(f"  ✓ Latest Week: {latest['week_start'].strftime('%Y-%m-%d')} | "
+            print(f"  ✓ Saved: {filename}")
+            print(f"     Latest Week: {latest['week_start'].strftime('%Y-%m-%d')} | "
                   f"O:{latest['open']:.2f} H:{latest['high']:.2f} L:{latest['low']:.2f} C:{latest['close']:.2f} | "
-                  f"Change:{latest['change']:+.2f} | Vol:{latest['volume']:,.0f}")
+                  f"Ch:{latest['change']:+.2f} | RSI:{latest['rsi']:.1f} | Vol:{latest['volume']:,.0f}")
     
     print(f"\n✅ Done! Files saved in: {OUTPUT_WEEKLY_DIR}")
 
 def calculate_rsi_series(close_prices, period=14):
     """Calculate RSI for a series"""
+    close_prices = close_prices.dropna().reset_index(drop=True)
+    
     if len(close_prices) < period + 1:
         return [None] * len(close_prices)
     
