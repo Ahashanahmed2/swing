@@ -1,4 +1,4 @@
-# breakout_signal.py
+# short_buy.py
 # Breakout Signal Generator based on RSI Divergence
 
 import pandas as pd
