@@ -159,7 +159,7 @@ if not final_df.empty:
     
     print(f"✅ gape_buy.csv saved with {len(final_df)} signals")
     if len(final_df) > 0:
-        print(f"   📈 Latest signal: {final_df.iloc[0]['symbol']} - Buy: {final_df.iloc[0]['buy_price']:.2f}, SL: {final_df.iloc[0]['SL_price']:.2f}")
+        print(f"   📈 Latest signal: {final_df.iloc[0]['symbol']} - Buy: {final_df.iloc[0]['buy']:.2f}, SL: {final_df.iloc[0]['SL']:.2f}")
     
     # Show newly added symbols if any
     if not existing_df.empty and not new_df.empty and 'new_symbols_df' in locals() and not new_symbols_df.empty:
