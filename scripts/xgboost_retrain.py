@@ -201,7 +201,7 @@ DAILY_PARAMS = {
     'subsample': 0.6,
     'colsample_bytree': 0.6,
     'colsample_bylevel':0.6,
-    "colsample_bynode':0.6,
+    'colsample_bynode':0.6,
     'min_child_weight': 10,
     'gamma': 0.3,
     'reg_alpha': 0.5,
@@ -221,7 +221,7 @@ WEEKLY_PARAMS = {
     'subsample': 0.6,
     'colsample_bytree': 0.6,
     'colsample_bylevel':0.6,
-    "colsample_bynode':0.6,
+    'colsample_bynode':0.6,
     'min_child_weight': 12,
     'gamma': 0.4,
     'reg_alpha': 0.8,
@@ -242,7 +242,7 @@ MONTHLY_PARAMS = {
     'subsample': 0.55,
     'colsample_bytree': 0.55,
     'colsample_bylevel':0.55,
-    "colsample_bynode':0.55,
+    'colsample_bynode':0.55,
     'min_child_weight': 15,
     'gamma': 0.5,
     'reg_alpha': 1.0,
@@ -690,7 +690,7 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata, sector
         if overfit_gap > 0.12:
             print(f"   ⚠️ {symbol}: Overfitting detected! Gap: {overfit_gap:.3f}")
     
-        # Rest of code...a
+        
 
         # Dynamic class weight
         target_ratio = y_train.mean()
