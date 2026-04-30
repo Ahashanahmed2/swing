@@ -92,10 +92,10 @@ WEEKLY_INTERVAL = 7
 MONTHLY_INTERVAL = 30
 
 FEEDBACK_DAYS = 5
-MIN_SAMPLES_PER_SYMBOL = 50
+MIN_SAMPLES_PER_SYMBOL = 60
 
 # Model quality threshold
-AUC_THRESHOLD = 0.50  # AUC 0.55-এর নিচে হলে মডেল সেভ হবে না
+AUC_THRESHOLD = 0.55  # AUC 0.55-এর নিচে হলে মডেল সেভ হবে না
 RETRAIN_ATTEMPTS = 3  # কতবার চেষ্টা করবে খারাপ মডেল রিট্রেন করতে
 MONTHLY_RETRY_AFTER = 30  # ব্যর্থ হওয়ার পর কত দিন পরে আবার চেষ্টা করবে
 
@@ -195,53 +195,64 @@ class SectorAnalyzer:
 
 # Daily Mode (15 minutes)
 DAILY_PARAMS = {
-    'n_estimators': 1000,
-    'max_depth': 8,
-    'learning_rate': 0.01,
-    'subsample': 0.7,
-    'colsample_bytree': 0.7,
-    'min_child_weight': 5,
-    'gamma': 0.2,
+    'n_estimators': 1500,
+    'max_depth': 5,
+    'learning_rate': 0.005,
+    'subsample': 0.6,
+    'colsample_bytree': 0.6,
+    'colsample_bylevel':0.6,
+    "colsample_bynode':0.6,
+    'min_child_weight': 10,
+    'gamma': 0.3,
     'reg_alpha': 0.5,
-    'reg_lambda': 1.5,
+    'reg_lambda': 2,
     'random_state': 42,
     'eval_metric': 'logloss',
     'use_label_encoder': False,
-    'verbosity': 0
+    'verbosity': 0,
+    'early_stopping_rounds':50,
 }
 
 # Weekly Mode (30-40 minutes)
 WEEKLY_PARAMS = {
-    'n_estimators': 1500,
-    'max_depth': 9,
-    'learning_rate': 0.007,
-    'subsample': 0.7,
-    'colsample_bytree': 0.7,
-    'min_child_weight': 6,
-    'gamma': 0.25,
-    'reg_alpha': 0.6,
-    'reg_lambda': 2.0,
+    'n_estimators': 2500,
+    'max_depth': 6,
+    'learning_rate': 0.003,
+    'subsample': 0.6,
+    'colsample_bytree': 0.6,
+    'colsample_bylevel':0.6,
+    "colsample_bynode':0.6,
+    'min_child_weight': 12,
+    'gamma': 0.4,
+    'reg_alpha': 0.8,
+    'reg_lambda': 3,
+    'max_delta_step':0,
     'random_state': 42,
     'eval_metric': 'logloss',
     'use_label_encoder': False,
-    'verbosity': 0
+    'verbosity': 0,
+    'early_stopping_rounds':80,
 }
 
 # Monthly Mode (2-4 hours)
 MONTHLY_PARAMS = {
-    'n_estimators': 2000,
-    'max_depth': 10,
-    'learning_rate': 0.005,
-    'subsample': 0.6,
-    'colsample_bytree': 0.6,
-    'min_child_weight': 8,
-    'gamma': 0.3,
-    'reg_alpha': 0.8,
-    'reg_lambda': 2.5,
+    'n_estimators': 4000,
+    'max_depth': 7,
+    'learning_rate': 0.002,
+    'subsample': 0.55,
+    'colsample_bytree': 0.55,
+    'colsample_bylevel':0.55,
+    "colsample_bynode':0.55,
+    'min_child_weight': 15,
+    'gamma': 0.5,
+    'reg_alpha': 1.0,
+    'reg_lambda': 4.0,
+    'max_delta_step':0,
     'random_state': 42,
     'eval_metric': 'logloss',
     'use_label_encoder': False,
-    'verbosity': 0
+    'verbosity': 0,
+    'early_stopping_rounds':120,
 }
 
 # =========================
@@ -651,10 +662,35 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata, sector
         if split < 10 or len(X) - split < 5:
             return None, None
 
-        X_train = X.iloc[:split]
-        y_train = y.iloc[:split]
-        X_test = X.iloc[split:]
-        y_test = y.iloc[split:]
+        
+        # ✅ NEW: Three-way split (train/val/test)
+        train_idx = int(len(X) * 0.7)
+        val_idx = int(len(X) * 0.85)
+    
+        X_train = X.iloc[:train_idx]
+        y_train = y.iloc[:train_idx]
+        X_val = X.iloc[train_idx:val_idx]
+        y_val = y.iloc[train_idx:val_idx]
+        X_test = X.iloc[val_idx:]
+        y_test = y.iloc[val_idx:]
+    
+        model.fit(
+            X_train, y_train,
+            eval_set=[(X_train, y_train), (X_val, y_val)],
+            early_stopping_rounds=params.get('early_stopping_rounds', 50),
+            verbose=False
+        )
+    
+        # ✅ Overfitting Check
+        train_acc = accuracy_score(y_train, model.predict(X_train))
+        val_acc = accuracy_score(y_val, model.predict(X_val))
+        test_acc = accuracy_score(y_test, model.predict(X_test))
+    
+        overfit_gap = train_acc - test_acc
+        if overfit_gap > 0.12:
+            print(f"   ⚠️ {symbol}: Overfitting detected! Gap: {overfit_gap:.3f}")
+    
+        # Rest of code...a
 
         # Dynamic class weight
         target_ratio = y_train.mean()
