@@ -143,7 +143,7 @@ else:
 if not final_df.empty:
     # Ensure correct column order
     column_order = [
-        'No', 'symbol', 'date', 'buy, 'SL'
+        'No', 'symbol', 'date', 'buy', 'SL'
     ]
     
     # Make sure all columns exist
