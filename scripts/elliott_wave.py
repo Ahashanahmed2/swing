@@ -345,13 +345,11 @@ def main():
     # =========================================================
     cols_to_save = [
         'symbol', 'main_wave', 'sub_wave', 'sub_sub_wave', 
-        'wave_count', 'wave_structure', 'current_wave', 
         'confidence'
     ]
     output_df[cols_to_save].to_csv(OUTPUT_CSV, index=False)
     # Summary
     print(f"\n{'='*70}")
-    print("📊 RESULTS")
     print(f"{'='*70}")
     print(f"   Total symbols: {len(output_df)}")
     print(f"   Output: {OUTPUT_CSV}")
