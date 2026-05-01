@@ -15,8 +15,8 @@ scripts = [
     "scripts/hf_download.py",
     
     #"scripts/mongodb.py",
-    "scripts/sector_candle.py",
-    "scripts/sector_weekly_diver_daily_symbol.py",
+    #"scripts/sector_candle.py",
+    #"scripts/sector_weekly_diver_daily_symbol.py",
     #"scripts/support_buy.py",
     #"scripts/add_ai_value_support_resistance.py",
     #"scripts/sync_emails.py",
@@ -24,7 +24,7 @@ scripts = [
     #"scripts/trend_signal.py",
    
     #"scripts/pattarn.py",no
-    #"scripts/elliott_wave.py",
+    "scripts/elliott_wave.py",
     #"scripts/ema_200.py",
     #"scripts/support.py",
     #"scripts/buy_csv.py",
@@ -54,8 +54,8 @@ scripts = [
     #"scripts/agentic_loop.py",no
     #"scripts/generate_final_ai_signals.py",
     #"scripts/generate_pdf.py",
-    "scripts/upload_csv.py",
-    #"scripts/dayliMassage.py",
+    #"scripts/upload_csv.py",
+    "scripts/dayliMassage.py",
     #"scripts/email_reports.py",
     #"scripts/save_to_mongodb.py"
     
