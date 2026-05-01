@@ -141,7 +141,7 @@ def detect_elliott_wave_detailed(symbol, symbol_df):
                     # Main wave count
                     wave_count = wave_structure.get('wave_count', [])
                     if wave_count:
-                        result['wave_count'] = ' → '.join(wave_count)
+                        result['wave_count'] = ' _ '.join(wave_count)
                         result['current_wave'] = wave_count[-1]
                         result['total_waves_detected'] = len(wave_count)
                         
@@ -242,7 +242,7 @@ def detect_elliott_wave_detailed(symbol, symbol_df):
             if types == ['up', 'down', 'up', 'down', 'up']:
                 result['main_wave'] = 'Impulse Wave (Bullish)'
                 result['current_wave'] = 'Wave 5'
-                result['wave_count'] = '1 → 2 → 3 → 4 → 5'
+                result['wave_count'] = '1  2  3  4  5'
                 result['sub_wave'] = '5-Wave Bullish Impulse'
                 result['is_bullish'] = True
                 result['confidence'] = 50
@@ -252,7 +252,7 @@ def detect_elliott_wave_detailed(symbol, symbol_df):
             elif types == ['down', 'up', 'down', 'up', 'down']:
                 result['main_wave'] = 'Impulse Wave (Bearish)'
                 result['current_wave'] = 'Wave 5'
-                result['wave_count'] = '1 → 2 → 3 → 4 → 5'
+                result['wave_count'] = '1 2  3  4  5'
                 result['sub_wave'] = '5-Wave Bearish Impulse'
                 result['is_bullish'] = False
                 result['confidence'] = 50
@@ -266,7 +266,7 @@ def detect_elliott_wave_detailed(symbol, symbol_df):
             if types == ['down', 'up', 'down']:
                 result['main_wave'] = 'Corrective Wave (ABC)'
                 result['current_wave'] = 'Wave C'
-                result['wave_count'] = 'A → B → C'
+                result['wave_count'] = 'A  B  C'
                 result['sub_wave'] = 'ABC Bearish Correction'
                 result['is_bullish'] = False
                 result['confidence'] = 40
@@ -276,7 +276,7 @@ def detect_elliott_wave_detailed(symbol, symbol_df):
             elif types == ['up', 'down', 'up']:
                 result['main_wave'] = 'Corrective Wave (ABC)'
                 result['current_wave'] = 'Wave C'
-                result['wave_count'] = 'A → B → C'
+                result['wave_count'] = 'A  B  C'
                 result['sub_wave'] = 'ABC Bullish Correction'
                 result['is_bullish'] = True
                 result['confidence'] = 40
