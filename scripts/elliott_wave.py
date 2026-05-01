@@ -356,7 +356,7 @@ def main():
     
 
     # সেভ
-    "output_df[cols_to_save].to_csv(OUTPUT_CSV, index=False)
+    output_df[cols_to_save].to_csv(OUTPUT_CSV, index=False)
     print(f"\n{'='*70}")
     print(f"{'='*70}")
     print(f"   Total symbols: {len(output_df)}")
