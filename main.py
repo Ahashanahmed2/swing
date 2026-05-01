@@ -12,9 +12,9 @@ scripts = [
     
     #"scripts/dse_scraper.py",no
     #"scripts/date_check.py",
-    #"scripts/hf_download.py",
+    "scripts/hf_download.py",
     
-    "scripts/mongodb.py",
+    #"scripts/mongodb.py",
     "scripts/sector_candle.py",
     "scripts/sector_weekly_diver_daily_symbol.py",
     #"scripts/support_buy.py",
