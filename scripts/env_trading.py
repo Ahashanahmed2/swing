@@ -10,6 +10,7 @@
 #    - LLM + Agentic Loop + XGBoost + Sector Features
 #    - ✅ RSI Divergence (rsi_diver.csv)
 #    - ✅ Support/Resistance (support_resistance.csv)
+#    - ✅ Sector Features from ./csv/sector/ (8 dims with RSI)
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -396,7 +397,7 @@ class MultiSymbolTradingEnv(gym.Env):
         - LLM Sentiment Analysis
         - Agentic Loop Consensus
         - XGBoost Probability
-        - Sector Features (Daily/Weekly/Yearly)
+        - Sector Features from ./csv/sector/ (8 dims with RSI)
         - RSI Divergence (rsi_diver.csv)
         - Support/Resistance (support_resistance.csv)
     """
@@ -466,10 +467,10 @@ class MultiSymbolTradingEnv(gym.Env):
         # ✅ Support/Resistance
         self.sr_features = SupportResistanceFeatures()
         
-        # Sector Engine
+        # ✅ Sector Engine (from ./csv/sector/ - 8 dims with RSI)
         self.sector_engine = sector_engine
         self.sector_features_enabled = False
-        self.sector_feature_dim = 15
+        self.sector_feature_dim = 8  # ✅ 8 dims (was 15, now includes RSI)
         
         if self.sector_engine is not None and SECTOR_AVAILABLE:
             try:
@@ -654,7 +655,7 @@ class MultiSymbolTradingEnv(gym.Env):
             self.portfolio_weights = None
     
     # -------------------------------------------------
-    # Sector Features
+    # ✅ Sector Features (8 dims from ./csv/sector/)
     # -------------------------------------------------
     def _get_sector_features(self, symbol):
         if not self.sector_features_enabled or self.sector_engine is None:
