@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # CONFIG
 # =========================================================
 INPUT_CSV = "./csv/mongodb.csv"
-OUTPUT_CSV = "./csv/elliott_wave_detailed.csv"
+OUTPUT_CSV = "./output/ai_signal/elliott_wave_detailed.csv"
 
 # =========================================================
 # IMPORT ELLIOTT WAVE DETECTOR
