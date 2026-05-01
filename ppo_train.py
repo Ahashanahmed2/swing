@@ -10,7 +10,7 @@ import os
 
 scripts = [
     "scripts/hf_download.py",
-    "scripts/ppo_train.py.py",
+    "scripts/ppo_train.py",
 ]
 
 for script in scripts:
