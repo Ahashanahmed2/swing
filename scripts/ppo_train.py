@@ -6,6 +6,7 @@
 # ✅ Full validation, no shortcuts
 # ✅ HF CHECKPOINT: Upload to HF via Batch
 # ✅ RESUME: From ./csv/ppo_checkpoints/ (downloaded by download_checkpoints.py)
+# ✅ RSI Divergence + Support/Resistance features auto-loaded by env_trading.py
 
 import os
 import sys
@@ -682,7 +683,7 @@ if SB3_AVAILABLE:
             return [final_action], {'actions': all_actions, 'weighted_votes': weighted_votes}
 
 # =========================================================
-# ✅ CREATE ENVIRONMENT
+# ✅ CREATE ENVIRONMENT (RSI Div + S/R auto-loaded by env_trading.py)
 # =========================================================
 
 def create_multi_symbol_env(symbol_dfs, signals, sector_engine=None, xgb_models=None, 
@@ -1182,6 +1183,7 @@ def train_ppo_system():
     print(f"🔧 Ensemble: {ENSEMBLE_SIZE} | Patience: {EARLY_STOPPING_PATIENCE}")
     print(f"💾 Local Checkpoint: {LOCAL_CHECKPOINT_DIR}")
     print(f"📤 HF Upload: {HF_DATASET_REPO}/{HF_CHECKPOINT_DIR}")
+    print(f"📊 Features: ALL (Sector+Micro+Greeks+Regime+PatchTST+LLM+Agentic+XGB+RSI_Div+S/R)")
     print("="*70)
 
     if not SB3_AVAILABLE or not GYM_AVAILABLE:
@@ -1266,7 +1268,7 @@ def train_ppo_system():
         print("🏆 MAXIMUM QUALITY TRAINING STARTED")
         print(f"{'='*70}")
         
-        for idx, symbol in enumerate(pending_symbols):
+        for idx, symbol in enumerate(pending_symbols[:MAX_PER_SYMBOL_MODELS]):
             if symbol not in all_symbols_data:
                 continue
             
