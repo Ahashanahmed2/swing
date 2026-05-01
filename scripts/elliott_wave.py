@@ -353,7 +353,11 @@ def main():
     # Wave count-এ arrow replace
     #output_df['wave_count'] = output_df['wave_count'].astype(str).str.replace('→', '->', regex=False)
 
-    
+    # ✅ সেভ করার আগে ডিফাইন করুন
+    cols_to_save = ['symbol', 'main_wave', 'sub_wave', 'sub_sub_wave', 
+                'wave_count', 'wave_structure', 'current_wave', 'confidence']
+
+
 
     # সেভ
     output_df[cols_to_save].to_csv(OUTPUT_CSV, index=False)
