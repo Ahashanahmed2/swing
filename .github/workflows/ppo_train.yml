@@ -80,4 +80,4 @@ jobs:
         EMAIL_TO: ${{ secrets.EMAIL_TO }}
         hf_token: ${{ secrets.HF_TOKEN }}
 
-      run: python train.py
+      run: python ppo_train.py
