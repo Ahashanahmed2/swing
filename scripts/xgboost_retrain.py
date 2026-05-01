@@ -657,40 +657,21 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata, sector
         if len(X) < MIN_SAMPLES_PER_SYMBOL:
             return None, None
 
-        split = int(len(X) * 0.8)
-
-        if split < 10 or len(X) - split < 5:
-            return None, None
-
-        
-        # ✅ NEW: Three-way split (train/val/test)
+        # =========================
+        # ✅ Three-way split (train/val/test)
+        # =========================
         train_idx = int(len(X) * 0.7)
         val_idx = int(len(X) * 0.85)
-    
+        
         X_train = X.iloc[:train_idx]
         y_train = y.iloc[:train_idx]
         X_val = X.iloc[train_idx:val_idx]
         y_val = y.iloc[train_idx:val_idx]
         X_test = X.iloc[val_idx:]
         y_test = y.iloc[val_idx:]
-    
-        model.fit(
-            X_train, y_train,
-            eval_set=[(X_train, y_train), (X_val, y_val)],
-            early_stopping_rounds=params.get('early_stopping_rounds', 50),
-            verbose=False
-        )
-    
-        # ✅ Overfitting Check
-        train_acc = accuracy_score(y_train, model.predict(X_train))
-        val_acc = accuracy_score(y_val, model.predict(X_val))
-        test_acc = accuracy_score(y_test, model.predict(X_test))
-    
-        overfit_gap = train_acc - test_acc
-        if overfit_gap > 0.12:
-            print(f"   ⚠️ {symbol}: Overfitting detected! Gap: {overfit_gap:.3f}")
-    
-        
+
+        if len(X_train) < 10 or len(X_test) < 5:
+            return None, None
 
         # Dynamic class weight
         target_ratio = y_train.mean()
@@ -704,34 +685,57 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata, sector
         params_copy = params.copy()
         params_copy['scale_pos_weight'] = scale_pos
 
-        weights = get_sample_weights(group.iloc[:split], feedback_log)
+        # Sample weights from feedback
+        weights = get_sample_weights(group.iloc[:train_idx], feedback_log)
 
+        # ✅ SINGLE model.fit() with ALL features
         model = xgb.XGBClassifier(**params_copy)
+        
+        model.fit(
+            X_train, y_train,
+            sample_weight=weights,
+            eval_set=[(X_train, y_train), (X_val, y_val)],
+            early_stopping_rounds=params.get('early_stopping_rounds', 50),
+            verbose=False
+        )
 
-        try:
-            model.fit(X_train, y_train, sample_weight=weights, eval_set=[(X_test, y_test)], verbose=False)
-        except:
-            model.fit(X_train, y_train, sample_weight=weights, verbose=False)
-
+        # =========================
+        # Evaluate on TEST set (untouched)
+        # =========================
         preds = model.predict(X_test)
         prob = model.predict_proba(X_test)[:, 1]
 
         acc = accuracy_score(y_test, preds)
         auc = roc_auc_score(y_test, prob) if len(np.unique(y_test)) > 1 else 0.5
 
-        # ✅ NEW: Get sector info
+        # =========================
+        # ✅ Overfitting Check
+        # =========================
+        train_acc = accuracy_score(y_train, model.predict(X_train))
+        val_acc = accuracy_score(y_val, model.predict(X_val))
+        overfit_gap = train_acc - acc
+        
+        if overfit_gap > 0.12:
+            print(f"   ⚠️ {symbol}: Overfitting detected! Train: {train_acc:.3f}, Test: {acc:.3f}, Gap: {overfit_gap:.3f}")
+
+        # =========================
+        # Get sector info
+        # =========================
         sector = 'Unknown'
         if sector_analyzer and symbol in sector_analyzer.symbol_sector_map:
             sector = sector_analyzer.symbol_sector_map[symbol]
 
-        # Check if model is good enough
+        # =========================
+        # Save or reject model
+        # =========================
         if auc >= AUC_THRESHOLD:
             model_path = os.path.join(MODEL_DIR, f'{symbol}.joblib')
             joblib.dump(model, model_path)
 
+            # Predict on ALL data for output
             group['confidence_score'] = model.predict_proba(X)[:, 1] * 100
             
-            # ✅ NEW: Adjust confidence by sector momentum
+            # Adjust confidence by sector momentum
             if 'sector_momentum' in group.columns:
                 sector_momentum = group['sector_momentum'].iloc[0]
                 if sector_momentum > 0.02:
@@ -767,10 +771,11 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata, sector
             'failed_attempts': failed_attempts if auc < AUC_THRESHOLD else 0,
             'status': status,
             'class_ratio': target_ratio,
-            'sector': sector  # ✅ NEW
+            'sector': sector
         }
 
     except Exception as e:
+        print(f"   ❌ Error training {symbol}: {str(e)[:100]}")
         return None, None
 
 # =========================
