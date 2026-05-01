@@ -25,6 +25,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 INPUT_CSV = "./csv/mongodb.csv"
 OUTPUT_CSV = "./output/ai_signal/elliott_wave_detailed.csv"
 
+import os
+
+# ✅ ডিরেক্টরি না থাকলে তৈরি করুন
+os.makedirs(os.path.dirname(OUTPUT_CSV), exist_ok=True)
+
 # =========================================================
 # IMPORT ELLIOTT WAVE DETECTOR
 # =========================================================
