@@ -335,10 +335,15 @@ def main():
     
     # Sort by confidence
     output_df = output_df.sort_values('confidence', ascending=False)
-    
-    # Save
-    output_df.to_csv(OUTPUT_CSV, index=False)
-    
+    # =========================================================
+
+    # =========================================================
+    cols_to_save = [
+        'symbol', 'main_wave', 'sub_wave', 'sub_sub_wave', 
+        'wave_count', 'wave_structure', 'current_wave', 
+        'confidence'
+    ]
+    output_df[cols_to_save].to_csv(OUTPUT_CSV, index=False)
     # Summary
     print(f"\n{'='*70}")
     print("📊 RESULTS")
