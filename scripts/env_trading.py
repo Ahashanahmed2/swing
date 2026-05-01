@@ -8,6 +8,8 @@
 #    - Tier 3: Portfolio Optimization
 #    - Tier 4: PatchTST Transformer Predictor
 #    - LLM + Agentic Loop + XGBoost + Sector Features
+#    - ✅ RSI Divergence (rsi_diver.csv)
+#    - ✅ Support/Resistance (support_resistance.csv)
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -273,6 +275,105 @@ class PortfolioOptimizer:
 
 
 # =========================================================
+# ✅ RSI DIVERGENCE FEATURES
+# =========================================================
+
+class RSIDivergenceFeatures:
+    """RSI Divergence feature extractor"""
+    
+    def __init__(self, csv_path="./csv/rsi_diver.csv"):
+        self.data = self._load(csv_path)
+    
+    def _load(self, path):
+        if not Path(path).exists():
+            return {}
+        try:
+            df = pd.read_csv(path)
+            if 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date'])
+            data = {}
+            for sym in df['symbol'].unique():
+                data[sym] = df[df['symbol'] == sym].reset_index(drop=True)
+            print(f"✅ RSI Divergence: {len(data)} symbols")
+            return data
+        except:
+            return {}
+    
+    def get_features(self, symbol, current_date):
+        if not self.data or symbol not in self.data:
+            return np.zeros(3, dtype=np.float32)
+        try:
+            df = self.data[symbol]
+            current_dt = pd.to_datetime(current_date)
+            recent = df[df['date'] <= current_dt].tail(1)
+            if recent.empty:
+                return np.zeros(3, dtype=np.float32)
+            
+            row = recent.iloc[-1]
+            div_type = str(row.get('divergence_type', 'NONE')).upper()
+            div_signal = 1.0 if 'BULLISH' in div_type else 0.0 if 'BEARISH' in div_type else 0.5
+            
+            strength = str(row.get('divergence_strength', 'NONE')).upper()
+            strength_map = {'STRONG': 1.0, 'MODERATE': 0.6, 'WEAK': 0.3}
+            div_strength = strength_map.get(strength, 0.0)
+            
+            rsi = float(row.get('rsi', 50))
+            rsi_norm = np.clip((rsi - 30) / 40, 0, 1)
+            
+            return np.array([div_signal, div_strength, rsi_norm], dtype=np.float32)
+        except:
+            return np.zeros(3, dtype=np.float32)
+
+
+# =========================================================
+# ✅ SUPPORT / RESISTANCE FEATURES
+# =========================================================
+
+class SupportResistanceFeatures:
+    """Support/Resistance level features"""
+    
+    def __init__(self, csv_path="./csv/support_resistance.csv"):
+        self.data = self._load(csv_path)
+    
+    def _load(self, path):
+        if not Path(path).exists():
+            return pd.DataFrame()
+        try:
+            df = pd.read_csv(path)
+            if 'current_date' in df.columns:
+                df['current_date'] = pd.to_datetime(df['current_date'])
+            print(f"✅ Support/Resistance: {df['symbol'].nunique()} symbols")
+            return df
+        except:
+            return pd.DataFrame()
+    
+    def get_features(self, symbol, current_date, current_close):
+        if self.data.empty or symbol not in self.data['symbol'].values:
+            return np.zeros(3, dtype=np.float32)
+        try:
+            current_dt = pd.to_datetime(current_date)
+            sym_data = self.data[self.data['symbol'] == symbol]
+            recent = sym_data[sym_data['current_date'] <= current_dt].tail(1)
+            if recent.empty:
+                return np.zeros(3, dtype=np.float32)
+            
+            row = recent.iloc[-1]
+            level_price = float(row['level_price'])
+            distance_pct = (current_close - level_price) / current_close if current_close > 0 else 0
+            
+            strength_str = str(row.get('strength', 'Weak')).capitalize()
+            strength_map = {'Weak': 0.3, 'Moderate': 0.6, 'Strong': 1.0}
+            strength_val = strength_map.get(strength_str, 0.5)
+            
+            level_type = str(row.get('type', '')).lower()
+            type_val = 1.0 if level_type == 'support' else -1.0 if level_type == 'resistance' else 0.0
+            
+            return np.array([distance_pct, strength_val, type_val], dtype=np.float32)
+        except:
+            return np.zeros(3, dtype=np.float32)
+
+
+# =========================================================
 # MAIN ENVIRONMENT CLASS
 # =========================================================
 
@@ -296,6 +397,8 @@ class MultiSymbolTradingEnv(gym.Env):
         - Agentic Loop Consensus
         - XGBoost Probability
         - Sector Features (Daily/Weekly/Yearly)
+        - RSI Divergence (rsi_diver.csv)
+        - Support/Resistance (support_resistance.csv)
     """
 
     metadata = {"render_modes": ["human"]}
@@ -357,6 +460,12 @@ class MultiSymbolTradingEnv(gym.Env):
         # Tier 4: PatchTST
         self.patch_tst = patch_tst
         
+        # ✅ RSI Divergence
+        self.rsi_div = RSIDivergenceFeatures()
+        
+        # ✅ Support/Resistance
+        self.sr_features = SupportResistanceFeatures()
+        
         # Sector Engine
         self.sector_engine = sector_engine
         self.sector_features_enabled = False
@@ -381,6 +490,8 @@ class MultiSymbolTradingEnv(gym.Env):
         self.greek_feature_dim = 3
         self.regime_feature_dim = 2
         self.patch_tst_feature_dim = 5 if self.patch_tst else 0
+        self.rsi_div_feature_dim = 3
+        self.sr_feature_dim = 3
         
         # Total state dim
         self.effective_state_dim = (
@@ -392,7 +503,9 @@ class MultiSymbolTradingEnv(gym.Env):
             self.micro_feature_dim +
             self.greek_feature_dim +
             self.regime_feature_dim +
-            self.patch_tst_feature_dim
+            self.patch_tst_feature_dim +
+            self.rsi_div_feature_dim +
+            self.sr_feature_dim
         )
 
         # -------- Spaces --------
@@ -491,6 +604,18 @@ class MultiSymbolTradingEnv(gym.Env):
             return self.patch_tst.get_features(symbol, df)
         except:
             return np.zeros(self.patch_tst_feature_dim, dtype=np.float32)
+    
+    # -------------------------------------------------
+    # ✅ RSI Divergence Features
+    # -------------------------------------------------
+    def _get_rsi_divergence_features(self, symbol, current_date):
+        return self.rsi_div.get_features(symbol, current_date)
+    
+    # -------------------------------------------------
+    # ✅ Support/Resistance Features
+    # -------------------------------------------------
+    def _get_sr_features(self, symbol, current_date, current_close):
+        return self.sr_features.get_features(symbol, current_date, current_close)
     
     # -------------------------------------------------
     # Tier 1+2: Sector Leader
@@ -636,6 +761,9 @@ class MultiSymbolTradingEnv(gym.Env):
             df = self.dfs[s]
             if self.t < len(df):
                 row = df.iloc[self.t]
+                current_date = row.get('date', None)
+                current_close = float(row['close'])
+                
                 o = self.build_observation(df, self.t, self.signals)
                 
                 if self.sector_features_enabled:
@@ -652,6 +780,12 @@ class MultiSymbolTradingEnv(gym.Env):
                 
                 if self.patch_tst:
                     o = np.concatenate([o, self._get_patch_tst_features(s, df)])
+                
+                # ✅ RSI Divergence (3 dims)
+                o = np.concatenate([o, self._get_rsi_divergence_features(s, current_date)])
+                
+                # ✅ Support/Resistance (3 dims)
+                o = np.concatenate([o, self._get_sr_features(s, current_date, current_close)])
             else:
                 o = np.zeros(self.effective_state_dim)
             obs.append(o)
