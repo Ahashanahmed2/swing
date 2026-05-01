@@ -53,7 +53,7 @@ scripts = [
     #"scripts/nightly_trader.py",
     #"scripts/agentic_loop.py",no
     #"scripts/generate_final_ai_signals.py",
-    #"scripts/generate_pdf.py",
+    "scripts/generate_pdf.py",
     #"scripts/upload_csv.py",
     "scripts/dayliMassage.py",
     #"scripts/email_reports.py",
