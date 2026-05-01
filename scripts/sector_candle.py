@@ -1,7 +1,7 @@
-# sector_weekly_candle.py
+# sector_candle.py
 # প্লাটফর্মের মতো সেক্টর ইনডেক্স ক্যান্ডেল জেনারেটর
 # ✅ Market Cap Weighted (freeFloatMarketCap → marketCap fallback)
-# ✅ Million → Crore normalized
+# ✅ RSI 14 on EVERY row (Daily + Weekly)
 # ✅ Continuity Open | Actual High/Low | Scaled Index
 # ✅ Daily + Weekly output
 
@@ -19,52 +19,48 @@ os.makedirs(OUTPUT_WEEKLY_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DAILY_DIR, exist_ok=True)
 
 def calculate_rsi_series(close_prices, period=14):
-    """Calculate RSI for a series - Wilder's Smoothing"""
-    valid_prices = close_prices.dropna().reset_index(drop=True)
+    """Calculate RSI for EVERY row - Wilder's Smoothing"""
+    prices = close_prices.values
+    n = len(prices)
     
-    if len(valid_prices) < period + 1:
-        return [None] * len(close_prices)
+    if n < period + 1:
+        return [None] * n
     
-    deltas = valid_prices.diff()
-    gains = deltas.copy()
-    losses = deltas.copy()
-    gains[gains < 0] = 0
-    losses[losses > 0] = 0
-    losses = abs(losses)
+    deltas = np.diff(prices, prepend=prices[0])
+    gains = np.where(deltas > 0, deltas, 0)
+    losses = np.where(deltas < 0, -deltas, 0)
     
-    avg_gain = gains.iloc[1:period+1].mean()
-    avg_loss = losses.iloc[1:period+1].mean()
+    rsi = np.full(n, None, dtype=object)
     
-    rsi_values = [None] * period
+    # First average gain and loss
+    avg_gain = np.mean(gains[1:period+1])
+    avg_loss = np.mean(losses[1:period+1])
     
+    # First RSI
     if avg_loss == 0:
-        rsi = 100
+        rsi[period] = 100.0
     else:
         rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-    rsi_values.append(round(rsi, 2))
+        rsi[period] = round(100.0 - (100.0 / (1.0 + rs)), 2)
     
-    for i in range(period + 1, len(valid_prices)):
-        avg_gain = (avg_gain * (period - 1) + gains.iloc[i]) / period
-        avg_loss = (avg_loss * (period - 1) + losses.iloc[i]) / period
+    # Rest with Wilder's Smoothing
+    for i in range(period + 1, n):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
         
         if avg_loss == 0:
-            rsi = 100
+            rsi[i] = 100.0
         else:
             rs = avg_gain / avg_loss
-            rsi = 100 - (100 / (1 + rs))
-        
-        rsi_values.append(round(rsi, 2))
+            rsi[i] = round(100.0 - (100.0 / (1.0 + rs)), 2)
     
-    return rsi_values
+    return rsi.tolist()
 
 def calculate_weighted_price(day_df, price_col):
     """
     Market Cap Weighted price
     ✅ freeFloatMarketCap থাকলে ব্যবহার, না হলে marketCap
-    ✅ Million → Crore normalized
     """
-    # Priority: freeFloatMarketCap → marketCap
     weight_col = 'freeFloatMarketCap'
     if weight_col not in day_df.columns or day_df[weight_col].dropna().sum() == 0:
         weight_col = 'marketCap'
@@ -87,12 +83,12 @@ def get_dse_week_start(date):
 def calculate_sector_index():
     """
     প্লাটফর্মের মতো সেক্টর ইনডেক্স ক্যান্ডেল
-    ✅ Market Cap Weighted (freeFloatMarketCap → marketCap)
+    ✅ Market Cap Weighted | RSI on EVERY row
     ✅ Continuity Open | Actual High/Low | Scaled Index
     """
     print("=" * 70)
     print("📊 সেক্টর ইনডেক্স ক্যান্ডেল জেনারেটর")
-    print("   Method: Market Cap Weighted | Continuity Open | Actual H/L")
+    print("   Method: Market Cap Weighted | RSI 14 on Every Row")
     print("=" * 70)
 
     # 1. ডাটা লোড
@@ -168,6 +164,7 @@ def calculate_sector_index():
         if daily_list:
             daily_df = pd.DataFrame(daily_list).sort_values('date')
             
+            # Scale to 100
             first_close = daily_df['close'].iloc[0]
             if pd.notna(first_close) and first_close > 0:
                 scale = 100.0 / first_close
@@ -177,7 +174,10 @@ def calculate_sector_index():
                 daily_df['close'] = (daily_df['close'] * scale).round(2)
             
             daily_df['change'] = daily_df['close'].diff().round(2)
-            daily_df['rsi'] = calculate_rsi_series(daily_df['close'], period=14)
+            
+            # ✅ RSI on EVERY daily row
+            rsi_values = calculate_rsi_series(daily_df['close'], period=14)
+            daily_df['rsi'] = rsi_values
             
             daily_dfs[sector] = daily_df
             
@@ -187,8 +187,9 @@ def calculate_sector_index():
             daily_df[cols].to_csv(filepath, index=False)
             
             latest = daily_df.iloc[-1]
+            rsi_val = f"{latest['rsi']:.2f}" if pd.notna(latest['rsi']) else 'N/A'
             print(f"  ✓ Daily {sector}: {len(daily_df)} days | "
-                  f"O:{latest['open']:.2f} H:{latest['high']:.2f} L:{latest['low']:.2f} C:{latest['close']:.2f}")
+                  f"O:{latest['open']:.2f} H:{latest['high']:.2f} L:{latest['low']:.2f} C:{latest['close']:.2f} | RSI:{rsi_val}")
 
     # =========================================================
     # 4. WEEKLY সেক্টর ক্যান্ডেল
@@ -255,6 +256,7 @@ def calculate_sector_index():
         if weekly_list:
             weekly_df = pd.DataFrame(weekly_list).sort_values('week_start')
             
+            # Scale to 100
             first_close = weekly_df['close'].iloc[0]
             if pd.notna(first_close) and first_close > 0:
                 scale = 100.0 / first_close
@@ -264,7 +266,10 @@ def calculate_sector_index():
                 weekly_df['close'] = (weekly_df['close'] * scale).round(2)
             
             weekly_df['change'] = weekly_df['close'].diff().round(2)
-            weekly_df['rsi'] = calculate_rsi_series(weekly_df['close'], period=14)
+            
+            # ✅ RSI on EVERY weekly row
+            rsi_values = calculate_rsi_series(weekly_df['close'], period=14)
+            weekly_df['rsi'] = rsi_values
             
             filename = f"{sector.replace(' ', '_').replace('/', '_').replace('&', 'and').lower()}_weekly.csv"
             filepath = os.path.join(OUTPUT_WEEKLY_DIR, filename)
