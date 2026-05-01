@@ -1,7 +1,9 @@
 # sector_weekly_candle.py
 # প্লাটফর্মের মতো সেক্টর ইনডেক্স ক্যান্ডেল জেনারেটর
-# ✅ Market Cap Weighted (Million → Crore normalized)
+# ✅ Free Float Market Cap Weighted (প্লাটফর্মের মতো)
+# ✅ freeFloatMarketCap Million → Crore normalized
 # ✅ Continuity Open | Actual High/Low | Scaled Index
+# ✅ Daily + Weekly output
 
 import pandas as pd
 import numpy as np
@@ -56,13 +58,25 @@ def calculate_rsi_series(close_prices, period=14):
     
     return rsi_values
 
-def calculate_weighted_price(day_df, price_col, weight_col='marketCap'):
-    """Market Cap Weighted price"""
+def calculate_weighted_price(day_df, price_col):
+    """
+    Free Float Market Cap Weighted price (প্লাটফর্মের মতো)
+    ✅ freeFloatMarketCap → marketCap fallback
+    ✅ Million → Crore normalized
+    """
+    weight_col = 'freeFloatMarketCap'
+    
+    # Fallback to marketCap if freeFloatMarketCap not available
+    if weight_col not in day_df.columns or day_df[weight_col].dropna().sum() == 0:
+        weight_col = 'marketCap'
+    
     valid = day_df.dropna(subset=[weight_col, price_col])
     if len(valid) == 0 or valid[weight_col].sum() == 0:
         return np.nan
-    total_mcap = valid[weight_col].sum()
-    return (valid[weight_col] * valid[price_col]).sum() / total_mcap
+    
+    # ✅ Million → Crore (divide by 10)
+    total_mcap = valid[weight_col].sum() / 10
+    return (valid[weight_col] * valid[price_col]).sum() / (total_mcap * 10) if total_mcap > 0 else np.nan
 
 def get_dse_week_start(date):
     """DSE সপ্তাহ শুরু রবিবার"""
@@ -75,13 +89,14 @@ def get_dse_week_start(date):
 def calculate_sector_index():
     """
     প্লাটফর্মের মতো সেক্টর ইনডেক্স ক্যান্ডেল তৈরি
-    ✅ Market Cap Weighted (Million → Crore)
+    ✅ Free Float Market Cap Weighted
+    ✅ Million → Crore normalized
     ✅ Continuity Open | Actual High/Low
     ✅ Daily + Weekly output
     """
     print("=" * 70)
     print("📊 সেক্টর ইনডেক্স ক্যান্ডেল জেনারেটর")
-    print("   Method: Market Cap Weighted | Continuity Open | Actual H/L")
+    print("   Method: Free Float Market Cap Weighted | Million→Crore")
     print("=" * 70)
 
     # 1. ডাটা লোড
@@ -93,15 +108,13 @@ def calculate_sector_index():
     df['sector'] = df['sector'].fillna('Unknown')
     df['sector'] = df['sector'].apply(lambda x: str(x).strip())
     
-    # ✅ marketCap Normalize: Million → Crore
-    if 'marketCap' in df.columns:
-        max_mcap = df['marketCap'].max()
-        if pd.notna(max_mcap) and max_mcap > 1000:
-            print(f"   ℹ️ marketCap detected as Million (max: {max_mcap:,.0f})")
-            df['marketCap'] = df['marketCap'] / 10  # Million → Crore
-            print(f"   ✅ Converted to Crore (max: {df['marketCap'].max():,.0f})")
-        else:
-            print(f"   ℹ️ marketCap already in Crore (max: {max_mcap:,.0f})")
+    # ✅ Weight column check
+    weight_col = 'freeFloatMarketCap'
+    if weight_col in df.columns:
+        print(f"   ✅ Using '{weight_col}' for index (Million → Crore)")
+    else:
+        print(f"   ⚠️ '{weight_col}' not found, using 'marketCap' as fallback")
+        weight_col = 'marketCap'
     
     print(f"   মোট রো: {len(df):,}")
     print(f"   সিম্বল: {df['symbol'].nunique():,}")
@@ -134,14 +147,14 @@ def calculate_sector_index():
             if len(day_data) == 0:
                 continue
             
-            # Close: Market Cap Weighted
-            weighted_close = calculate_weighted_price(day_data, 'close', 'marketCap')
+            # Close: Free Float Market Cap Weighted
+            weighted_close = calculate_weighted_price(day_data, 'close')
             
             # Open: আগের দিনের Close (continuity)
             if prev_close is not None:
                 weighted_open = prev_close
             else:
-                weighted_open = calculate_weighted_price(day_data, 'open', 'marketCap')
+                weighted_open = calculate_weighted_price(day_data, 'open')
             
             # High: Actual traded High (max of all)
             valid_high = day_data.dropna(subset=['high'])
@@ -223,16 +236,16 @@ def calculate_sector_index():
             last_day = week_dates[-1]
             trading_days = len(week_dates)
             
-            # Close: শেষ দিনের Market Cap Weighted
+            # Close: শেষ দিনের Free Float Market Cap Weighted
             last_day_data = week_data[week_data['date'] == last_day]
-            weighted_close = calculate_weighted_price(last_day_data, 'close', 'marketCap')
+            weighted_close = calculate_weighted_price(last_day_data, 'close')
             
             # Open: আগের সপ্তাহের Close (continuity)
             if prev_weekly_close is not None:
                 weighted_open = prev_weekly_close
             else:
                 first_day_data = week_data[week_data['date'] == first_day]
-                weighted_open = calculate_weighted_price(first_day_data, 'open', 'marketCap')
+                weighted_open = calculate_weighted_price(first_day_data, 'open')
             
             # High: Actual traded High (max of all daily highs)
             week_highs = []
