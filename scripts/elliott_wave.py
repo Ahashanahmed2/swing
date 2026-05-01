@@ -343,12 +343,21 @@ def main():
     # =========================================================
 
     # =========================================================
-    cols_to_save = [
-        'symbol', 'main_wave', 'sub_wave', 'sub_sub_wave', 
-        'confidence'
-    ]
-    output_df[cols_to_save].to_csv(OUTPUT_CSV, index=False)
-    # Summary
+    # সেভ করার আগে SUB_WAVE truncate
+    max_len = 20  # সর্বোচ্চ ৮০ ক্যারেক্টার
+
+    for col in ['sub_wave', 'sub_sub_wave', 'wave_structure','confidence']:
+        if col in output_df.columns:
+            output_df[col] = output_df[col].astype(str).str.slice(0, max_len)
+
+# Wave count-এ arrow replace
+output_df['wave_count'] = output_df['wave_count'].astype(str).str.replace('→', '->', regex=False)
+
+# ডিরেক্টরি চেক
+os.makedirs(os.path.dirname(OUTPUT_CSV), exist_ok=True)
+
+# সেভ
+output_df[cols_to_save].to_csv(OUTPUT_CSV, index=False)
     print(f"\n{'='*70}")
     print(f"{'='*70}")
     print(f"   Total symbols: {len(output_df)}")
