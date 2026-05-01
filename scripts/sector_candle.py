@@ -1,3 +1,8 @@
+# sector_weekly_candle.py
+# প্লাটফর্মের মতো সেক্টর ইনডেক্স ক্যান্ডেল জেনারেটর
+# ✅ Market Cap Weighted (Million → Crore normalized)
+# ✅ Continuity Open | Actual High/Low | Scaled Index
+
 import pandas as pd
 import numpy as np
 import os
@@ -6,11 +11,13 @@ from datetime import datetime, timedelta
 # কনফিগারেশন
 INPUT_CSV = './csv/mongodb.csv'
 OUTPUT_WEEKLY_DIR = './csv/sector/weekly/'
+OUTPUT_DAILY_DIR = './csv/sector/daily/'
 
 os.makedirs(OUTPUT_WEEKLY_DIR, exist_ok=True)
+os.makedirs(OUTPUT_DAILY_DIR, exist_ok=True)
 
 def calculate_rsi_series(close_prices, period=14):
-    """Calculate RSI for a series"""
+    """Calculate RSI for a series - Wilder's Smoothing"""
     valid_prices = close_prices.dropna().reset_index(drop=True)
     
     if len(valid_prices) < period + 1:
@@ -57,54 +64,153 @@ def calculate_weighted_price(day_df, price_col, weight_col='marketCap'):
     total_mcap = valid[weight_col].sum()
     return (valid[weight_col] * valid[price_col]).sum() / total_mcap
 
-def calculate_sector_index_weekly():
+def get_dse_week_start(date):
+    """DSE সপ্তাহ শুরু রবিবার"""
+    weekday = date.dayofweek  # Monday=0, Sunday=6
+    if weekday == 6:  # Sunday
+        return date
+    else:
+        return date - timedelta(days=weekday + 1)
+
+def calculate_sector_index():
     """
     প্লাটফর্মের মতো সেক্টর ইনডেক্স ক্যান্ডেল তৈরি
-    ✅ Market Cap Weighted Index Method
-    ✅ Open = আগের সপ্তাহের Close (continuity)
-    ✅ High/Low = Actual traded High/Low
-    ✅ Index Scaling
+    ✅ Market Cap Weighted (Million → Crore)
+    ✅ Continuity Open | Actual High/Low
+    ✅ Daily + Weekly output
     """
-    print("=" * 60)
-    print("সেক্টর ইনডেক্স উইকলি ক্যান্ডেল (Market Cap Weighted)")
-    print("   ✅ Continuity Open | Actual High/Low | Scaled")
-    print("=" * 60)
-    
+    print("=" * 70)
+    print("📊 সেক্টর ইনডেক্স ক্যান্ডেল জেনারেটর")
+    print("   Method: Market Cap Weighted | Continuity Open | Actual H/L")
+    print("=" * 70)
+
     # 1. ডাটা লোড
     print("\n1. ডাটা লোড হচ্ছে...")
     df = pd.read_csv(INPUT_CSV)
     df['date'] = pd.to_datetime(df['date'])
-    df['sector'] = df['sector'].fillna('Unknown').apply(lambda x: str(x).strip())
+    
+    # Sector clean
+    df['sector'] = df['sector'].fillna('Unknown')
+    df['sector'] = df['sector'].apply(lambda x: str(x).strip())
+    
+    # ✅ marketCap Normalize: Million → Crore
+    if 'marketCap' in df.columns:
+        max_mcap = df['marketCap'].max()
+        if pd.notna(max_mcap) and max_mcap > 1000:
+            print(f"   ℹ️ marketCap detected as Million (max: {max_mcap:,.0f})")
+            df['marketCap'] = df['marketCap'] / 10  # Million → Crore
+            print(f"   ✅ Converted to Crore (max: {df['marketCap'].max():,.0f})")
+        else:
+            print(f"   ℹ️ marketCap already in Crore (max: {max_mcap:,.0f})")
     
     print(f"   মোট রো: {len(df):,}")
     print(f"   সিম্বল: {df['symbol'].nunique():,}")
     print(f"   সেক্টর: {df['sector'].nunique():,}")
-    
-    # 2. DSE উইক স্টার্ট (Sunday)
-    def get_dse_week_start(date):
-        weekday = date.dayofweek
-        if weekday == 6:
-            return date
-        else:
-            return date - timedelta(days=weekday + 1)
-    
+    print(f"   তারিখ: {df['date'].min().strftime('%Y-%m-%d')} থেকে {df['date'].max().strftime('%Y-%m-%d')}")
+
+    # 2. DSE উইক স্টার্ট
     df['week_start'] = df['date'].apply(get_dse_week_start)
+
+    # =========================================================
+    # 3. DAILY সেক্টর ক্যান্ডেল
+    # =========================================================
+    print("\n2. ডেইলি সেক্টর ক্যান্ডেল তৈরি হচ্ছে...")
     
-    # 3. সেক্টর ভিত্তিক Weekly ক্যান্ডেল
-    print("\n2. উইকলি ক্যান্ডেল তৈরি হচ্ছে...")
+    daily_dfs = {}
     
-    unique_sectors = df['sector'].unique()
+    unique_sectors = sorted(df['sector'].unique())
     total_sectors = len(unique_sectors)
     
     for idx, sector in enumerate(unique_sectors, 1):
         sector_df = df[df['sector'] == sector].copy()
         symbols = sector_df['symbol'].unique()
         
-        print(f"\n[{idx}/{total_sectors}] {sector} ({len(symbols)} symbols)")
+        daily_list = []
+        prev_close = None
+        
+        for date in sorted(sector_df['date'].unique()):
+            day_data = sector_df[sector_df['date'] == date]
+            
+            if len(day_data) == 0:
+                continue
+            
+            # Close: Market Cap Weighted
+            weighted_close = calculate_weighted_price(day_data, 'close', 'marketCap')
+            
+            # Open: আগের দিনের Close (continuity)
+            if prev_close is not None:
+                weighted_open = prev_close
+            else:
+                weighted_open = calculate_weighted_price(day_data, 'open', 'marketCap')
+            
+            # High: Actual traded High (max of all)
+            valid_high = day_data.dropna(subset=['high'])
+            actual_high = valid_high['high'].max() if len(valid_high) > 0 else np.nan
+            
+            # Low: Actual traded Low (min of all)
+            valid_low = day_data.dropna(subset=['low'])
+            actual_low = valid_low['low'].min() if len(valid_low) > 0 else np.nan
+            
+            # Volume, Value, Trades
+            total_volume = day_data['volume'].sum()
+            total_value = day_data['value'].sum() if 'value' in day_data.columns else 0
+            total_trades = day_data['trades'].sum() if 'trades' in day_data.columns else 0
+            
+            daily_list.append({
+                'sector': sector,
+                'date': date,
+                'open': round(weighted_open, 2) if pd.notna(weighted_open) else None,
+                'high': round(actual_high, 2) if pd.notna(actual_high) else None,
+                'low': round(actual_low, 2) if pd.notna(actual_low) else None,
+                'close': round(weighted_close, 2) if pd.notna(weighted_close) else None,
+                'volume': int(total_volume),
+                'value': round(total_value, 2),
+                'trades': int(total_trades),
+                'active_symbols': len(day_data)
+            })
+            
+            prev_close = weighted_close
+        
+        if daily_list:
+            daily_df = pd.DataFrame(daily_list).sort_values('date')
+            
+            # Scale to 100
+            first_close = daily_df['close'].iloc[0]
+            if pd.notna(first_close) and first_close > 0:
+                scale = 100.0 / first_close
+                daily_df['open'] = (daily_df['open'] * scale).round(2)
+                daily_df['high'] = (daily_df['high'] * scale).round(2)
+                daily_df['low'] = (daily_df['low'] * scale).round(2)
+                daily_df['close'] = (daily_df['close'] * scale).round(2)
+            
+            daily_df['change'] = daily_df['close'].diff().round(2)
+            daily_df['rsi'] = calculate_rsi_series(daily_df['close'], period=14)
+            
+            daily_dfs[sector] = daily_df
+            
+            # Save Daily
+            filename = f"{sector.replace(' ', '_').replace('/', '_').replace('&', 'and').lower()}_daily.csv"
+            filepath = os.path.join(OUTPUT_DAILY_DIR, filename)
+            cols = ['sector', 'date', 'open', 'high', 'low', 'close', 'volume', 'value', 'trades', 'change', 'rsi', 'active_symbols']
+            daily_df[cols].to_csv(filepath, index=False)
+            
+            # Latest
+            latest = daily_df.iloc[-1]
+            print(f"  ✓ Daily {sector}: {len(daily_df)} days | "
+                  f"O:{latest['open']:.2f} H:{latest['high']:.2f} L:{latest['low']:.2f} C:{latest['close']:.2f}")
+
+    # =========================================================
+    # 4. WEEKLY সেক্টর ক্যান্ডেল
+    # =========================================================
+    print("\n3. উইকলি সেক্টর ক্যান্ডেল তৈরি হচ্ছে...")
+    
+    for idx, sector in enumerate(unique_sectors, 1):
+        sector_df = df[df['sector'] == sector].copy()
+        symbols = sector_df['symbol'].unique()
         
         all_weeks = sorted(sector_df['week_start'].unique())
-        sector_weekly = []
-        prev_close = None  # আগের সপ্তাহের Close
+        weekly_list = []
+        prev_weekly_close = None
         
         for week_start in all_weeks:
             week_data = sector_df[sector_df['week_start'] == week_start]
@@ -117,102 +223,108 @@ def calculate_sector_index_weekly():
             last_day = week_dates[-1]
             trading_days = len(week_dates)
             
-            # ============ MARKET CAP WEIGHTED INDEX ============
-            
-            # ✅ Close: শেষ দিনের Market Cap Weighted Close
+            # Close: শেষ দিনের Market Cap Weighted
             last_day_data = week_data[week_data['date'] == last_day]
             weighted_close = calculate_weighted_price(last_day_data, 'close', 'marketCap')
             
-            # ✅ Open: আগের সপ্তাহের Close (continuity)
-            # প্রথম সপ্তাহের জন্য প্রথম দিনের Open
-            if prev_close is not None:
-                weighted_open = prev_close
+            # Open: আগের সপ্তাহের Close (continuity)
+            if prev_weekly_close is not None:
+                weighted_open = prev_weekly_close
             else:
                 first_day_data = week_data[week_data['date'] == first_day]
                 weighted_open = calculate_weighted_price(first_day_data, 'open', 'marketCap')
             
-            # ✅ High: Actual traded High values (max of all daily highs)
+            # High: Actual traded High (max of all daily highs)
             week_highs = []
             for date in week_dates:
                 day_data = week_data[week_data['date'] == date]
-                valid_high = day_data.dropna(subset=['high'])
-                if len(valid_high) > 0:
-                    week_highs.append(valid_high['high'].max())
+                valid = day_data.dropna(subset=['high'])
+                if len(valid) > 0:
+                    week_highs.append(valid['high'].max())
+            week_high = max(week_highs) if week_highs else np.nan
             
-            # ✅ Low: Actual traded Low values (min of all daily lows)
+            # Low: Actual traded Low (min of all daily lows)
             week_lows = []
             for date in week_dates:
                 day_data = week_data[week_data['date'] == date]
-                valid_low = day_data.dropna(subset=['low'])
-                if len(valid_low) > 0:
-                    week_lows.append(valid_low['low'].min())
-            
-            week_high = max(week_highs) if week_highs else np.nan
+                valid = day_data.dropna(subset=['low'])
+                if len(valid) > 0:
+                    week_lows.append(valid['low'].min())
             week_low = min(week_lows) if week_lows else np.nan
             
-            # Volume, Value, Trades - Sum
+            # Volume, Value, Trades
             total_volume = week_data['volume'].sum()
             total_value = week_data['value'].sum() if 'value' in week_data.columns else 0
             total_trades = week_data['trades'].sum() if 'trades' in week_data.columns else 0
             
-            sector_weekly.append({
+            weekly_list.append({
                 'sector': sector,
                 'week_start': week_start,
                 'week_end_date': last_day,
-                'open': round(weighted_open, 2) if not np.isnan(weighted_open) else None,
-                'high': round(week_high, 2) if not np.isnan(week_high) else None,
-                'low': round(week_low, 2) if not np.isnan(week_low) else None,
-                'close': round(weighted_close, 2) if not np.isnan(weighted_close) else None,
-                'volume': int(total_volume) if not np.isnan(total_volume) else 0,
-                'value': round(total_value, 2) if not np.isnan(total_value) else 0,
-                'trades': int(total_trades) if not np.isnan(total_trades) else 0,
+                'open': round(weighted_open, 2) if pd.notna(weighted_open) else None,
+                'high': round(week_high, 2) if pd.notna(week_high) else None,
+                'low': round(week_low, 2) if pd.notna(week_low) else None,
+                'close': round(weighted_close, 2) if pd.notna(weighted_close) else None,
+                'volume': int(total_volume),
+                'value': round(total_value, 2),
+                'trades': int(total_trades),
                 'trading_days': trading_days,
                 'symbols_count': len(symbols)
             })
             
-            # Update prev_close for next week
-            prev_close = weighted_close
+            prev_weekly_close = weighted_close
         
-        # DataFrame এ কনভার্ট
-        weekly_df = pd.DataFrame(sector_weekly)
-        
-        if len(weekly_df) > 0:
-            weekly_df = weekly_df.sort_values('week_start')
+        if weekly_list:
+            weekly_df = pd.DataFrame(weekly_list).sort_values('week_start')
             
-            # ✅ Scale to 100 for first week
+            # Scale to 100
             first_close = weekly_df['close'].iloc[0]
             if pd.notna(first_close) and first_close > 0:
-                scale_factor = 100.0 / first_close
-                weekly_df['open'] = (weekly_df['open'] * scale_factor).round(2)
-                weekly_df['high'] = (weekly_df['high'] * scale_factor).round(2)
-                weekly_df['low'] = (weekly_df['low'] * scale_factor).round(2)
-                weekly_df['close'] = (weekly_df['close'] * scale_factor).round(2)
+                scale = 100.0 / first_close
+                weekly_df['open'] = (weekly_df['open'] * scale).round(2)
+                weekly_df['high'] = (weekly_df['high'] * scale).round(2)
+                weekly_df['low'] = (weekly_df['low'] * scale).round(2)
+                weekly_df['close'] = (weekly_df['close'] * scale).round(2)
             
-            # Change calculate
             weekly_df['change'] = weekly_df['close'].diff().round(2)
+            weekly_df['rsi'] = calculate_rsi_series(weekly_df['close'], period=14)
             
-            # RSI calculate
-            close_prices = weekly_df['close']
-            rsi_values = calculate_rsi_series(close_prices, period=14)
-            weekly_df['rsi'] = rsi_values
-            
-            # Save
+            # Save Weekly
             filename = f"{sector.replace(' ', '_').replace('/', '_').replace('&', 'and').lower()}_weekly.csv"
             filepath = os.path.join(OUTPUT_WEEKLY_DIR, filename)
+            cols = ['sector', 'week_start', 'week_end_date', 'open', 'high', 'low', 'close', 
+                   'volume', 'value', 'trades', 'change', 'rsi', 'trading_days', 'symbols_count']
+            weekly_df[cols].to_csv(filepath, index=False)
             
-            columns = ['sector', 'week_start', 'week_end_date', 'open', 'high', 'low', 'close', 
-                      'volume', 'value', 'trades', 'change', 'rsi', 'trading_days', 'symbols_count']
-            
-            weekly_df[columns].to_csv(filepath, index=False)
-            
-            # Latest candle info
+            # Latest
             latest = weekly_df.iloc[-1]
             rsi_val = f"{latest['rsi']:.2f}" if pd.notna(latest['rsi']) else 'N/A'
-            print(f"  ✓ Saved: {filename}")
-            print(f"     Latest: O:{latest['open']:.2f} H:{latest['high']:.2f} L:{latest['low']:.2f} C:{latest['close']:.2f}")
-            print(f"     Ch:{latest['change']:+.2f} | RSI:{rsi_val} | Vol:{latest['volume']:,.0f}")
-    
-    print(f"\n✅ Done! Files saved in: {OUTPUT_WEEKLY_DIR}")
+            print(f"  ✓ Weekly {sector}: {len(weekly_df)} weeks | "
+                  f"O:{latest['open']:.2f} H:{latest['high']:.2f} L:{latest['low']:.2f} C:{latest['close']:.2f} | "
+                  f"RSI:{rsi_val}")
 
-# Run
-calculate_sector_index_weekly()
+    # =========================================================
+    # 5. Summary
+    # =========================================================
+    print(f"\n{'='*70}")
+    print("✅ সম্পন্ন!")
+    print(f"{'='*70}")
+    print(f"📁 ডেইলি: {OUTPUT_DAILY_DIR} ({len(daily_dfs)} sectors)")
+    print(f"📁 উইকলি: {OUTPUT_WEEKLY_DIR} ({len(daily_dfs)} sectors)")
+    print(f"\n📋 ডেইলি কলাম: sector, date, open, high, low, close, volume, value, trades, change, rsi, active_symbols")
+    print(f"📋 উইকলি কলাম: sector, week_start, week_end_date, open, high, low, close, volume, value, trades, change, rsi, trading_days, symbols_count")
+    
+    # RSI Summary
+    print(f"\n📊 Weekly RSI Summary (14 period):")
+    for sector in sorted(daily_dfs.keys()):
+        filepath = os.path.join(OUTPUT_WEEKLY_DIR, f"{sector.replace(' ', '_').replace('/', '_').replace('&', 'and').lower()}_weekly.csv")
+        if os.path.exists(filepath):
+            wdf = pd.read_csv(filepath)
+            valid_rsi = wdf['rsi'].dropna()
+            if len(valid_rsi) > 0:
+                last_rsi = valid_rsi.iloc[-1]
+                signal = "🔴" if last_rsi > 70 else "🟢" if last_rsi < 30 else "🟡"
+                print(f"   {signal} {sector:<30}: RSI {last_rsi:.2f}")
+
+if __name__ == "__main__":
+    calculate_sector_index()
