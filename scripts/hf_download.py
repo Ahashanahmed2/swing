@@ -1,4 +1,6 @@
-# scripts/hf_download.py - FINAL RATE LIMIT SAFE VERSION
+# scripts/hf_download.py
+# ✅ Step 1: LLM + PPO পুরনো চেকপয়েন্ট HF থেকে ডিলিট (শুধু latest থাকবে)
+# ✅ Step 2: LLM latest + PPO latest + সব ফাইল একসাথে ডাউনলোড
 
 import os
 import time
@@ -11,12 +13,12 @@ from huggingface_hub import (
     CommitOperationDelete
 )
 
+# =========================================================
+# Step 1: HF-তে LLM + PPO পুরনো চেকপয়েন্ট ডিলিট (latest রাখবে)
+# =========================================================
+
 def cleanup_hf_checkpoints_before_download(keep_last=1, max_files_per_commit=100, sleep_between_commits=120):
-    """
-    HF Dataset-এ LLM + PPO উভয়ের পুরনো চেকপয়েন্ট ধীরে ধীরে ডিলিট
-    - প্রতি কমিটে max 100 ফাইল
-    - প্রতি কমিটের মধ্যে 2 মিনিট অপেক্ষা (rate limit এড়াতে)
-    """
+    """HF Dataset-এ LLM + PPO পুরনো চেকপয়েন্ট ডিলিট, শুধু latest রাখবে"""
     
     token = os.getenv("hf_token")
     if not token:
@@ -30,11 +32,9 @@ def cleanup_hf_checkpoints_before_download(keep_last=1, max_files_per_commit=100
         print("\n🔍 Checking HF Dataset for old checkpoints (LLM + PPO)...")
         
         files = api.list_repo_files(repo_id="ahashanahmed/csv", repo_type="dataset")
-        
-        # সব ডিলিট অপারেশন জমা করুন
         all_delete_files = []
         
-        # ১. LLM চেকপয়েন্ট
+        # ১. LLM পুরনো চেকপয়েন্ট (checkpoints/checkpoint-*)
         llm_folders = set()
         for f in files:
             if f.startswith("checkpoints/checkpoint-"):
@@ -49,14 +49,13 @@ def cleanup_hf_checkpoints_before_download(keep_last=1, max_files_per_commit=100
             llm_list = sorted(llm_folders, key=get_llm_step)
             
             if len(llm_list) > keep_last:
-                to_delete_llm = llm_list[:-keep_last]
-                print(f"\n🗑️ LLM: {len(to_delete_llm)} folders to delete")
-                
-                for folder in to_delete_llm:
+                to_delete = llm_list[:-keep_last]
+                print(f"\n🗑️ LLM: Deleting {len(to_delete)} old checkpoints")
+                for folder in to_delete:
                     folder_files = [f for f in files if f.startswith(f"checkpoints/{folder}/")]
                     all_delete_files.extend(folder_files)
         
-        # ২. PPO চেকপয়েন্ট
+        # ২. PPO পুরনো চেকপয়েন্ট (checkpoints/{symbol}/*_step*.zip)
         ppo_folders = set()
         for f in files:
             if f.startswith("checkpoints/") and f.endswith(".zip"):
@@ -67,8 +66,7 @@ def cleanup_hf_checkpoints_before_download(keep_last=1, max_files_per_commit=100
                         ppo_folders.add(symbol)
         
         if ppo_folders:
-            print(f"\n🗑️ PPO: {len(ppo_folders)} symbols to clean")
-            
+            print(f"\n🗑️ PPO: Cleaning {len(ppo_folders)} symbols")
             for symbol in ppo_folders:
                 symbol_files = [f for f in files if f.startswith(f"checkpoints/{symbol}/") and f.endswith(".zip")]
                 
@@ -87,20 +85,16 @@ def cleanup_hf_checkpoints_before_download(keep_last=1, max_files_per_commit=100
                     all_delete_files.extend(to_delete)
                     print(f"   {symbol}: {len(to_delete)} old → delete")
         
-        # ============================================================
-        # ✅ ধীরে ধীরে ব্যাচ ডিলিট (rate limit safe)
-        # ============================================================
+        # ব্যাচ ডিলিট
         if all_delete_files:
             total_files = len(all_delete_files)
             total_batches = (total_files + max_files_per_commit - 1) // max_files_per_commit
             
             print(f"\n🚀 Deleting {total_files} files in {total_batches} batches...")
-            print(f"   ⏱️ Estimated time: {total_batches * (sleep_between_commits / 60):.0f} minutes")
             
             for i in range(0, total_files, max_files_per_commit):
                 batch = all_delete_files[i:i+max_files_per_commit]
                 batch_num = i // max_files_per_commit + 1
-                
                 operations = [CommitOperationDelete(path_in_repo=f) for f in batch]
                 
                 try:
@@ -111,17 +105,13 @@ def cleanup_hf_checkpoints_before_download(keep_last=1, max_files_per_commit=100
                         commit_message=f"🗑️ Cleanup batch {batch_num}/{total_batches}",
                         token=token
                     )
-                    print(f"   ✅ Batch {batch_num}/{total_batches}: {len(batch)} files deleted")
-                    
-                    # ✅ Rate limit এড়াতে অপেক্ষা (শেষ ব্যাচ হলে অপেক্ষা নয়)
+                    print(f"   ✅ Batch {batch_num}/{total_batches}: {len(batch)} deleted")
                     if batch_num < total_batches:
-                        print(f"   ⏳ Waiting {sleep_between_commits}s before next batch...")
                         time.sleep(sleep_between_commits)
-                        
                 except Exception as e:
                     if "429" in str(e):
-                        print(f"   ⚠️ Rate limited! Waiting 5 minutes before retry...")
-                        time.sleep(300)  # 5 মিনিট অপেক্ষা
+                        print(f"   ⚠️ Rate limited! Waiting 5min...")
+                        time.sleep(300)
                         try:
                             create_commit(
                                 repo_id="ahashanahmed/csv",
@@ -130,35 +120,44 @@ def cleanup_hf_checkpoints_before_download(keep_last=1, max_files_per_commit=100
                                 commit_message=f"🗑️ Cleanup batch {batch_num}/{total_batches} (retry)",
                                 token=token
                             )
-                            print(f"   ✅ Batch {batch_num}/{total_batches}: {len(batch)} files deleted (retry)")
+                            print(f"   ✅ Batch {batch_num}: retry success")
                         except:
-                            print(f"   ❌ Batch {batch_num} failed after retry, skipping")
-                    else:
-                        print(f"   ⚠️ Batch {batch_num} failed: {str(e)[:100]}")
+                            print(f"   ❌ Batch {batch_num} failed")
         else:
             print("✅ No old checkpoints to delete")
         
     except Exception as e:
         print(f"⚠️ HF cleanup failed: {e}")
 
+# =========================================================
+# Step 2: HF থেকে LLM latest + PPO latest + সব ফাইল ডাউনলোড
+# =========================================================
+
 def download_from_hf():
-    """HF Dataset থেকে ডাউনলোড - checkpoints/ বাদে"""
-    print("\n📥 Downloading from HF Dataset (rate-limit safe)...")
+    """HF Dataset থেকে সব ফাইল ডাউনলোড (LLM latest + PPO latest + all files)"""
+    print("\n📥 Downloading from HF Dataset...")
+    print("   ✅ LLM latest checkpoint included")
+    print("   ✅ PPO latest checkpoints included")
+    print("   ✅ All CSV, models, and other files included")
     
     snapshot_download(
         repo_id="ahashanahmed/csv",
         repo_type="dataset",
         local_dir="./csv",
-        max_workers=1,              # ✅ ১টি করে ফাইল (ধীরে)
+        max_workers=1,
         local_dir_use_symlinks=False,
         token=os.getenv("hf_token"),
         resume_download=True,
-        ignore_patterns=["checkpoints/**"],
+        # ✅ কোনো ignore_patterns নেই = সব ডাউনলোড হবে
     )
     print("✅ Download complete!")
 
+# =========================================================
+# Step 3: লোকালে পুরনো চেকপয়েন্ট ক্লিনআপ
+# =========================================================
+
 def cleanup_old_checkpoints(keep_last=1):
-    """লোকালে পুরনো চেকপয়েন্ট ডিলিট"""
+    """লোকালে শুধু সর্বশেষ চেকপয়েন্ট রাখুন"""
     checkpoint_dir = "./csv/llm_model"
     if not os.path.exists(checkpoint_dir):
         return
@@ -185,17 +184,28 @@ def cleanup_old_checkpoints(keep_last=1):
             pass
     print(f"✅ Local cleanup: kept {keep_last} checkpoint(s)")
 
+# =========================================================
+# এক্সিকিউট
+# =========================================================
+
 if __name__ == "__main__":
     print("="*60)
-    print("🚀 HF DOWNLOAD & CLEANUP (Rate Limit Safe)")
+    print("🚀 HF DOWNLOAD & CLEANUP (LLM + PPO latest kept)")
     print("="*60)
     
+    # Step 1: HF-তে LLM + PPO পুরনো চেকপয়েন্ট ডিলিট
     cleanup_hf_checkpoints_before_download(
         keep_last=1,
-        max_files_per_commit=100,     # ✅ ছোট ব্যাচ
-        sleep_between_commits=120     # ✅ ২ মিনিট অপেক্ষা
+        max_files_per_commit=100,
+        sleep_between_commits=120
     )
+    
+    # Step 2: HF থেকে সব ফাইল ডাউনলোড (latest সহ)
     download_from_hf()
+    
+    # Step 3: লোকালে পুরনো চেকপয়েন্ট ডিলিট
     cleanup_old_checkpoints(keep_last=1)
     
-    print("\n✅ Complete!")
+    print("\n" + "="*60)
+    print("✅ hf_download.py সম্পূর্ণ!")
+    print("="*60)
