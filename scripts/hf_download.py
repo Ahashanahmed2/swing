@@ -144,10 +144,11 @@ def download_from_hf():
         repo_id="ahashanahmed/csv",
         repo_type="dataset",
         local_dir="./csv",
-        max_workers=1,
+        max_workers=2,
         local_dir_use_symlinks=False,
         token=os.getenv("hf_token"),
         resume_download=True,
+        tqdm_class=None,
         # ✅ কোনো ignore_patterns নেই = সব ডাউনলোড হবে
     )
     print("✅ Download complete!")
@@ -199,7 +200,11 @@ if __name__ == "__main__":
         max_files_per_commit=100,
         sleep_between_commits=120
     )
+
     
+    import time
+    print("⏳ Waiting 6 minutes for rate limit reset...")
+    time.sleep(360)  # ৬ মিনিট
     # Step 2: HF থেকে সব ফাইল ডাউনলোড (latest সহ)
     download_from_hf()
     
