@@ -1,5 +1,6 @@
 # scripts/hf_download.py
-# HF Dataset থেকে ডাউনলোড + পুরনো চেকপয়েন্ট ক্লিনআপ (শুধু শেষ ১টি রাখুন)
+# HF Dataset থেকে সম্পূর্ণ ডাউনলোড (কোনো ফাইল স্কিপ নয়)
+# ✅ HF_TOKEN + hf_transfer + max_workers ব্যবহার করে দ্রুত ও নিরাপদ ডাউনলোড
 
 import os
 import shutil
@@ -9,7 +10,7 @@ from huggingface_hub import snapshot_download, HfApi, login
 # HF Dataset-এ পুরনো চেকপয়েন্ট ডিলিট (ডাউনলোডের আগে)
 # =========================================================
 
-def cleanup_hf_checkpoints_before_download(keep_last=1):  # ✅ 2 → 1
+def cleanup_hf_checkpoints_before_download(keep_last=1):
     """HF Dataset-এ শুধু শেষ ১টি চেকপয়েন্ট রাখুন, বাকি ডিলিট (ডাউনলোডের আগে)"""
     
     token = os.getenv("hf_token")
@@ -77,21 +78,28 @@ def cleanup_hf_checkpoints_before_download(keep_last=1):  # ✅ 2 → 1
         print(f"⚠️ HF cleanup failed: {e}")
 
 # =========================================================
-# HF ডাউনলোড
+# HF ডাউনলোড (কোনো ফাইল স্কিপ নয়)
 # =========================================================
 
 def download_from_hf():
-    """HF Dataset থেকে সব ফাইল ডাউনলোড"""
+    """HF Dataset থেকে সব ফাইল ডাউনলোড - rate-limit safe"""
     print("\n📥 Downloading from HF Dataset: ahashanahmed/csv...")
+    print("   ✅ HF_TOKEN: " + ("YES" if os.getenv("hf_token") else "NO (rate limit may apply)"))
+    print("   ✅ hf_transfer: " + ("YES" if os.getenv("HF_HUB_ENABLE_HF_TRANSFER") else "NO (slower download)"))
+    print("   ✅ max_workers: 2 (safe parallel)")
+    print("   ✅ No files skipped - downloading everything")
     
     snapshot_download(
         repo_id="ahashanahmed/csv",
         repo_type="dataset",
         local_dir="./csv",
-        max_workers=2,
+        max_workers=2,              # ✅ ২টি প্যারালাল ডাউনলোড (দ্রুত + নিরাপদ)
         local_dir_use_symlinks=False,
+        token=os.getenv("hf_token"), # ✅ টোকেন = ৫,০০০ req/5min
+        resume_download=True,        # ✅ আংশিক ডাউনলোড রিজিউম
+        # ✅ কোনো ignore_patterns নেই = সব ফাইল ডাউনলোড হবে
     )
-    print("✅ ডাউনলোড সম্পূর্ণ!")
+    print("✅ সম্পূর্ণ ডাউনলোড সম্পূর্ণ!")
 
 # =========================================================
 # লোকালে পুরনো চেকপয়েন্ট ক্লিনআপ (ডাউনলোডের পরে)
@@ -151,12 +159,13 @@ if __name__ == "__main__":
     print("="*60)
     print("🚀 HF DOWNLOAD & CLEANUP SCRIPT")
     print("="*60)
+    print(f"📅 {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("="*60)
     
     # Step 1: HF-তে পুরনো চেকপয়েন্ট ডিলিট (ডাউনলোডের আগে)
-    # শেষ ১টি চেকপয়েন্ট রেখে বাকি ডিলিট
-    cleanup_hf_checkpoints_before_download(keep_last=1)  # ✅ 1টি রাখুন
+    cleanup_hf_checkpoints_before_download(keep_last=1)
     
-    # Step 2: HF থেকে ডাউনলোড (এখন HF-তে শুধু ১টি চেকপয়েন্ট থাকবে)
+    # Step 2: HF থেকে সম্পূর্ণ ডাউনলোড (কোনো ফাইল স্কিপ নয়)
     download_from_hf()
     
     # Step 3: লোকালে পুরনো চেকপয়েন্ট ডিলিট (শুধু সর্বশেষ রাখুন)
