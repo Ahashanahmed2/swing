@@ -1,17 +1,16 @@
 # scripts/hf_download.py
-# HF Dataset থেকে সম্পূর্ণ ডাউনলোড (কোনো ফাইল স্কিপ নয়)
-# ✅ HF_TOKEN + hf_transfer + max_workers ব্যবহার করে দ্রুত ও নিরাপদ ডাউনলোড
+# HF Dataset থেকে ডাউনলোড + LLM + PPO পুরনো চেকপয়েন্ট ক্লিনআপ (শুধু শেষ ১টি রাখুন)
 
 import os
 import shutil
 from huggingface_hub import snapshot_download, HfApi, login
 
 # =========================================================
-# HF Dataset-এ পুরনো চেকপয়েন্ট ডিলিট (ডাউনলোডের আগে)
+# HF Dataset-এ পুরনো চেকপয়েন্ট ডিলিট (LLM + PPO)
 # =========================================================
 
 def cleanup_hf_checkpoints_before_download(keep_last=1):
-    """HF Dataset-এ শুধু শেষ ১টি চেকপয়েন্ট রাখুন, বাকি ডিলিট (ডাউনলোডের আগে)"""
+    """HF Dataset-এ LLM + PPO উভয়ের পুরনো চেকপয়েন্ট ডিলিট, শুধু শেষ ১টি রাখুন"""
     
     token = os.getenv("hf_token")
     if not token:
@@ -22,84 +21,152 @@ def cleanup_hf_checkpoints_before_download(keep_last=1):
         login(token=token)
         api = HfApi(token=token)
         
-        print("\n🔍 Checking HF Dataset for old checkpoints (before download)...")
+        print("\n🔍 Checking HF Dataset for old checkpoints (LLM + PPO)...")
         
         files = api.list_repo_files(repo_id="ahashanahmed/csv", repo_type="dataset")
         
-        checkpoint_folders = set()
+        # ============================================================
+        # ১. LLM চেকপয়েন্ট ক্লিনআপ (checkpoints/checkpoint-*)
+        # ============================================================
+        llm_folders = set()
         for f in files:
             if f.startswith("checkpoints/checkpoint-"):
-                folder = f.split("/")[1]  # "checkpoint-80"
-                checkpoint_folders.add(folder)
+                folder = f.split("/")[1]
+                llm_folders.add(folder)
         
-        if not checkpoint_folders:
-            print("ℹ️ No checkpoints found in HF Dataset")
-            return
+        if llm_folders:
+            def get_llm_step(folder):
+                try:
+                    return int(folder.replace("checkpoint-", ""))
+                except:
+                    return 0
+            
+            llm_list = sorted(llm_folders, key=get_llm_step)
+            
+            if len(llm_list) > keep_last:
+                to_delete_llm = llm_list[:-keep_last]
+                to_keep_llm = llm_list[-keep_last:]
+                
+                print(f"\n🗑️ LLM Checkpoints: Deleting {len(to_delete_llm)}, Keeping: {to_keep_llm}")
+                
+                for folder in to_delete_llm:
+                    try:
+                        folder_files = [f for f in files if f.startswith(f"checkpoints/{folder}/")]
+                        for file_path in folder_files:
+                            api.delete_file(
+                                path_in_repo=file_path,
+                                repo_id="ahashanahmed/csv",
+                                repo_type="dataset",
+                                commit_message=f"🗑️ Cleanup: Delete LLM {folder}"
+                            )
+                        print(f"   ✅ Deleted LLM: {folder}")
+                    except Exception as e:
+                        print(f"   ⚠️ Failed to delete LLM {folder}: {e}")
         
-        # স্টেপ নাম্বার অনুযায়ী সর্ট
-        def get_step_num(folder):
-            try:
-                return int(folder.replace("checkpoint-", ""))
-            except:
-                return 0
+        # ============================================================
+        # ২. PPO চেকপয়েন্ট ক্লিনআপ (checkpoints/{symbol}/*.zip)
+        # ✅ NEW: পুরনো PPO .zip ফাইল ডিলিট, শুধু latest/best রাখুন
+        # ============================================================
+        ppo_folders = set()
+        for f in files:
+            if f.startswith("checkpoints/") and f.endswith(".zip"):
+                parts = f.split("/")
+                if len(parts) >= 3:
+                    symbol = parts[1]
+                    # শুধু PPO ফাইল (LLM checkpoint-* বাদ)
+                    if not symbol.startswith("checkpoint-"):
+                        ppo_folders.add(symbol)
         
-        checkpoint_list = sorted(checkpoint_folders, key=get_step_num)
+        if ppo_folders:
+            print(f"\n🗑️ PPO Checkpoints: Cleaning up {len(ppo_folders)} symbols...")
+            
+            for symbol in ppo_folders:
+                try:
+                    symbol_files = [
+                        f for f in files 
+                        if f.startswith(f"checkpoints/{symbol}/") and f.endswith(".zip")
+                    ]
+                    
+                    def get_ppo_step(filepath):
+                        try:
+                            name = filepath.split("/")[-1].replace(".zip", "")
+                            if "_step" in name:
+                                return int(name.split("_step")[-1])
+                            elif "latest" in name or "best" in name:
+                                return 999999  # latest/best সবচেয়ে গুরুত্বপূর্ণ
+                            return 0
+                        except:
+                            return 0
+                    
+                    symbol_files.sort(key=get_ppo_step)
+                    
+                    # শেষ keep_lastটি (latest/best) বাদে বাকি ডিলিট
+                    if len(symbol_files) > keep_last:
+                        to_delete = symbol_files[:-keep_last]
+                        to_keep = symbol_files[-keep_last:]
+                        
+                        for file_path in to_delete:
+                            try:
+                                api.delete_file(
+                                    path_in_repo=file_path,
+                                    repo_id="ahashanahmed/csv",
+                                    repo_type="dataset",
+                                    commit_message=f"🗑️ Cleanup: Delete old PPO {file_path}"
+                                )
+                            except Exception as e:
+                                print(f"   ⚠️ Failed to delete PPO {file_path}: {e}")
+                        
+                        print(f"   ✅ {symbol}: Deleted {len(to_delete)} old, Kept {[f.split('/')[-1] for f in to_keep]}")
+                
+                except Exception as e:
+                    print(f"   ⚠️ PPO cleanup failed for {symbol}: {e}")
         
-        if len(checkpoint_list) <= keep_last:
-            print(f"✅ Only {len(checkpoint_list)} checkpoints in HF, no cleanup needed")
-            return
+        # ============================================================
+        # ৩. PPO প্রগ্রেস/সামারি JSON বাদে অন্যান্য JSON ডিলিট
+        # ============================================================
+        ppo_json_to_keep = ["ppo_training_progress.json", "ppo_training_summary.json"]
+        for f in files:
+            if f.startswith("checkpoints/") and f.endswith(".json"):
+                name = f.split("/")[-1]
+                if name not in ppo_json_to_keep and not f.startswith("checkpoints/checkpoint-"):
+                    try:
+                        api.delete_file(
+                            path_in_repo=f,
+                            repo_id="ahashanahmed/csv",
+                            repo_type="dataset",
+                            commit_message=f"🗑️ Cleanup: Delete old JSON {f}"
+                        )
+                    except:
+                        pass
         
-        # শেষ ১টি বাদে বাকি ডিলিট
-        to_delete = checkpoint_list[:-keep_last]
-        to_keep = checkpoint_list[-keep_last:]
-        
-        print(f"\n🗑️ Cleaning up HF Dataset checkpoints...")
-        print(f"   Keeping last {keep_last}: {to_keep}")
-        print(f"   Deleting {len(to_delete)} old checkpoints...")
-        
-        for folder in to_delete:
-            try:
-                # ফোল্ডারের সব ফাইল ডিলিট
-                folder_files = [f for f in files if f.startswith(f"checkpoints/{folder}/")]
-                for file_path in folder_files:
-                    api.delete_file(
-                        path_in_repo=file_path,
-                        repo_id="ahashanahmed/csv",
-                        repo_type="dataset",
-                        commit_message=f"🗑️ Cleanup: Delete {folder}"
-                    )
-                print(f"   ✅ Deleted HF: {folder}")
-            except Exception as e:
-                print(f"   ⚠️ Failed to delete HF {folder}: {e}")
-        
-        print(f"✅ HF cleanup complete! Kept {len(to_keep)} checkpoint(s).")
+        print(f"\n✅ HF Cleanup Complete!")
         
     except Exception as e:
         print(f"⚠️ HF cleanup failed: {e}")
 
 # =========================================================
-# HF ডাউনলোড (কোনো ফাইল স্কিপ নয়)
+# HF ডাউনলোড (চেকপয়েন্ট বাদে)
 # =========================================================
 
 def download_from_hf():
-    """HF Dataset থেকে সব ফাইল ডাউনলোড - rate-limit safe"""
+    """HF Dataset থেকে সব ফাইল ডাউনলোড - checkpoints/ বাদে (রেট লিমিট এড়াতে)"""
     print("\n📥 Downloading from HF Dataset: ahashanahmed/csv...")
-    print("   ✅ HF_TOKEN: " + ("YES" if os.getenv("hf_token") else "NO (rate limit may apply)"))
-    print("   ✅ hf_transfer: " + ("YES" if os.getenv("HF_HUB_ENABLE_HF_TRANSFER") else "NO (slower download)"))
-    print("   ✅ max_workers: 2 (safe parallel)")
-    print("   ✅ No files skipped - downloading everything")
+    print("   ⚠️ Skipping checkpoints/ to avoid rate limit")
+    print("   ✅ All other files will be downloaded")
     
     snapshot_download(
         repo_id="ahashanahmed/csv",
         repo_type="dataset",
         local_dir="./csv",
-        max_workers=2,              # ✅ ২টি প্যারালাল ডাউনলোড (দ্রুত + নিরাপদ)
+        max_workers=2,
         local_dir_use_symlinks=False,
-        token=os.getenv("hf_token"), # ✅ টোকেন = ৫,০০০ req/5min
-        resume_download=True,        # ✅ আংশিক ডাউনলোড রিজিউম
-        # ✅ কোনো ignore_patterns নেই = সব ফাইল ডাউনলোড হবে
+        token=os.getenv("hf_token"),
+        resume_download=True,
+        ignore_patterns=[
+            "checkpoints/**",      # ✅ LLM + PPO সব চেকপয়েন্ট স্কিপ
+        ],
     )
-    print("✅ সম্পূর্ণ ডাউনলোড সম্পূর্ণ!")
+    print("✅ Download complete! (checkpoints excluded)")
 
 # =========================================================
 # লোকালে পুরনো চেকপয়েন্ট ক্লিনআপ (ডাউনলোডের পরে)
@@ -113,7 +180,6 @@ def cleanup_old_checkpoints(keep_last=1):
         print("ℹ️ No llm_model directory found, skipping cleanup")
         return
     
-    # সব চেকপয়েন্ট ফোল্ডার খুঁজুন
     import glob
     checkpoints = glob.glob(os.path.join(checkpoint_dir, "checkpoint-*"))
     
@@ -121,7 +187,6 @@ def cleanup_old_checkpoints(keep_last=1):
         print("ℹ️ No checkpoints found, skipping cleanup")
         return
     
-    # স্টেপ নাম্বার অনুযায়ী সর্ট করুন
     def get_step_num(path):
         try:
             return int(path.split("-")[-1])
@@ -134,7 +199,6 @@ def cleanup_old_checkpoints(keep_last=1):
         print(f"✅ Only {len(checkpoints)} checkpoints locally, no cleanup needed")
         return
     
-    # পুরনো চেকপয়েন্ট ডিলিট করুন
     to_delete = checkpoints[:-keep_last]
     to_keep = checkpoints[-keep_last:]
     
@@ -157,15 +221,13 @@ def cleanup_old_checkpoints(keep_last=1):
 
 if __name__ == "__main__":
     print("="*60)
-    print("🚀 HF DOWNLOAD & CLEANUP SCRIPT")
-    print("="*60)
-    print(f"📅 {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("🚀 HF DOWNLOAD & CLEANUP SCRIPT (LLM + PPO)")
     print("="*60)
     
-    # Step 1: HF-তে পুরনো চেকপয়েন্ট ডিলিট (ডাউনলোডের আগে)
+    # Step 1: HF-তে LLM + PPO পুরনো চেকপয়েন্ট ডিলিট (শেষ ১টি রাখুন)
     cleanup_hf_checkpoints_before_download(keep_last=1)
     
-    # Step 2: HF থেকে সম্পূর্ণ ডাউনলোড (কোনো ফাইল স্কিপ নয়)
+    # Step 2: HF থেকে বাকি সব ফাইল ডাউনলোড (চেকপয়েন্ট বাদে)
     download_from_hf()
     
     # Step 3: লোকালে পুরনো চেকপয়েন্ট ডিলিট (শুধু সর্বশেষ রাখুন)
