@@ -9,7 +9,7 @@ import subprocess
 import os
 
 scripts = [
-    "scripts/hf_download.py",
+    "scripts/ppo_download.py",
     "scripts/ppo_train.py",
 ]
 
