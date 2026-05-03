@@ -1,6 +1,6 @@
-# scripts/hf_download.py
+# scripts/ppo_download.py
 # ✅ Step 1: LLM + PPO পুরনো চেকপয়েন্ট HF থেকে ডিলিট (শুধু latest থাকবে)
-# ✅ Step 2: LLM চেকপয়েন্ট বাদে সব ফাইল ডাউনলোড
+# ✅ Step 2: LLM চেকপয়েন্ট বাদে সব ফাইল ডাউনলোড (Auto-retry সহ)
 
 import os
 import time
@@ -130,28 +130,43 @@ def cleanup_hf_checkpoints_before_download(keep_last=1, max_files_per_commit=100
         print(f"⚠️ HF cleanup failed: {e}")
 
 # =========================================================
-# Step 2: HF থেকে সব ফাইল ডাউনলোড (LLM চেকপয়েন্ট বাদে)
+# Step 2: HF থেকে LLM চেকপয়েন্ট বাদে সব ডাউনলোড (Auto-retry)
 # =========================================================
 
 def download_from_hf():
-    """HF Dataset থেকে সব ফাইল ডাউনলোড (LLM চেকপয়েন্ট বাদে)"""
+    """HF Dataset থেকে ডাউনলোড (resume + auto-retry on rate limit)"""
     print("\n📥 Downloading from HF Dataset...")
     print("   ❌ LLM checkpoints excluded")
     print("   ✅ PPO latest checkpoints included")
     print("   ✅ All CSV, models, and other files included")
     
-    snapshot_download(
-        repo_id="ahashanahmed/csv",
-        repo_type="dataset",
-        local_dir="./csv",
-        max_workers=2,
-        local_dir_use_symlinks=False,
-        token=os.getenv("hf_token"),
-        resume_download=True,
-        tqdm_class=None,
-        ignore_patterns=["checkpoints/checkpoint-*"],  # ✅ LLM চেকপয়েন্ট বাদ
-    )
-    print("✅ Download complete!")
+    max_retries = 5  # ৫ বার পর্যন্ত চেষ্টা করবে
+    for attempt in range(1, max_retries + 1):
+        try:
+            snapshot_download(
+                repo_id="ahashanahmed/csv",
+                repo_type="dataset",
+                local_dir="./csv",
+                max_workers=2,
+                local_dir_use_symlinks=False,
+                token=os.getenv("hf_token"),
+                resume_download=True,
+                tqdm_class=None,
+                ignore_patterns=["checkpoints/checkpoint-*"],
+            )
+            print("✅ Download complete!")
+            return  # সফল হলে ফাংশন থেকে বেরিয়ে যাবে
+        except Exception as e:
+            if "429" in str(e) and attempt < max_retries:
+                wait_time = 900  # ১৫ মিনিট
+                print(f"\n⚠️ Rate limited! (Attempt {attempt}/{max_retries})")
+                print(f"⏳ Waiting {wait_time//60} minutes for rate limit reset...")
+                print(f"📊 Already downloaded files will NOT be re-downloaded (resume mode)")
+                time.sleep(wait_time)
+                print(f"🔄 Retrying download...")
+            else:
+                print(f"❌ Download failed: {str(e)[:300]}")
+                raise
 
 # =========================================================
 # Step 3: লোকালে পুরনো চেকপয়েন্ট ক্লিনআপ
@@ -191,26 +206,23 @@ def cleanup_old_checkpoints(keep_last=1):
 
 if __name__ == "__main__":
     print("="*60)
-    print("🚀 HF DOWNLOAD & CLEANUP (LLM checkpoints excluded)")
+    print("🚀 PPO DOWNLOAD & CLEANUP (Resume + Auto-retry)")
     print("="*60)
     
     # Step 1: HF-তে LLM + PPO পুরনো চেকপয়েন্ট ডিলিট
-    cleanup_hf_checkpoints_before_download(
-        keep_last=1,
-        max_files_per_commit=100,
-        sleep_between_commits=120
-    )
+    # ⚠️ আগের রানে ক্লিনআপ শেষ হয়ে গেলে স্কিপ করতে পারেন
+    # cleanup_hf_checkpoints_before_download(
+    #     keep_last=1,
+    #     max_files_per_commit=100,
+    #     sleep_between_commits=120
+    # )
 
-    
-    import time
-    print("⏳ Waiting 6 minutes for rate limit reset...")
-    time.sleep(360)  # ৬ মিনিট
-    # Step 2: HF থেকে সব ফাইল ডাউনলোড (LLM চেকপয়েন্ট বাদে)
+    # Step 2: HF থেকে সব ফাইল ডাউনলোড (LLM চেকপয়েন্ট বাদে, auto-retry সহ)
     download_from_hf()
     
     # Step 3: লোকালে পুরনো চেকপয়েন্ট ডিলিট
     cleanup_old_checkpoints(keep_last=1)
     
     print("\n" + "="*60)
-    print("✅ hf_download.py সম্পূর্ণ!")
+    print("✅ ppo_download.py সম্পূর্ণ!")
     print("="*60)
