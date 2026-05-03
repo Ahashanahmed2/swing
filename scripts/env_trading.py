@@ -1,4 +1,4 @@
-# ================== env_trading.py ==================
+w# ================== env_trading.py ==================
 # FINAL VERSION — ALL SYSTEMS INTEGRATED
 # ✅ Original Structure 100% Preserved
 # ✅ No Code Deleted
@@ -808,13 +808,25 @@ class MultiSymbolTradingEnv(gym.Env):
     # STEP
     # -------------------------------------------------
     def step(self, actions):
+    
+        # ============================
+        # ACTION FORMAT HANDLER
+        # ============================
+        if np.isscalar(actions):
+            actions_list = [int(actions)] * self.n_symbols
+        elif isinstance(actions, np.ndarray):
+            actions_list = actions.flatten().tolist()
+        elif isinstance(actions, list):
+            actions_list = actions
+        else:
+            actions_list = [0] * self.n_symbols
+    
         rewards = []
         done_flags = []
 
         for i, s in enumerate(self.symbols):
-            action = int(actions[i])
+            action = int(actions_list[i]) if i < len(actions_list) else 0  # ✅ Fixed!
             df = self.dfs[s]
-
             if self.t >= len(df):
                 rewards.append(0.0)
                 done_flags.append(True)
