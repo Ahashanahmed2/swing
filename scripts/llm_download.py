@@ -131,8 +131,8 @@ def cleanup_hf_checkpoints_before_download(keep_last=1, max_files_per_commit=100
 def download_from_hf_with_retry():
     """HF Dataset থেকে ডাউনলোড (রেট লিমিট হলে ১৫ মিনিট অপেক্ষা)"""
     print("\n📥 Downloading from HF Dataset...")
-    print("   ❌ LLM checkpoints excluded")
-    print("   ✅ PPO latest checkpoints included")
+    print("   ✅ LLM checkpoints included")
+    print("   ❌ PPO checkpoints excluded")
     print("   ✅ All CSV, models, and other files included")
     
     max_retries = 3
@@ -151,8 +151,8 @@ def download_from_hf_with_retry():
                     "checkpoints/*/ppo_*",      # PPO মডেল ফাইল
                     "checkpoints/*/*_step*",    # PPO স্টেপ ফাইল
                     "checkpoints/*/*_ens*",     # PPO ensemble ফাইল
-               ]
-               )
+                ]
+                )
             print("✅ Download complete!")
             return
         except Exception as e:
