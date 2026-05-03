@@ -147,8 +147,12 @@ def download_from_hf_with_retry():
                 token=os.getenv("hf_token"),
                 resume_download=True,
                 tqdm_class=None,
-                ignore_patterns=["checkpoints/checkpoint-*"],
-            )
+                ignore_patterns=[
+                    "checkpoints/*/ppo_*",      # PPO মডেল ফাইল
+                    "checkpoints/*/*_step*",    # PPO স্টেপ ফাইল
+                    "checkpoints/*/*_ens*",     # PPO ensemble ফাইল
+               ]
+               )
             print("✅ Download complete!")
             return
         except Exception as e:
