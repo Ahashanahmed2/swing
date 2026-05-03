@@ -684,14 +684,26 @@ class MultiSymbolTradingEnv(gym.Env):
     # XGBoost
     # -------------------------------------------------
     def _get_xgboost_features(self, symbol):
-        if not self.xgb_models or symbol not in self.xgb_models:
+    if not self.xgb_models or symbol not in self.xgb_models:
+        return np.zeros(self.xgb_feature_dim, dtype=np.float32)
+    try:
+        model_info = self.xgb_models[symbol]
+        
+        # ✅ যদি dict না হয়, তাহলে float/int ভ্যালু থেকে dict বানান
+        if isinstance(model_info, (int, float)):
+            # সরাসরি float পেয়ে গেছি, এটাকেই probability ধরা যাক
+            prob = float(model_info)
+            return np.array([prob, 0.5], dtype=np.float32)
+        
+        if not isinstance(model_info, dict):
             return np.zeros(self.xgb_feature_dim, dtype=np.float32)
-        try:
-            model_info = self.xgb_models[symbol]
-            return np.array([model_info.get('probability', 0.5), model_info.get('confidence', 0.5)], dtype=np.float32)
-        except:
-            return np.zeros(self.xgb_feature_dim, dtype=np.float32)
-    
+            
+        prob = float(model_info.get('probability', 0.5))
+        conf = float(model_info.get('confidence', 0.5))
+        return np.array([prob, conf], dtype=np.float32)
+    except Exception as e:
+        print(f"⚠️ XGBoost error for {symbol}: {e}")
+        return np.zeros(self.xgb_feature_dim, dtype=np.float32)
     # -------------------------------------------------
     # LLM
     # -------------------------------------------------
