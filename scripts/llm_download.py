@@ -129,14 +129,15 @@ def cleanup_hf_checkpoints_before_download(keep_last=1, max_files_per_commit=100
 # =========================================================
 
 def download_from_hf_with_retry():
-    """HF Dataset থেকে ডাউনলোড (রেট লিমিট হলে ১৫ মিনিট অপেক্ষা)"""
+    """HF Dataset থেকে ডাউনলোড (প্রতি ৪২৯ এ ৫ মিনিট অপেক্ষা, আনলিমিটেড রিজিউম)"""
     print("\n📥 Downloading from HF Dataset...")
     print("   ✅ LLM checkpoints included")
     print("   ❌ PPO checkpoints excluded")
     print("   ✅ All CSV, models, and other files included")
     
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
+    attempt = 0
+    while True:  # ⬅️ max_retries ছাড়া আনলিমিটেড লুপ
+        attempt += 1
         try:
             snapshot_download(
                 repo_id="ahashanahmed/csv",
@@ -148,25 +149,26 @@ def download_from_hf_with_retry():
                 resume_download=True,
                 tqdm_class=None,
                 ignore_patterns=[
-                    "checkpoints/*/ppo_*",      # PPO মডেল ফাইল
-                    "checkpoints/*/*_step*",    # PPO স্টেপ ফাইল
-                    "checkpoints/*/*_ens*",     # PPO ensemble ফাইল
+                    "checkpoints/*/ppo_*",
+                    "checkpoints/*/*_step*",
+                    "checkpoints/*/*_ens*",
                 ]
-                )
-            print("✅ Download complete!")
-            return
+            )
+            print(f"✅ Download complete! (Total attempts: {attempt})")
+            return  # সফল হলে বেরিয়ে যাবে
         except Exception as e:
-            if "429" in str(e) and attempt < max_retries:
-                wait_time = 900  # ১৫ মিনিট
-                print(f"\n⚠️ Rate limited (attempt {attempt}/{max_retries})!")
-                print(f"⏳ Waiting {wait_time//60} minutes for full rate limit reset...")
-                print(f"📊 Progress: 1911/2933 files already downloaded (will resume)")
+            if "429" in str(e):
+                wait_time = 300  # ৫ মিনিট (আপনার পছন্দ অনুযায়ী)
+                print(f"\n⚠️ Rate limited! (Attempt {attempt})")
+                print(f"⏳ Waiting {wait_time//60} minutes for rate limit reset...")
+                print(f"📊 Already downloaded files will NOT be re-downloaded (resume mode)")
                 time.sleep(wait_time)
-                print(f"🔄 Retrying download (resume mode)...")
+                print(f"🔄 Resuming download...")
             else:
-                print(f"❌ Download failed after {attempt} attempts: {str(e)[:200]}")
-                raise
+                print(f"❌ Download failed: {str(e)[:200]}")
+                raise  # ৪২৯ ছাড়া অন্য এরর হলে থামবে
 
+# আপনার স্ক্রিপ্টে এই ফাংশনটি ব্যবহার করুন
 # =========================================================
 # Step 3: লোকালে পুরনো চেকপয়েন্ট ক্লিনআপ
 # =========================================================
