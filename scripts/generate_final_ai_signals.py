@@ -547,13 +547,21 @@ def get_patch_tst_signal(symbol):
 # =========================================================
 # ✅ ১০.৭ Sector Score (NEW)
 # =========================================================
+# generate_final_ai_signals.py - get_sector_score() ফাংশনে:
+
 def get_sector_score(symbol):
-    """Sector ranking score"""
+    """Sector ranking score - সরাসরি mongodb.csv থেকে সেক্টর নিন"""
     if not SECTOR_AVAILABLE or sector_engine is None:
-        return {'score': 50, 'name': 'Unknown', 'is_top': False}
+        # ✅ Fallback: সরাসরি mongodb.csv থেকে সেক্টর
+        return get_sector_from_mongodb(symbol)
     
     try:
         sector = sector_engine.get_sector(symbol)
+        
+        # ✅ যদি "Other" বা "Unknown" আসে, mongodb থেকে নিন
+        if sector in ['Other', 'Unknown', 'other', 'unknown', '']:
+            return get_sector_from_mongodb(symbol)
+        
         top3 = [s for s, _ in sector_engine.get_top_sectors(3)]
         bottom2 = [s for s, _ in sector_engine.get_bottom_sectors(2)]
         
@@ -566,8 +574,22 @@ def get_sector_score(symbol):
         
         return {'score': score, 'name': sector, 'is_top': sector in top3}
     except:
-        return {'score': 50, 'name': 'Unknown', 'is_top': False}
+        return get_sector_from_mongodb(symbol)
 
+
+def get_sector_from_mongodb(symbol):
+    """সরাসরি mongodb.csv থেকে সেক্টর নাম নিন"""
+    try:
+        if os.path.exists(MONGO_PATH):
+            df = pd.read_csv(MONGO_PATH)
+            sym_data = df[df['symbol'] == symbol]
+            if len(sym_data) > 0:
+                sector = sym_data['sector'].iloc[-1]  # Latest sector
+                if pd.notna(sector) and sector not in ['Other', 'Unknown', '']:
+                    return {'score': 50, 'name': str(sector), 'is_top': False}
+    except:
+        pass
+    return {'score': 50, 'name': 'Unknown', 'is_top': False}
 # =========================================================
 # ১১. Agentic Loop এগ্রিগেটেড স্কোর (fallback for global)
 # =========================================================
