@@ -157,6 +157,7 @@ def download_from_hf_with_retry():
                     "checkpoints/*/ppo_*",           # PPO চেকপয়েন্ট বাদ
                     "checkpoints/*/*_step*",          # PPO step ফাইল বাদ
                     "checkpoints/*/*_ens*",           # PPO ensemble বাদ
+                    "patchtst_models/***",            #tst চেকপয়েন্ট বাদ
                     "*.tmp",
                     "*.log"
                 ]
