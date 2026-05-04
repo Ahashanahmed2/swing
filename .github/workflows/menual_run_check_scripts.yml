@@ -1,8 +1,6 @@
 name: menual_run_check_scripts
 
 on:
-  schedule:
-      - cron: "30 11 * * *"
   workflow_dispatch:  # ম্যানুয়ালি চালাতে পারবে
 
 permissions:
