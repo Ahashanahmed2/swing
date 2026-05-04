@@ -132,7 +132,7 @@ def download_from_hf():
                 token=os.getenv("hf_token"),
                 resume_download=True,
                 tqdm_class=None,
-                ignore_patterns=["checkpoints/checkpoint-*"],  # LLM চেকপয়েন্ট বাদ
+                ignore_patterns=["checkpoints/checkpoint-*"],
             )
             print(f"✅ Download complete! (Total attempts: {attempt})")
             return
@@ -141,6 +141,7 @@ def download_from_hf():
                 wait_time = 300
                 print(f"\n⚠️ Rate limited! (Attempt {attempt})")
                 print(f"⏳ Waiting {wait_time//60} minutes for rate limit reset...")
+                print(f"📊 Already downloaded files will resume automatically")
                 time.sleep(wait_time)
                 print(f"🔄 Resuming download...")
             else:
