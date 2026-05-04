@@ -1,0 +1,83 @@
+name: menual_run_check_scripts
+
+on:
+  schedule:
+      - cron: "30 11 * * *"
+  workflow_dispatch:  # ম্যানুয়ালি চালাতে পারবে
+
+permissions:
+  contents: write  # কমিট ও পুশের অনুমতি
+
+jobs:
+  analyze_stocks:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - name: Create necessary directories
+      run: |
+        mkdir -p ./csv/llm_model
+        mkdir -p ./csv/xgboost
+        mkdir -p ./csv/ppo_models
+        mkdir -p ./csv/ppo_models/per_symbol
+        mkdir -p ./csv/ppo_models/ensemble
+        echo "✅ Directories created"
+        echo "Current directory: $(pwd)"
+        ls -la ./csv/   # ← ফোল্ডার দেখার জন্য
+    - name: Verify folders
+      run: |
+        echo "=== Checking ./csv ==="
+        ls -la ./csv/
+        echo "=== Checking ./csv/xgboost ==="
+        ls -la ./csv/xgboost/ | head -10
+        echo "=== Checking ./csv/ppo_models ==="
+        ls -la ./csv/ppo_models/
+        echo "=== Checking ./csv/ppo_models/per_symbol ==="
+        ls -la ./csv/ppo_models/per_symbol/
+
+    # name: Delete old checkpoints (Python)
+      #run: |
+        #python -c "
+        #import os
+        #import shutil
+        #checkpoint_dir = './csv/checkpoints'
+        #if os.path.exists(checkpoint_dir):
+            #shutil.rmtree(checkpoint_dir)
+            #print('🗑️ Deleted old  .  #checkpoints, starting fresh!')
+        #else:
+            #print('ℹ️ No checkpoints found, #ready for fresh training')
+        #"
+        
+    - name: Install dependencies
+      run: |
+        pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cpu
+        python -c "import torch; print('PyTorch installed successfully')"
+        pip install --force-reinstall transformers==4.40.0
+        python -c "import transformers; print(f'Transformers version: {transformers.__version__}')"
+        python -c "from transformers import TrainingArguments; print('TrainingArguments imported successfully')"
+        pip install accelerate==0.33.0
+        pip install peft==0.10.0
+
+        pip install -r requirements.txt
+
+
+    - name: Run Python script
+      env:
+        #MONGODBEMAIL_URI: ${{ secrets.MONGODBEMAIL_URI }}
+        #MONGO_URL: ${{ secrets.MONGO_URL }}
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN_TRADE }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID_TRADE }}
+        EMAIL_USER: ${{ secrets.EMAIL_USER }}
+        EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+        EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        hf_token: ${{ secrets.HF_TOKEN }}
+
+      run: menual_run_check_scripts.py
