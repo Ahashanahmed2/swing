@@ -78,4 +78,4 @@ jobs:
         EMAIL_TO: ${{ secrets.EMAIL_TO }}
         hf_token: ${{ secrets.HF_TOKEN }}
 
-      run: menual_run_check_scripts.py
+      run: python menual_run_check_scripts.py
