@@ -1,4 +1,8 @@
-# sector_weekly-diver_daily_symbol.py
+# ================== sector_weekly_daily_symbol.py ==================
+# Complete: SWRSI (Weekly + Daily Confluence) + SWD (Weekly Divergence Only)
+# ✅ SWRSI → swrsi.csv (Weekly + Daily Both Bullish, Full Details)
+# ✅ SWD → swd.csv (Only signal_date + sector)
+
 import pandas as pd
 import numpy as np
 import os
@@ -10,8 +14,13 @@ WEEKLY_DIR = './csv/sector/weekly/'
 RSI_DIVER_FILE = './csv/rsi_diver.csv'
 MONGO_CSV = './csv/mongodb.csv'
 OUTPUT_DIR = './output/ai_signal/'
-OUTPUT_FILE = os.path.join(OUTPUT_DIR, 'swrsi.csv')
-SIGNAL_LOG = './csv/swrsi_log.json'
+
+# ✅ দুইটি আউটপুট
+SWRSI_OUTPUT = os.path.join(OUTPUT_DIR, 'swrsi.csv')  # Weekly + Daily Confluence
+SWD_OUTPUT = os.path.join(OUTPUT_DIR, 'swd.csv')      # Weekly Divergence Only (signal_date + sector)
+
+SWRSI_LOG = './csv/swrsi_log.json'
+SWD_LOG = './csv/swd_log.json'
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -35,7 +44,6 @@ def load_weekly_sector(sector):
             if len(df) < 2:
                 return None
             
-            # ✅ নতুন CSV কলাম: week_start (date column)
             date_col = 'week_start' if 'week_start' in df.columns else 'date'
             df['date'] = pd.to_datetime(df[date_col])
             
@@ -201,59 +209,114 @@ def check_weekly_divergence(weekly_df):
         }
     }
 
-def load_signal_log():
+def load_signal_log(log_path):
     """Signal tracking log"""
-    if os.path.exists(SIGNAL_LOG):
+    if os.path.exists(log_path):
         try:
-            with open(SIGNAL_LOG, 'r') as f:
+            with open(log_path, 'r') as f:
                 return json.load(f)
         except:
             pass
     return {'signals': [], 'last_run': None, 'total_signals_generated': 0}
 
-def save_signal_log(log_data):
+def save_signal_log(log_data, log_path):
     """Save signal log"""
     log_data['last_run'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     log_data['total_signals_generated'] = len(log_data['signals'])
-    with open(SIGNAL_LOG, 'w') as f:
+    with open(log_path, 'w') as f:
         json.dump(log_data, f, indent=2)
 
-def generate_swrsi_signals():
-    """
-    🎯 MAIN: Sector Weekly RSI Divergence → Daily Symbol RSI Divergence
-    
-    Uses RSI from sector weekly CSV (no separate calculation)
-    """
-    print("=" * 70)
-    print("🔍 SWRSI - Sector Weekly + Daily RSI Divergence Signal Generator")
-    print("   📊 Uses RSI from sector CSV (no separate calculation)")
-    print("=" * 70)
-    
-    # 1. Load Daily RSI Divergence data
-    rsi_diver_df = load_rsi_diver()
-    if rsi_diver_df is None or len(rsi_diver_df) == 0:
-        print("\n❌ Daily RSI Divergence ডাটা নেই। স্ক্রিপ্ট বন্ধ।")
+def save_swrsi_csv(signals_list, output_path):
+    """Save SWRSI signals to CSV"""
+    if not signals_list:
         return pd.DataFrame()
     
-    # 2. Load signal log
-    signal_log = load_signal_log()
+    signals_df = pd.DataFrame(signals_list)
     
-    # 3. Find all weekly sector files
+    existing_df = pd.DataFrame()
+    if os.path.exists(output_path):
+        try:
+            existing_df = pd.read_csv(output_path)
+        except:
+            pass
+    
+    if len(existing_df) > 0:
+        combined = pd.concat([existing_df, signals_df], ignore_index=True)
+        if 'symbol' in combined.columns and 'weekly_curr_date' in combined.columns:
+            combined = combined.drop_duplicates(subset=['symbol', 'weekly_curr_date'], keep='last')
+        combined = combined.sort_values(['composite_score', 'weekly_strength_score'], 
+                                        ascending=[False, False])
+    else:
+        combined = signals_df.sort_values(['composite_score', 'weekly_strength_score'], 
+                                          ascending=[False, False])
+    
+    combined = combined.reset_index(drop=True)
+    combined.to_csv(output_path, index=False)
+    
+    return combined
+
+def save_swd_csv(signals_list, output_path):
+    """Save SWD signals to CSV (only signal_date + sector)"""
+    if not signals_list:
+        return pd.DataFrame()
+    
+    signals_df = pd.DataFrame(signals_list)
+    
+    existing_df = pd.DataFrame()
+    if os.path.exists(output_path):
+        try:
+            existing_df = pd.read_csv(output_path)
+        except:
+            pass
+    
+    if len(existing_df) > 0:
+        combined = pd.concat([existing_df, signals_df], ignore_index=True)
+        combined = combined.drop_duplicates(subset=['sector', 'signal_date'], keep='last')
+        combined = combined.sort_values('signal_date', ascending=False)
+    else:
+        combined = signals_df.sort_values('signal_date', ascending=False)
+    
+    combined = combined.reset_index(drop=True)
+    combined.to_csv(output_path, index=False)
+    
+    return combined
+
+def generate_all_signals():
+    """
+    🎯 MAIN: Generate BOTH SWRSI and SWD Signals
+    
+    SWRSI: Weekly + Daily Bullish Divergence Confluence (Full Details)
+    SWD: Sector Weekly Divergence Only (signal_date + sector)
+    """
+    print("=" * 70)
+    print("🔍 SECTOR WEEKLY DIVERGENCE SIGNAL GENERATOR")
+    print("   📊 SWRSI: Weekly + Daily Confluence → swrsi.csv")
+    print("   📊 SWD: Weekly Divergence Only → swd.csv")
+    print("=" * 70)
+    
+    # Load Daily RSI Divergence (for SWRSI)
+    rsi_diver_df = load_rsi_diver()
+    diver_symbols_set = set(rsi_diver_df['symbol'].unique()) if rsi_diver_df is not None else set()
+    
+    # Load signal logs
+    swrsi_log = load_signal_log(SWRSI_LOG)
+    swd_log = load_signal_log(SWD_LOG)
+    
+    # Find all weekly sector files
     weekly_files = [f for f in os.listdir(WEEKLY_DIR) if f.endswith('_weekly.csv')]
     
     if not weekly_files:
         print(f"\n❌ {WEEKLY_DIR}-তে কোনো উইকলি ফাইল নেই!")
-        return pd.DataFrame()
+        return
     
-    print(f"\n📁 {len(weekly_files)}টি সেক্টর উইকলি ফাইল স্ক্যান হচ্ছে...")
+    print(f"\n📁 {len(weekly_files)}টি সেক্টর স্ক্যান হচ্ছে...")
     
-    # 4. Process each sector
-    signals = []
+    # Signal collectors
+    swrsi_signals = []  # Weekly + Daily Confluence (Full Details)
+    swd_signals = []    # Weekly Divergence Only (signal_date + sector)
+    
     sectors_checked = 0
     sectors_with_divergence = 0
-    sectors_no_rsi = 0
-    
-    diver_symbols_set = set(rsi_diver_df['symbol'].unique())
     
     for weekly_file in sorted(weekly_files):
         sectors_checked += 1
@@ -264,14 +327,11 @@ def generate_swrsi_signals():
         if weekly_df is None:
             continue
         
-        # RSI available check
         if 'rsi' not in weekly_df.columns:
-            sectors_no_rsi += 1
             continue
         
         valid_rsi = weekly_df['rsi'].dropna()
         if len(valid_rsi) < 2:
-            sectors_no_rsi += 1
             continue
         
         # Check Weekly Divergence
@@ -282,7 +342,6 @@ def generate_swrsi_signals():
         
         sectors_with_divergence += 1
         
-        # 🎉 Sector Weekly Divergence Found!
         print(f"\n{'─'*60}")
         print(f"🔔 SECTOR: {sector_name}")
         print(f"   📊 Weekly Divergence: {div_result['strength_label']} (Score: {div_result['strength_score']}/100)")
@@ -291,133 +350,152 @@ def generate_swrsi_signals():
         print(f"   📅 Current Week  ({div_result['last_week']['date']}):")
         print(f"      Low: {div_result['last_week']['low']} | RSI: {div_result['last_week']['rsi']}")
         print(f"   📉 Price Drop: {div_result['price_drop_pct']}% | RSI Gain: +{div_result['rsi_gain']}")
-        print(f"   📈 Total weeks with RSI: {len(valid_rsi)}")
         
+        # ============================
+        # SWD SIGNAL: Weekly Divergence Only
+        # ============================
+        swd_signal = {
+            'signal_date': datetime.now().strftime('%Y-%m-%d'),
+            'sector': sector_name,
+        }
+        swd_signals.append(swd_signal)
+        
+        swd_log['signals'].append({
+            'date': datetime.now().strftime('%Y-%m-%d'),
+            'sector': sector_name,
+            'type': 'SWD'
+        })
+        
+        print(f"   📊 SWD: Signal added (signal_date + sector)")
+        
+        # ============================
+        # SWRSI SIGNAL: Weekly + Daily Confluence
+        # ============================
         # Get sector symbols
         sector_symbols = get_sector_symbols(sector_name)
         
-        if not sector_symbols:
-            print(f"   ⚠ No symbols found for this sector")
-            continue
-        
-        # Cross-check with Daily RSI Divergence symbols
-        matched_symbols = [s for s in sector_symbols if s in diver_symbols_set]
-        
-        if not matched_symbols:
-            print(f"   ❌ No symbol has Daily RSI Divergence (checked {len(sector_symbols)} symbols)")
-            continue
-        
-        print(f"   ✅ {len(matched_symbols)}/{len(sector_symbols)} symbols have Daily RSI Divergence:")
-        
-        # Process each matched symbol
-        for sym in matched_symbols:
-            sym_div_data = rsi_diver_df[rsi_diver_df['symbol'] == sym]
+        if rsi_diver_df is not None and len(sector_symbols) > 0:
+            matched_count = 0
+            weekly_signal_date = pd.to_datetime(div_result['last_week']['date'])
             
-            if len(sym_div_data) == 0:
-                continue
+            for sym in sector_symbols:
+                if sym not in diver_symbols_set:
+                    continue
+                
+                sym_div_data = rsi_diver_df[rsi_diver_df['symbol'] == sym]
+                
+                for _, sym_row in sym_div_data.iterrows():
+                    div_type = str(sym_row.get('divergence_type', '')).strip().lower()
+                    
+                    if div_type != 'bullish':
+                        continue
+                    
+                    daily_date = None
+                    if 'last_date' in sym_row and pd.notna(sym_row['last_date']):
+                        daily_date = pd.to_datetime(sym_row['last_date'])
+                    
+                    if daily_date is None:
+                        continue
+                    
+                    # Window: Weekly date থেকে ৩ দিন পর পর্যন্ত
+                    days_diff = (daily_date - weekly_signal_date).days
+                    
+                    if 0 <= days_diff <= 3:
+                        daily_strength = str(sym_row.get('strength', 'Moderate')).strip()
+                        daily_strength_bonus = {'Strong': 30, 'Moderate': 20, 'Weak': 10}.get(daily_strength, 10)
+                        time_penalty = days_diff * 2
+                        composite_score = min(div_result['strength_score'] + daily_strength_bonus - time_penalty, 100)
+                        composite_score = max(composite_score, 0)
+                        
+                        swrsi_signal = {
+                            'signal_date': datetime.now().strftime('%Y-%m-%d'),
+                            'composite_score': composite_score,
+                            'symbol': sym,
+                            'sector': sector_name,
+                            'weekly_divergence': 'Bullish',
+                            'weekly_strength_label': div_result['strength_label'],
+                            'weekly_strength_score': div_result['strength_score'],
+                            'weekly_prev_low': div_result['prev_week']['low'],
+                            'weekly_curr_low': div_result['last_week']['low'],
+                            'weekly_prev_rsi': div_result['prev_week']['rsi'],
+                            'weekly_curr_rsi': div_result['last_week']['rsi'],
+                            'weekly_price_drop_pct': div_result['price_drop_pct'],
+                            'weekly_rsi_gain': div_result['rsi_gain'],
+                            'weekly_prev_date': div_result['prev_week']['date'],
+                            'weekly_curr_date': div_result['last_week']['date'],
+                            'daily_divergence_type': sym_row.get('divergence_type', ''),
+                            'daily_divergence_strength': daily_strength,
+                            'daily_last_date': str(sym_row.get('last_date', ''))[:10] if pd.notna(sym_row.get('last_date')) else '',
+                            'daily_last_price': sym_row.get('last_price', ''),
+                            'daily_last_rsi': sym_row.get('last_rsi', ''),
+                            'daily_prev_date': str(sym_row.get('previous_date', ''))[:10] if pd.notna(sym_row.get('previous_date')) else '',
+                            'daily_prev_price': sym_row.get('previous_price', ''),
+                            'daily_prev_rsi': sym_row.get('previous_rsi', ''),
+                            'daily_last_high': sym_row.get('last_high', '') if 'last_high' in sym_row else '',
+                            'daily_prev_price_2': sym_row.get('previous_price', '') if 'previous_price' in sym_row else '',
+                        }
+                        
+                        swrsi_signals.append(swrsi_signal)
+                        
+                        swrsi_log['signals'].append({
+                            'date': datetime.now().strftime('%Y-%m-%d'),
+                            'symbol': sym,
+                            'sector': sector_name,
+                            'composite_score': composite_score,
+                            'weekly_score': div_result['strength_score'],
+                            'daily_strength': daily_strength
+                        })
+                        
+                        matched_count += 1
+                        day_label = "SAME DAY" if days_diff == 0 else f"+{days_diff}d"
+                        print(f"      ✅ {sym:<15} | Daily: {daily_strength:<10} | {day_label:<10} | Score: {composite_score:.0f}/100")
+                        break
             
-            sym_row = sym_div_data.iloc[-1]
-            
-            div_type = str(sym_row.get('divergence_type', '')).strip().lower()
-            
-            if div_type != 'bullish':
-                print(f"      ⊘ {sym}: Skipped ({div_type} daily divergence)")
-                continue
-            
-            # ✅ CONFLUENCE FOUND!
-            daily_strength = str(sym_row.get('strength', 'Moderate')).strip()
-            daily_strength_bonus = {'Strong': 30, 'Moderate': 20, 'Weak': 10}.get(daily_strength, 10)
-            composite_score = min(div_result['strength_score'] + daily_strength_bonus, 100)
-            
-            signal = {
-                'signal_date': datetime.now().strftime('%Y-%m-%d'),
-                'composite_score': composite_score,
-                'symbol': sym,
-                'sector': sector_name,
-                'weekly_divergence': 'Bullish',
-                'weekly_strength_label': div_result['strength_label'],
-                'weekly_strength_score': div_result['strength_score'],
-                'weekly_prev_low': div_result['prev_week']['low'],
-                'weekly_curr_low': div_result['last_week']['low'],
-                'weekly_prev_rsi': div_result['prev_week']['rsi'],
-                'weekly_curr_rsi': div_result['last_week']['rsi'],
-                'weekly_price_drop_pct': div_result['price_drop_pct'],
-                'weekly_rsi_gain': div_result['rsi_gain'],
-                'weekly_prev_date': div_result['prev_week']['date'],
-                'weekly_curr_date': div_result['last_week']['date'],
-                'daily_divergence_type': sym_row.get('divergence_type', ''),
-                'daily_divergence_strength': daily_strength,
-                'daily_last_date': str(sym_row.get('last_date', ''))[:10] if pd.notna(sym_row.get('last_date')) else '',
-                'daily_last_price': sym_row.get('last_price', ''),
-                'daily_last_rsi': sym_row.get('last_rsi', ''),
-                'daily_prev_date': str(sym_row.get('previous_date', ''))[:10] if pd.notna(sym_row.get('previous_date')) else '',
-                'daily_prev_price': sym_row.get('previous_price', ''),
-                'daily_prev_rsi': sym_row.get('previous_rsi', ''),
-                'daily_last_high': sym_row.get('last_high', '') if 'last_high' in sym_row else '',
-                'daily_prev_price_2': sym_row.get('previous_price', '') if 'previous_price' in sym_row else '',
-            }
-            
-            signals.append(signal)
-            
-            print(f"      ✅ {sym:<15} | Daily: {daily_strength:<10} | Composite: {composite_score:.0f}/100")
-            print(f"         Weekly: Low {div_result['prev_week']['low']}→{div_result['last_week']['low']} | RSI {div_result['prev_week']['rsi']}→{div_result['last_week']['rsi']}")
-            
-            signal_log['signals'].append({
-                'date': datetime.now().strftime('%Y-%m-%d'),
-                'symbol': sym,
-                'sector': sector_name,
-                'composite_score': composite_score,
-                'weekly_score': div_result['strength_score'],
-                'daily_strength': daily_strength
-            })
+            if matched_count == 0:
+                print(f"   ⊘ SWRSI: No confluence found")
+        else:
+            print(f"   ⊘ SWRSI: No daily divergence data available")
     
-    # 5. Save Results
+    # ============================
+    # SAVE RESULTS
+    # ============================
     print(f"\n{'='*70}")
     print("📊 SIGNAL GENERATION SUMMARY")
     print(f"{'='*70}")
     print(f"🔍 Sectors checked: {sectors_checked}")
-    print(f"⚠️ Sectors without enough RSI: {sectors_no_rsi}")
     print(f"🔔 Sectors with Weekly Divergence: {sectors_with_divergence}")
-    print(f"✅ Total Signals Generated: {len(signals)}")
+    print(f"\n📊 SWD Signals: {len(swd_signals)}")
+    print(f"📊 SWRSI Signals: {len(swrsi_signals)}")
     
-    if signals:
-        signals_df = pd.DataFrame(signals)
+    # Save SWD
+    if swd_signals:
+        swd_df = save_swd_csv(swd_signals, SWD_OUTPUT)
+        print(f"\n📁 SWD saved: {SWD_OUTPUT} ({len(swd_df)} records)")
+        save_signal_log(swd_log, SWD_LOG)
         
-        existing_df = pd.DataFrame()
-        if os.path.exists(OUTPUT_FILE):
-            try:
-                existing_df = pd.read_csv(OUTPUT_FILE)
-            except:
-                pass
+        print(f"\n📊 SWD Signals (Weekly Divergence Sectors):")
+        for _, row in swd_df.iterrows():
+            print(f"   📅 {row['signal_date']} | 🏭 {row['sector']}")
+    
+    # Save SWRSI
+    if swrsi_signals:
+        swrsi_df = save_swrsi_csv(swrsi_signals, SWRSI_OUTPUT)
+        print(f"\n📁 SWRSI saved: {SWRSI_OUTPUT} ({len(swrsi_df)} records)")
+        save_signal_log(swrsi_log, SWRSI_LOG)
         
-        if len(existing_df) > 0:
-            combined = pd.concat([existing_df, signals_df], ignore_index=True)
-            combined = combined.drop_duplicates(subset=['symbol', 'weekly_curr_date'], keep='last')
-            combined = combined.sort_values(['composite_score', 'weekly_strength_score'], ascending=[False, False])
-        else:
-            combined = signals_df.sort_values(['composite_score', 'weekly_strength_score'], ascending=[False, False])
-        
-        combined = combined.reset_index(drop=True)
-        
-        combined.to_csv(OUTPUT_FILE, index=False)
-        print(f"📁 Signals saved: {OUTPUT_FILE}")
-        print(f"📦 Total signals in file: {len(combined)}")
-        
-        save_signal_log(signal_log)
-        print(f"📝 Log saved: {SIGNAL_LOG}")
-        
-        print(f"\n🏆 TOP SIGNALS:")
+        print(f"\n🏆 TOP SWRSI SIGNALS:")
         print(f"{'Rank':<5} {'Symbol':<15} {'Sector':<20} {'Score':<8} {'Weekly':<12} {'Daily':<12}")
         print(f"{'─'*75}")
-        for i, (_, row) in enumerate(combined.head(10).iterrows(), 1):
+        for i, (_, row) in enumerate(swrsi_df.head(10).iterrows(), 1):
             print(f"{i:<5} {row['symbol']:<15} {row['sector']:<20} {row['composite_score']:<8.0f} "
                   f"{row['weekly_strength_label']:<12} {row['daily_divergence_strength']:<12}")
-        
-        return combined
     else:
-        print("\nℹ️ No confluence signals found")
-        save_signal_log(signal_log)
-        return pd.DataFrame()
+        print("\nℹ️ No SWRSI confluence signals found")
+    
+    if not swd_signals and not swrsi_signals:
+        print("\nℹ️ No signals generated at all")
+    
+    return swd_signals, swrsi_signals
 
 if __name__ == "__main__":
-    result = generate_swrsi_signals()
+    swd, swrsi = generate_all_signals()
