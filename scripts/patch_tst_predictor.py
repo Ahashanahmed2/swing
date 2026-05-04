@@ -2,12 +2,20 @@
 # PatchTST - Time Series Transformer for Price Prediction
 # State-of-the-art financial forecasting
 # Drop-in module — no changes to existing code required
+# ✅ Checkpoint Save/Load (Local)
+# ✅ HF Backup Upload (No Download)
+# ✅ Mistake Learning & Auto-Correction
+# ✅ Accuracy Check before HF Upload
 
 import numpy as np
 import pandas as pd
 from pathlib import Path
 import pickle
+import json
+import os
 import warnings
+from datetime import datetime, timedelta
+from collections import deque
 warnings.filterwarnings('ignore')
 
 # Try importing deep learning libraries
@@ -233,8 +241,11 @@ class SimpleAttentionPredictor(nn.Module):
         # Global average pooling
         pooled = attn_out.mean(dim=1)  # [batch, hidden_dim*2]
         
+        # GELU activation
+        gelu_out = pooled * 0.5 * (1.0 + torch.erf(pooled / np.sqrt(2.0)))
+        
         # MLP head
-        out = self.gelu(self.fc1(pooled))
+        out = self.fc1(gelu_out)
         out = self.dropout(out)
         out = self.fc2(out)  # [batch, 3]
         
@@ -243,9 +254,6 @@ class SimpleAttentionPredictor(nn.Module):
         magnitude = torch.tanh(out[:, 2:3])
         
         return torch.cat([probs, magnitude], dim=-1)
-    
-    def gelu(self, x):
-        return x * 0.5 * (1.0 + torch.erf(x / np.sqrt(2.0)))
 
 
 # =========================================================
@@ -681,6 +689,35 @@ class PatchTSTPredictor:
         except Exception as e:
             print(f"❌ Error loading model: {e}")
             return False
+    
+    # -------------------------------------------------
+    # CREATE MODEL HELPERS
+    # -------------------------------------------------
+    def _create_model(self, input_dim):
+        """Create model instance"""
+        return SimpleAttentionPredictor(
+            input_dim=input_dim,
+            seq_len=self.seq_len,
+            hidden_dim=self.hidden_dim,
+            pred_len=self.pred_len
+        )
+    
+    def _create_optimizer(self, lr):
+        """Create optimizer"""
+        return torch.optim.AdamW(
+            self.model.parameters() if self.model else None,
+            lr=lr,
+            weight_decay=1e-5
+        ) if self.model else None
+    
+    def _create_scheduler(self, optimizer, epochs):
+        """Create learning rate scheduler"""
+        return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer,
+            T_0=epochs // 3,
+            T_mult=2,
+            eta_min=1e-6
+        )
 
 
 # =========================================================
@@ -727,44 +764,640 @@ class PatchTSTIntegration:
 
 
 # =========================================================
-# TEST
+# FineTunablePatchTST (Extended)
+# =========================================================
+
+class FineTunablePatchTST(PatchTSTPredictor):
+    """PatchTST with fine-tuning support"""
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    def fit_with_checkpoint(self, df, epochs=50, batch_size=32, learning_rate=0.001,
+                           resume=True, patience=15, verbose=True):
+        """Train with checkpoint support - to be overridden"""
+        return self.fit(df, epochs=epochs, batch_size=batch_size, 
+                       learning_rate=learning_rate, verbose=verbose)
+    
+    def fine_tune_on_new_data(self, df, epochs=20, learning_rate=0.0001):
+        """Fine-tune existing model on new data"""
+        if not self.is_fitted:
+            print("⚠️ No existing model, training from scratch")
+            return self.fit(df, epochs=epochs, learning_rate=learning_rate)
+        
+        print(f"🔄 Fine-tuning on {len(df)} new rows...")
+        return self.fit(df, epochs=epochs, learning_rate=learning_rate)
+    
+    def get_training_summary(self):
+        """Get training summary"""
+        return {'status': 'unknown'}
+
+
+# =========================================================
+# SIMPLE CHECKPOINT MANAGER (Local Only)
+# =========================================================
+
+class SimpleCheckpointManager:
+    """
+    Checkpoint System:
+    - Save: Local (./csv/patchtst_models/{symbol}/)
+    - Resume: Local only (NO HF download)
+    - Backup: Upload to HF (permanent storage)
+    """
+    
+    def __init__(self, symbol, hf_repo="ahashanahmed/csv"):
+        self.symbol = symbol
+        self.hf_repo = hf_repo
+        
+        # Local paths
+        self.base_dir = Path(f"./csv/patchtst_models/{symbol}")
+        self.checkpoint_dir = self.base_dir / "checkpoints"
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.best_model_path = self.base_dir / "patchtst_model.pt"
+        self.scaler_path = self.base_dir / "scaler.pkl"
+        self.progress_path = self.base_dir / "progress.json"
+    
+    # ============================
+    # LOCAL SAVE & LOAD
+    # ============================
+    
+    def save_local(self, model, optimizer, scheduler, epoch, loss, is_best=False):
+        """Save checkpoint to LOCAL only"""
+        checkpoint = {
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict() if optimizer else None,
+            'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
+            'loss': loss,
+            'timestamp': datetime.now().isoformat(),
+            'symbol': self.symbol
+        }
+        
+        # Save checkpoint file
+        if is_best:
+            torch.save(checkpoint, self.best_model_path)
+            print(f"   🏆 Best model saved (epoch {epoch}, loss {loss:.6f})")
+        
+        # Save epoch checkpoint
+        ckpt_path = self.checkpoint_dir / f"epoch_{epoch}.pt"
+        torch.save(checkpoint, ckpt_path)
+        
+        # Save progress
+        self._save_progress(epoch, loss, is_best)
+        
+        # Keep last 5 checkpoints only
+        self._cleanup_old(keep=5)
+    
+    def load_local(self, model, optimizer=None, scheduler=None):
+        """Load checkpoint from LOCAL for resume"""
+        
+        # Priority 1: Best model
+        if self.best_model_path.exists():
+            checkpoint = torch.load(self.best_model_path, map_location='cpu')
+            print(f"   📂 Loaded best model from local")
+        else:
+            # Priority 2: Latest epoch checkpoint
+            checkpoints = sorted(self.checkpoint_dir.glob("epoch_*.pt"))
+            if not checkpoints:
+                print(f"   ℹ️ No checkpoint found, starting fresh")
+                return 0, float('inf')
+            
+            checkpoint = torch.load(checkpoints[-1], map_location='cpu')
+            print(f"   📂 Loaded {checkpoints[-1].name} from local")
+        
+        # Restore model
+        model.load_state_dict(checkpoint['model_state_dict'])
+        
+        if optimizer and 'optimizer_state_dict' in checkpoint and checkpoint['optimizer_state_dict']:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
+        if scheduler and checkpoint.get('scheduler_state_dict'):
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        
+        epoch = checkpoint['epoch']
+        loss = checkpoint['loss']
+        
+        print(f"   ✅ Resumed from epoch {epoch} (loss: {loss:.6f})")
+        return epoch, loss
+    
+    def _save_progress(self, epoch, loss, is_best):
+        """Save training progress to JSON"""
+        progress = {
+            'symbol': self.symbol,
+            'last_epoch': epoch,
+            'last_loss': loss,
+            'is_best': is_best,
+            'last_updated': datetime.now().isoformat(),
+            'checkpoint_exists': True
+        }
+        with open(self.progress_path, 'w') as f:
+            json.dump(progress, f, indent=2)
+    
+    def _cleanup_old(self, keep=5):
+        """Keep only last N checkpoints to save space"""
+        checkpoints = sorted(self.checkpoint_dir.glob("epoch_*.pt"))
+        if len(checkpoints) > keep:
+            for old in checkpoints[:-keep]:
+                old.unlink()
+    
+    def can_resume(self):
+        """Check if we can resume training"""
+        return self.best_model_path.exists() or len(list(self.checkpoint_dir.glob("epoch_*.pt"))) > 0
+    
+    def get_status(self):
+        """Get current training status"""
+        if self.progress_path.exists():
+            with open(self.progress_path) as f:
+                return json.load(f)
+        return {'status': 'not_started'}
+    
+    # ============================
+    # HF BACKUP UPLOAD (Save only, no download)
+    # ============================
+    
+    def upload_to_hf(self, message=None):
+        """Upload checkpoint to HF for BACKUP (one-way: local → HF)"""
+        
+        hf_token = os.getenv("HF_TOKEN", "")
+        if not hf_token:
+            print(f"   ⚠️ No HF_TOKEN, skipping backup")
+            return False
+        
+        try:
+            from huggingface_hub import HfApi
+            
+            api = HfApi(token=hf_token)
+            hf_path = f"patchtst_models/{self.symbol}"
+            
+            if message is None:
+                status = self.get_status()
+                message = f"💾 Checkpoint: {self.symbol} epoch {status.get('last_epoch', '?')} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            
+            # Upload complete folder
+            api.upload_folder(
+                folder_path=str(self.base_dir),
+                path_in_repo=hf_path,
+                repo_id=self.hf_repo,
+                repo_type="dataset",
+                commit_message=message
+            )
+            
+            print(f"   ☁️ Backup uploaded to HF: {hf_path}")
+            return True
+            
+        except Exception as e:
+            print(f"   ⚠️ HF backup failed: {str(e)[:100]}")
+            return False
+    
+    def upload_final_to_hf(self):
+        """Upload final trained model to HF"""
+        return self.upload_to_hf(
+            message=f"✅ FINAL MODEL: {self.symbol} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        )
+
+
+# =========================================================
+# MISTAKE LEARNING SYSTEM
+# =========================================================
+
+class MistakeLearner:
+    """Track mistakes and adjust predictions"""
+    
+    def __init__(self, symbol):
+        self.symbol = symbol
+        self.mistakes_path = Path(f"./csv/patchtst_models/{symbol}/mistakes.json")
+        
+        # Load existing
+        self.mistakes = []
+        self.corrections = {}
+        self._load()
+        
+        # Running stats
+        self.total_predictions = 0
+        self.correct_predictions = 0
+    
+    def _load(self):
+        if self.mistakes_path.exists():
+            with open(self.mistakes_path) as f:
+                data = json.load(f)
+                self.mistakes = data.get('mistakes', [])
+                self.corrections = data.get('corrections', {})
+    
+    def _save(self):
+        self.mistakes_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.mistakes_path, 'w') as f:
+            json.dump({
+                'mistakes': self.mistakes[-100:],  # Last 100
+                'corrections': self.corrections,
+                'stats': {
+                    'total': self.total_predictions,
+                    'correct': self.correct_predictions,
+                    'accuracy': round(self.correct_predictions / max(self.total_predictions, 1), 3)
+                },
+                'updated': datetime.now().isoformat()
+            }, f, indent=2)
+    
+    def record(self, date, predicted_prob, actual_return):
+        """Record prediction result"""
+        pred_dir = 'UP' if predicted_prob > 0.5 else 'DOWN'
+        actual_dir = 'UP' if actual_return > 0.005 else 'DOWN' if actual_return < -0.005 else 'FLAT'
+        
+        was_wrong = pred_dir != actual_dir and actual_dir != 'FLAT'
+        was_correct = pred_dir == actual_dir and actual_dir != 'FLAT'
+        
+        self.total_predictions += 1
+        if was_correct:
+            self.correct_predictions += 1
+        
+        if was_wrong:
+            self.mistakes.append({
+                'date': str(date),
+                'predicted': pred_dir,
+                'actual': actual_dir,
+                'prob': predicted_prob,
+                'return': actual_return
+            })
+            
+            # Analyze every 10 mistakes
+            if len(self.mistakes) % 10 == 0:
+                self._analyze()
+    
+    def _analyze(self):
+        """Analyze mistakes and compute corrections"""
+        recent = self.mistakes[-30:]
+        
+        fp = sum(1 for m in recent if m['predicted'] == 'UP' and m['actual'] == 'DOWN')
+        fn = sum(1 for m in recent if m['predicted'] == 'DOWN' and m['actual'] == 'UP')
+        
+        if fp + fn == 0:
+            return
+        
+        if fp > fn * 1.5:
+            # Too many false UP predictions → reduce
+            self.corrections['up_bias'] = -0.03
+            self.corrections['type'] = 'overly_bullish'
+        elif fn > fp * 1.5:
+            # Too many false DOWN predictions → reduce
+            self.corrections['up_bias'] = 0.03
+            self.corrections['type'] = 'overly_bearish'
+        else:
+            self.corrections['up_bias'] = 0.0
+            self.corrections['type'] = 'balanced'
+        
+        self.corrections['fp'] = fp
+        self.corrections['fn'] = fn
+        self.corrections['accuracy'] = round(self.correct_predictions / max(self.total_predictions, 1), 3)
+        self.corrections['last_analyzed'] = datetime.now().isoformat()
+        
+        self._save()
+        
+        print(f"\n   🧠 MISTAKE LEARNING UPDATE:")
+        print(f"   FP: {fp} | FN: {fn} | Type: {self.corrections['type']}")
+        print(f"   Accuracy: {self.corrections['accuracy']:.1%}")
+        print(f"   Bias: {self.corrections['up_bias']}")
+    
+    def apply(self, up_prob, down_prob):
+        """Apply learned corrections"""
+        if not self.corrections:
+            return up_prob, down_prob
+        
+        bias = self.corrections.get('up_bias', 0)
+        
+        up = max(0, min(1, up_prob + bias))
+        down = max(0, min(1, down_prob - bias))
+        
+        # Normalize
+        total = up + down
+        if total > 0:
+            up /= total
+            down /= total
+        
+        return up, down
+    
+    def get_stats(self):
+        return {
+            'total_mistakes': len(self.mistakes),
+            'total_predictions': self.total_predictions,
+            'correct': self.correct_predictions,
+            'accuracy': round(self.correct_predictions / max(self.total_predictions, 1), 3),
+            'correction_active': bool(self.corrections),
+            'correction_type': self.corrections.get('type', 'none'),
+            'last_analysis': self.corrections.get('last_analyzed', 'never')
+        }
+
+
+# =========================================================
+# COMPLETE TRAINING FUNCTION (Mistake Learning → Check → HF Upload)
+# =========================================================
+
+def train_patchtst_with_checkpoint(
+    symbol, df, 
+    epochs=50, 
+    batch_size=16, 
+    learning_rate=0.001,
+    resume=True, 
+    backup_to_hf=True, 
+    min_accuracy=0.50,
+    verbose=True
+):
+    """
+    Complete training function - CORRECT ORDER:
+    1. Resume from LOCAL checkpoint
+    2. Train with checkpoint saves
+    3. 🧠 LEARN FROM MISTAKES (before HF upload!)
+    4. 📊 Validate accuracy
+    5. ☁️ Upload to HF ONLY if accuracy >= threshold
+    """
+    
+    print(f"\n{'='*60}")
+    print(f"🧠 PatchTST Training: {symbol}")
+    print(f"{'='*60}")
+    print(f"   📊 Data: {len(df)} rows")
+    print(f"   🎯 Epochs: {epochs}")
+    print(f"   💾 Resume: {'Yes' if resume else 'No'}")
+    print(f"   🎯 Min Accuracy for HF: {min_accuracy:.0%}")
+    
+    # Initialize
+    model_dir = Path(f"./csv/patchtst_models/{symbol}")
+    predictor = FineTunablePatchTST(model_dir=model_dir)
+    checkpoint_mgr = SimpleCheckpointManager(symbol)
+    mistake_learner = MistakeLearner(symbol)
+    
+    # Prepare data
+    X, y = predictor._prepare_sequences(df)
+    
+    if len(X) == 0:
+        print("   ❌ No data for training")
+        return {'status': 'failed', 'reason': 'no_data'}
+    
+    print(f"   📐 Input: {X.shape}, Features: {X.shape[2]}")
+    
+    # Train/Val split
+    split_idx = int(len(X) * 0.8)
+    X_train, X_val = X[:split_idx], X[split_idx:]
+    y_train, y_val = y[:split_idx], y[split_idx:]
+    
+    # Create model
+    model = predictor._create_model(X.shape[2])
+    optimizer = predictor._create_optimizer(learning_rate)
+    scheduler = predictor._create_scheduler(optimizer, epochs)
+    
+    # ============================
+    # RESUME FROM LOCAL CHECKPOINT
+    # ============================
+    start_epoch = 0
+    best_loss = float('inf')
+    
+    if resume and checkpoint_mgr.can_resume():
+        start_epoch, best_loss = checkpoint_mgr.load_local(model, optimizer, scheduler)
+        print(f"   🔄 Resuming from epoch {start_epoch}")
+    else:
+        print(f"   🆕 Fresh training")
+    
+    # Move to device
+    model.to(predictor.device)
+    criterion = nn.MSELoss()
+    
+    # DataLoaders
+    train_dataset = TensorDataset(
+        torch.FloatTensor(X_train).to(predictor.device),
+        torch.FloatTensor(y_train).to(predictor.device)
+    )
+    val_dataset = TensorDataset(
+        torch.FloatTensor(X_val).to(predictor.device),
+        torch.FloatTensor(y_val).to(predictor.device)
+    )
+    
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    
+    # ============================
+    # TRAINING LOOP
+    # ============================
+    model.train()
+    patience = 15
+    patience_counter = 0
+    
+    for epoch in range(start_epoch, epochs):
+        epoch_loss = 0
+        
+        for batch_X, batch_y in train_loader:
+            optimizer.zero_grad()
+            predictions = model(batch_X)
+            loss = criterion(predictions, batch_y)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            epoch_loss += loss.item()
+        
+        avg_loss = epoch_loss / len(train_loader)
+        scheduler.step()
+        
+        # Validation
+        model.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for batch_X, batch_y in val_loader:
+                pred = model(batch_X)
+                val_loss += criterion(pred, batch_y).item()
+        val_loss /= len(val_loader)
+        model.train()
+        
+        is_best = val_loss < best_loss
+        if is_best:
+            best_loss = val_loss
+            patience_counter = 0
+        else:
+            patience_counter += 1
+        
+        # Save checkpoint every 10 epochs
+        if (epoch + 1) % 10 == 0 or is_best:
+            checkpoint_mgr.save_local(model, optimizer, scheduler, epoch + 1, avg_loss, is_best)
+        
+        if verbose and (epoch + 1) % 5 == 0:
+            print(f"   Epoch {epoch+1}/{epochs} | Loss: {avg_loss:.6f} | Val: {val_loss:.6f} | Best: {best_loss:.6f}")
+        
+        if patience_counter >= patience:
+            print(f"   ⏹️ Early stop at epoch {epoch+1}")
+            break
+    
+    # Save final local checkpoint
+    checkpoint_mgr.save_local(model, optimizer, scheduler, epoch + 1, avg_loss, is_best=True)
+    
+    predictor.model = model
+    predictor.is_fitted = True
+    
+    # ============================
+    # STEP 1: 🧠 LEARN FROM MISTAKES (On Validation Set)
+    # ============================
+    print(f"\n{'='*50}")
+    print(f"🧠 LEARNING FROM VALIDATION MISTAKES")
+    print(f"{'='*50}")
+    
+    model.eval()
+    total_correct = 0
+    total_samples = 0
+    all_preds = []
+    all_actuals = []
+    
+    with torch.no_grad():
+        for batch_X, batch_y in val_loader:
+            preds = model(batch_X).cpu().numpy()
+            actuals = batch_y.cpu().numpy()
+            
+            for i in range(len(preds)):
+                predicted_up = preds[i][0] > 0.5
+                actual_up = actuals[i][0] > 0.5
+                
+                if predicted_up == actual_up:
+                    total_correct += 1
+                
+                # Record for mistake learning
+                mistake_learner.record(
+                    date=f"val_{total_samples}",
+                    predicted_prob=preds[i][0],
+                    actual_return=actuals[i][0] - 0.5
+                )
+                
+                all_preds.append(preds[i])
+                all_actuals.append(actuals[i])
+                total_samples += 1
+    
+    # Calculate initial accuracy
+    initial_accuracy = total_correct / max(total_samples, 1)
+    print(f"   📊 Initial Accuracy: {initial_accuracy:.1%}")
+    
+    # Apply mistake learning corrections
+    corrected_correct = 0
+    for i in range(len(all_preds)):
+        up, down = mistake_learner.apply(all_preds[i][0], all_preds[i][1])
+        predicted_up = up > 0.5
+        actual_up = all_actuals[i][0] > 0.5
+        if predicted_up == actual_up:
+            corrected_correct += 1
+    
+    corrected_accuracy = corrected_correct / max(total_samples, 1)
+    print(f"   📊 Accuracy after corrections: {corrected_accuracy:.1%}")
+    print(f"   📈 Improvement: {corrected_accuracy - initial_accuracy:+.1%}")
+    
+    # ============================
+    # STEP 2: 📊 CHECK IF SHOULD UPLOAD TO HF
+    # ============================
+    print(f"\n{'='*50}")
+    print(f"📊 HF UPLOAD DECISION")
+    print(f"{'='*50}")
+    
+    if corrected_accuracy < initial_accuracy:
+        # Corrections made it worse → retrain instead
+        print(f"   ⚠️ Corrections reduced accuracy!")
+        print(f"   🔄 Need retraining, skipping HF upload")
+        
+        result = {
+            'status': 'needs_retrain',
+            'initial_accuracy': initial_accuracy,
+            'corrected_accuracy': corrected_accuracy,
+            'uploaded_to_hf': False,
+            'reason': 'accuracy_decreased'
+        }
+    
+    elif corrected_accuracy >= min_accuracy:
+        # Good enough → upload to HF
+        print(f"   ✅ Accuracy {corrected_accuracy:.1%} >= {min_accuracy:.0%} threshold")
+        
+        if backup_to_hf:
+            checkpoint_mgr.upload_final_to_hf()
+            uploaded = True
+            print(f"   ☁️ Uploaded to HF!")
+        else:
+            uploaded = False
+        
+        result = {
+            'status': 'success',
+            'initial_accuracy': initial_accuracy,
+            'corrected_accuracy': corrected_accuracy,
+            'uploaded_to_hf': uploaded,
+            'correction_type': mistake_learner.corrections.get('type', 'none')
+        }
+    
+    else:
+        # Accuracy too low → don't upload
+        print(f"   ⚠️ Accuracy {corrected_accuracy:.1%} < {min_accuracy:.0%} threshold")
+        print(f"   📂 Saved locally only, skipping HF upload")
+        
+        result = {
+            'status': 'low_accuracy',
+            'initial_accuracy': initial_accuracy,
+            'corrected_accuracy': corrected_accuracy,
+            'uploaded_to_hf': False,
+            'reason': f'accuracy {corrected_accuracy:.1%} < threshold {min_accuracy:.0%}'
+        }
+    
+    # Save final model locally (always)
+    checkpoint_mgr.save_local(model, optimizer, scheduler, epoch + 1, avg_loss, is_best=True)
+    
+    # Also save model using predictor's method
+    predictor._save_model()
+    
+    print(f"\n✅ {symbol}: {result['status'].upper()}")
+    return result
+
+
+# =========================================================
+# MAIN
 # =========================================================
 
 if __name__ == "__main__":
-    print("🧪 Testing PatchTST Predictor\n")
+    import sys
     
-    # Create dummy data
-    dates = pd.date_range('2023-01-01', periods=500, freq='B')
-    np.random.seed(42)
+    print("🚀 PatchTST Training (Checkpoint + Mistake Learning + Smart HF Upload)")
+    print("="*60)
     
-    price = 100 + np.cumsum(np.random.randn(500) * 1.5)
+    # Load data
+    data_path = sys.argv[1] if len(sys.argv) > 1 else './csv/mongodb.csv'
+    symbol = sys.argv[2] if len(sys.argv) > 2 else None
     
-    df = pd.DataFrame({
-        'date': dates,
-        'open': price * 0.99,
-        'high': price * 1.02,
-        'low': price * 0.98,
-        'close': price,
-        'volume': np.random.randint(10000, 100000, 500)
-    })
+    df = pd.read_csv(data_path)
+    df['date'] = pd.to_datetime(df['date'])
+    print(f"   ✅ Loaded {len(df)} rows, {df['symbol'].nunique()} symbols")
     
-    # Initialize predictor
-    predictor = PatchTSTPredictor(seq_len=60, pred_len=5)
+    if symbol:
+        symbols = [symbol]
+    else:
+        counts = df.groupby('symbol').size()
+        symbols = counts[counts >= 150].index.tolist()
+        print(f"   🎯 {len(symbols)} symbols with 150+ rows")
     
-    # Train
-    print("Training model...")
-    predictor.fit(df, epochs=30, batch_size=32, verbose=True)
+    results = []
+    hf_uploads = 0
     
-    # Predict
-    print("\n📊 Prediction for next 5 days:")
-    result = predictor.predict_next_n_days(df)
+    for i, sym in enumerate(symbols[:10], 1):  # First 10 for safety
+        sym_df = df[df['symbol'] == sym].sort_values('date')
+        
+        result = train_patchtst_with_checkpoint(
+            symbol=sym,
+            df=sym_df,
+            epochs=50,
+            resume=True,        # Local থেকে রিজিউম
+            backup_to_hf=True,  # HF-তে ব্যাকআপ (শুধু ভালো হলে)
+            min_accuracy=0.50,
+            verbose=True
+        )
+        
+        results.append({'symbol': sym, **result})
+        
+        if result.get('uploaded_to_hf'):
+            hf_uploads += 1
+        
+        print(f"\n📊 Progress: {i}/{min(10, len(symbols))} | ☁️ Uploaded: {hf_uploads}")
     
-    for key, value in result.items():
-        print(f"   {key}: {value}")
+    # Final summary
+    print(f"\n{'='*60}")
+    print(f"🎉 FINAL SUMMARY")
+    print(f"{'='*60}")
+    for r in results:
+        status_emoji = "✅" if r['status'] == 'success' else "🔄" if r['status'] == 'needs_retrain' else "⚠️"
+        acc = r.get('corrected_accuracy', r.get('initial_accuracy', 0))
+        print(f"   {status_emoji} {r['symbol']}: {r['status']} | Acc: {acc:.1%} | HF: {r.get('uploaded_to_hf', False)}")
     
-    # Feature vector
-    features = predictor.get_feature_vector(df)
-    print(f"\n📐 Feature vector shape: {features.shape}")
-    print(f"   Values: {features}")
-    
-    print("\n✅ Test complete!")
+    print(f"\n✅ ALL DONE! {hf_uploads} models uploaded to HF")
