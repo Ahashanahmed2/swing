@@ -1,12 +1,13 @@
-# ================== tst_download.py ==================
+# ================== tst_download.py (UPDATED) ==================
 # PatchTST Data Downloader from Hugging Face
-# Downloads only required files for PatchTST training
-# No files deleted, only downloads missing/new files
+# ✅ Downloads only LATEST checkpoints
+# ✅ Deletes old checkpoints after download
 # ✅ Rate limit handling with auto-retry
 
 import os
 import sys
 import time
+import shutil
 from pathlib import Path
 from datetime import datetime
 
@@ -19,11 +20,11 @@ LOCAL_DIR = "./csv"
 
 # Files/Folders needed for PatchTST
 PATCHTST_PATTERNS = [
-    "mongodb.csv",              # Main OHLCV data
-    "support_resistance.csv",   # Support/Resistance levels
-    "rsi_diver.csv",           # RSI Divergence
-    "sector/*.csv",            # Sector features (daily + weekly)
-    "patchtst_models/**",      # Existing PatchTST models (checkpoints)
+    "mongodb.csv",
+    "support_resistance.csv",
+    "rsi_diver.csv",
+    "sector/*.csv",
+    "patchtst_models/**",
 ]
 
 MAX_RETRIES = 5
@@ -31,7 +32,103 @@ RATE_LIMIT_WAIT = 300  # 5 minutes
 
 
 # =========================================================
-# DOWNLOAD FUNCTION WITH RATE LIMIT HANDLER
+# CLEANUP: DELETE OLD CHECKPOINTS
+# =========================================================
+
+def delete_old_checkpoints(keep_only_latest=True):
+    """
+    Delete old checkpoint files, keep only:
+    - patchtst_model.pt (best model)
+    - Latest epoch checkpoint
+    - progress.json, mistakes.json, scaler.pkl
+    """
+    
+    models_dir = Path(LOCAL_DIR) / "patchtst_models"
+    
+    if not models_dir.exists():
+        print("   ℹ️ No patchtst_models directory to clean")
+        return
+    
+    deleted_count = 0
+    kept_count = 0
+    
+    for sym_dir in models_dir.iterdir():
+        if not sym_dir.is_dir() or sym_dir.name.startswith('_'):
+            continue
+        
+        checkpoint_dir = sym_dir / "checkpoints"
+        
+        if not checkpoint_dir.exists():
+            continue
+        
+        # Get all checkpoint files
+        checkpoint_files = sorted(checkpoint_dir.glob("epoch_*.pt"))
+        
+        if len(checkpoint_files) <= 1:
+            kept_count += len(checkpoint_files)
+            continue
+        
+        if keep_only_latest:
+            # Keep only the latest checkpoint
+            latest = checkpoint_files[-1]
+            
+            for ckpt in checkpoint_files[:-1]:  # সব পুরাতন
+                ckpt.unlink()
+                deleted_count += 1
+            
+            kept_count += 1  # latest
+            
+            # Rename latest to epoch_final.pt
+            # (optional, keep as is)
+    
+    print(f"\n🧹 CHECKPOINT CLEANUP:")
+    print(f"   🗑️ Deleted: {deleted_count} old checkpoints")
+    print(f"   📂 Kept: {kept_count} latest checkpoints")
+    
+    return deleted_count
+
+
+def delete_empty_dirs():
+    """Delete empty checkpoint directories"""
+    
+    models_dir = Path(LOCAL_DIR) / "patchtst_models"
+    
+    if not models_dir.exists():
+        return
+    
+    for sym_dir in models_dir.iterdir():
+        if not sym_dir.is_dir() or sym_dir.name.startswith('_'):
+            continue
+        
+        checkpoint_dir = sym_dir / "checkpoints"
+        
+        if checkpoint_dir.exists():
+            # Delete empty checkpoint dir
+            files = list(checkpoint_dir.glob("*"))
+            if not files:
+                checkpoint_dir.rmdir()
+
+
+# =========================================================
+# KEEP ONLY LATEST CHECKPOINTS ON HF TOO
+# =========================================================
+
+def get_latest_checkpoint_info(symbol):
+    """Get latest checkpoint info from progress.json"""
+    
+    progress_path = Path(LOCAL_DIR) / f"patchtst_models/{symbol}/progress.json"
+    
+    if progress_path.exists():
+        import json
+        with open(progress_path) as f:
+            progress = json.load(f)
+        return progress.get('last_epoch', 0), progress.get('last_loss', 0)
+    
+    return 0, 0
+
+
+# =========================================================
+# DOWNLOAD FUNCTIONS (Same as before)
 # =========================================================
 
 def download_patchtst_data():
@@ -46,11 +143,20 @@ def download_patchtst_data():
     print(f"📊 Patterns: {len(PATCHTST_PATTERNS)}")
     print("=" * 60)
     
-    # Check HF token
+    # ============================
+    # STEP 1: DELETE OLD CHECKPOINTS
+    # ============================
+    print(f"\n🧹 Step 1: Cleaning old checkpoints...")
+    delete_old_checkpoints(keep_only_latest=True)
+    delete_empty_dirs()
+    
+    # ============================
+    # STEP 2: DOWNLOAD FROM HF
+    # ============================
+    
     hf_token = os.getenv("HF_TOKEN", "") or os.getenv("hf_token", "")
     if not hf_token:
         print("❌ HF_TOKEN not found in environment!")
-        print("   Set with: export HF_TOKEN=your_token")
         return False
     
     try:
@@ -58,10 +164,8 @@ def download_patchtst_data():
         from huggingface_hub.utils import HfHubHTTPError
     except ImportError:
         print("❌ huggingface_hub not installed!")
-        print("   Install: pip install huggingface_hub")
         return False
     
-    # Download each pattern separately
     total_downloaded = 0
     total_skipped = 0
     total_failed = 0
@@ -72,6 +176,17 @@ def download_patchtst_data():
         
         attempt = 0
         success = False
+        
+        # Skip patchtst_models if no HF token or first run
+        if pattern == "patchtst_models/**":
+            # Check if we need to download models
+            models_dir = Path(LOCAL_DIR) / "patchtst_models"
+            existing_symbols = []
+            if models_dir.exists():
+                existing_symbols = [d.name for d in models_dir.iterdir() 
+                                   if d.is_dir() and not d.name.startswith('_')]
+            
+            print(f"   Existing local models: {len(existing_symbols)} symbols")
         
         while attempt < MAX_RETRIES and not success:
             attempt += 1
@@ -96,15 +211,11 @@ def download_patchtst_data():
                 
             except HfHubHTTPError as e:
                 if "429" in str(e):
-                    # Rate limited
                     wait_time = RATE_LIMIT_WAIT
                     print(f"\n   ⚠️ Rate limited! (Attempt {attempt}/{MAX_RETRIES})")
                     
                     if attempt < MAX_RETRIES:
                         print(f"   ⏳ Waiting {wait_time//60} minutes...")
-                        print(f"   📊 Already downloaded files will resume")
-                        
-                        # Countdown
                         for remaining in range(wait_time, 0, -60):
                             mins = remaining // 60
                             print(f"      {mins} min remaining...")
@@ -116,7 +227,7 @@ def download_patchtst_data():
                 elif "404" in str(e):
                     print(f"   ⚠️ {pattern} (not found on HF, skipping)")
                     total_skipped += 1
-                    success = True  # Skip this pattern
+                    success = True
                     
                 else:
                     print(f"   ❌ {pattern} (error: {str(e)[:100]})")
@@ -134,6 +245,13 @@ def download_patchtst_data():
                     total_failed += 1
     
     # ============================
+    # STEP 3: CLEANUP AGAIN (remove duplicates)
+    # ============================
+    print(f"\n🧹 Step 3: Cleaning duplicate checkpoints...")
+    delete_old_checkpoints(keep_only_latest=True)
+    delete_empty_dirs()
+    
+    # ============================
     # SUMMARY
     # ============================
     print(f"\n{'='*60}")
@@ -143,10 +261,18 @@ def download_patchtst_data():
     print(f"   ⏭️ Skipped: {total_skipped}")
     print(f"   ❌ Failed: {total_failed}")
     
-    # Count files
     csv_dir = Path(LOCAL_DIR)
     total_files = len(list(csv_dir.rglob("*"))) if csv_dir.exists() else 0
     print(f"   📂 Total files in ./csv/: {total_files}")
+    
+    # Count models
+    models_dir = Path(LOCAL_DIR) / "patchtst_models"
+    if models_dir.exists():
+        symbol_count = len([d for d in models_dir.iterdir() 
+                           if d.is_dir() and not d.name.startswith('_')])
+        checkpoint_count = len(list(models_dir.rglob("epoch_*.pt")))
+        print(f"   🧠 Models: {symbol_count} symbols, {checkpoint_count} checkpoints")
+    
     print(f"{'='*60}")
     
     if total_failed == 0:
@@ -158,60 +284,7 @@ def download_patchtst_data():
 
 
 # =========================================================
-# QUICK DOWNLOAD (Single pattern)
-# =========================================================
-
-def download_single_pattern(pattern, max_retries=3):
-    """Download a single pattern with retry"""
-    
-    hf_token = os.getenv("HF_TOKEN", "") or os.getenv("hf_token", "")
-    
-    if not hf_token:
-        print("❌ No HF_TOKEN")
-        return False
-    
-    from huggingface_hub import snapshot_download
-    
-    attempt = 0
-    while attempt < max_retries:
-        attempt += 1
-        try:
-            snapshot_download(
-                repo_id=HF_REPO,
-                repo_type="dataset",
-                local_dir=LOCAL_DIR,
-                allow_patterns=pattern,
-                max_workers=2,
-                local_dir_use_symlinks=False,
-                token=hf_token,
-                resume_download=True,
-                tqdm_class=None,
-                ignore_patterns=["*.tmp", "*.log"],
-            )
-            print(f"✅ {pattern}")
-            return True
-        except Exception as e:
-            if "429" in str(e):
-                wait_time = 300
-                print(f"\n⚠️ Rate limited! (Attempt {attempt}/{max_retries})")
-                if attempt < max_retries:
-                    print(f"⏳ Waiting {wait_time//60} minutes...")
-                    time.sleep(wait_time)
-                else:
-                    print(f"❌ Max retries reached")
-                    return False
-            else:
-                print(f"❌ {pattern}: {str(e)[:50]}")
-                if attempt < max_retries:
-                    time.sleep(10)
-                else:
-                    return False
-    
-    return False
-
-
-# =========================================================
-# VERIFY DOWNLOADED DATA
+# VERIFY (Same as before)
 # =========================================================
 
 def verify_patchtst_data():
@@ -237,9 +310,12 @@ def verify_patchtst_data():
     # PatchTST models
     models_dir = Path("./csv/patchtst_models")
     if models_dir.exists():
-        model_files = list(models_dir.rglob("*.pt"))
-        if model_files:
-            print(f"   ✅ patchtst_models/ ({len(model_files)} model files)")
+        symbols = [d.name for d in models_dir.iterdir() 
+                  if d.is_dir() and not d.name.startswith('_')]
+        if symbols:
+            # Count total checkpoints
+            ckpt_count = len(list(models_dir.rglob("epoch_*.pt")))
+            print(f"   ✅ patchtst_models/ ({len(symbols)} symbols, {ckpt_count} checkpoints)")
         else:
             print(f"   ℹ️ patchtst_models/ (empty)")
     else:
@@ -262,18 +338,26 @@ def verify_patchtst_data():
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="PatchTST Data Downloader")
+    parser = argparse.ArgumentParser(description="PatchTST Data Downloader (Latest Only)")
     parser.add_argument("--verify-only", action="store_true", help="Only verify data")
+    parser.add_argument("--clean-only", action="store_true", help="Only clean old checkpoints")
     parser.add_argument("--pattern", type=str, help="Download single pattern")
-    parser.add_argument("--max-retries", type=int, default=5, help="Max download retries")
     args = parser.parse_args()
     
     if args.verify_only:
         verify_patchtst_data()
     
+    elif args.clean_only:
+        print("🧹 Cleaning old checkpoints...")
+        deleted = delete_old_checkpoints(keep_only_latest=True)
+        delete_empty_dirs()
+        print(f"✅ Deleted {deleted} old checkpoint files")
+        verify_patchtst_data()
+    
     elif args.pattern:
         print(f"📥 Downloading: {args.pattern}")
-        download_single_pattern(args.pattern, args.max_retries)
+        download_single_pattern(args.pattern)
+        delete_old_checkpoints(keep_only_latest=True)
         verify_patchtst_data()
     
     else:
@@ -286,7 +370,7 @@ if __name__ == "__main__":
 
 
 # =========================================================
-# EASY IMPORT FOR OTHER SCRIPTS
+# UTILITY
 # =========================================================
 
 def ensure_patchtst_data():
