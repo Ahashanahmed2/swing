@@ -156,7 +156,10 @@ def download_from_hf():
                 token=os.getenv("hf_token"),
                 resume_download=True,
                 tqdm_class=None,
-                ignore_patterns=["checkpoints/checkpoint-*"],
+                ignore_patterns=[
+                    "checkpoints/checkpoint-*",
+                    "patchtst_models/***",            #tst চেকপয়েন্ট বাদ
+                ]
             )
             
             total_time = (datetime.now() - start_time).total_seconds() / 60
