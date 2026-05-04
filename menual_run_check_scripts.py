@@ -11,7 +11,8 @@ import os
 scripts = [
     "scripts/mongodb.py",
     "scripts/export_unknown_symbols.py",
-    "scripts/ppo_train.py",
+    "scripts/generate_pdf.py",
+    "scripts/dayliMassage.py",
 ]
 
 for script in scripts:
