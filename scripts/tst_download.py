@@ -23,8 +23,7 @@ PATCHTST_PATTERNS = [
     "mongodb.csv",
     "support_resistance.csv",
     "rsi_diver.csv",
-    "sector/weekly/*.csv",
-    "sector/daily/*.csv",
+    "sector/**/*.csv",
     "patchtst_models/**",
 ]
 
