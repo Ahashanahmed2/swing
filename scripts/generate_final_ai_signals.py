@@ -32,7 +32,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # কনফিগারেশন
 # =========================================================
 LLM_MODEL_DIR = "./csv/llm_model"
-SUPPORT_RESISTANCE_PATH = "./output/ai_signal/support_resistant.csv"  # ✅ ঠিক আছে
 MONGO_PATH = "./csv/mongodb.csv"
 XGBOOST_DIR = "./csv/xgboost"
 PPO_MODELS_DIR = "./csv/ppo_models/per_symbol"
