@@ -263,6 +263,9 @@ class PatchTSTPredictor:
         if self.use_rsi_div_features:
             self._load_rsi_divergence()
     
+    # patch_tst_predictor.py - PatchTSTPredictor ক্লাসের ভিতরে
+    # _load_sector_features() ফাংশনটি (প্রায় Line 160-180) রিপ্লেস করুন:
+
     def _load_sector_features(self):
         sector_dir = Path('./csv/sector')
         if not sector_dir.exists():
@@ -271,21 +274,53 @@ class PatchTSTPredictor:
         try:
             weekly_files = list(sector_dir.glob('weekly/*.csv'))
             daily_files = list(sector_dir.glob('daily/*.csv'))
+
+            # সেক্টর থেকে সিম্বল ম্যাপিং
+            mongo_path = './csv/mongodb.csv'
+            sector_to_symbols = {}
+            if os.path.exists(mongo_path):
+                try:
+                    mongo_df = pd.read_csv(mongo_path)
+                    if 'sector' in mongo_df.columns:
+                        mongo_df['clean_sector'] = mongo_df['sector'].str.lower().str.replace('&', 'and').str.replace(' ', '_')
+                        for sector_name, group in mongo_df.groupby('clean_sector'):
+                            sector_to_symbols[sector_name] = list(group['symbol'].unique())
+                    else:
+                        self.use_sector_features = False
+                        return
+                except:
+                    self.use_sector_features = False
+                    return
+            else:
+                self.use_sector_features = False
+                return
+
             for f in weekly_files + daily_files:
                 try:
                     df = pd.read_csv(f)
                     has_rsi = 'rsi' in df.columns
-                    for _, row in df.iterrows():
-                        symbol = row.get('symbol', '')
-                        if symbol:
-                            if symbol not in self.sector_data:
-                                self.sector_data[symbol] = {}
-                            self.sector_data[symbol]['sector_returns'] = float(row.get('returns', 0))
-                            self.sector_data[symbol]['sector_volume'] = float(row.get('volume_ratio', 1))
-                            if has_rsi:
-                                self.sector_data[symbol]['sector_rsi'] = float(row.get('rsi', 50))
+                
+                    sector_slug = f.stem.replace('_weekly', '').replace('_daily', '')
+                
+                    symbols = sector_to_symbols.get(sector_slug, [])
+                    if not symbols:
+                        symbols = sector_to_symbols.get(sector_slug.replace('_', ' '), [])
+                
+                    if not symbols:
+                        continue
+
+                    for sym in symbols:
+                        if sym not in self.sector_data:
+                            self.sector_data[sym] = {}
+                    
+                        last_row = df.iloc[-1]
+                        self.sector_data[sym]['sector_returns'] = float(last_row.get('returns', df['close'].pct_change().iloc[-1] if 'close' in df.columns else 0))
+                        self.sector_data[sym]['sector_volume'] = float(last_row.get('volume_ratio', 1))
+                        if has_rsi:
+                            self.sector_data[sym]['sector_rsi'] = float(last_row.get('rsi', 50))
                 except:
                     pass
+                
             print(f"   ✅ Loaded sector features for {len(self.sector_data)} symbols")
         except:
             self.use_sector_features = False
