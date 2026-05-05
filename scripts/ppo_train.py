@@ -395,31 +395,31 @@ except ImportError:
 STATE_DIM = len(MARKET_COLS) * WINDOW + 4
 
 PPO_CONFIG = {
-    'n_steps': 1024,
-    'batch_size': 256,
+    'n_steps': 2048,
+    'batch_size': 512,
     'gamma': 0.997,
-    'learning_rate': 5e-5,
-    'ent_coef': 0.003,
+    'learning_rate': 1e-4,
+    'ent_coef': 0.001,
     'clip_range': 0.15,
     'vf_coef': 0.3,
     'max_grad_norm': 0.5,
     'gae_lambda': 0.97,
-    'n_epochs': 15,
-    'target_kl': 0.02,
+    'n_epochs': 20,
+    'target_kl': 0.03,
 }
 
 PPO_PER_SYMBOL_CONFIG = {
     'high_quality': {
         'n_steps': 4096, 'batch_size': 1024, 'learning_rate': 8e-5,
-        'timesteps': 50000, 'n_epochs': 20
+        'timesteps': 80000, 'n_epochs': 20
     },
     'good_quality': {
         'n_steps': 2048, 'batch_size': 512, 'learning_rate': 5e-5,
-        'timesteps': 40000, 'n_epochs': 15
+        'timesteps': 60000, 'n_epochs': 15
     },
     'fallback': {
         'n_steps': 2048, 'batch_size': 512, 'learning_rate': 5e-5,
-        'timesteps': 30000, 'n_epochs': 15
+        'timesteps': 40000, 'n_epochs': 15
     },
 }
 
