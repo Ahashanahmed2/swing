@@ -509,6 +509,10 @@ class MultiSymbolTradingEnv(gym.Env):
             self.sr_feature_dim
         )
 
+
+        self.market_cap_feature_dim = 1  # ✅ যোগ করুন
+        self.effective_state_dim = (... + self.market_cap_feature_dim)
+
         # -------- Spaces --------
         self.action_space = spaces.MultiDiscrete([3] * self.n_symbols)
 
@@ -802,6 +806,12 @@ class MultiSymbolTradingEnv(gym.Env):
             else:
                 o = np.zeros(self.effective_state_dim)
             obs.append(o)
+            
+        if 'freeFloatMarketCap' in df.columns:
+            mcap = df.iloc[self.t].get('freeFloatMarketCap', 0)
+            mcap_norm = np.log1p(float(mcap)) / 10  # Normalize
+            o = np.concatenate([o, [mcap_norm]])
+
         return np.asarray(obs, dtype=np.float32)
 
     # -------------------------------------------------
@@ -878,7 +888,7 @@ class MultiSymbolTradingEnv(gym.Env):
                     self.entry_price[s] = 0.0
 
             if action != 0 and reward == 0:
-                reward -= 0.001
+                reward -= 0.005
 
             rewards.append(reward)
             done_flags.append(self.t >= len(df) - 1)
