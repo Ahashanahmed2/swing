@@ -759,10 +759,11 @@ for i, symbol in enumerate(target_symbols):
     final_score = calculate_final_combined_score(llm_sig, xgb_sig, ppo_sig, agentic_sig, patch_tst_sig, sector_sig)
     final_signal = get_final_signal_label(final_score)
     
-    # সাপোর্ট লেভেল থেকে এন্ট্রি/স্টপ/টার্গেট
-    sr_row = sr_df[sr_df['symbol'] == symbol]
-    sr_row = sr_row.iloc[0] if len(sr_row) > 0 else None
-    
+    sr_row = None
+    if not sr_df.empty and 'symbol' in sr_df.columns:
+        sr_match = sr_df[sr_df['symbol'] == symbol]
+        sr_row = sr_match.iloc[0] if len(sr_match) > 0 else None
+
     entry_price = llm_sig['entry'] if llm_sig['entry'] > 0 else market_row.get('close', 0)
     stop_loss = sr_row['level_price'] * 0.98 if sr_row is not None else entry_price * 0.95
     target_price = entry_price * 1.05
