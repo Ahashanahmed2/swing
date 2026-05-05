@@ -821,16 +821,17 @@ for i, symbol in enumerate(target_symbols):
         'sector_score': sector_sig['score'],
         'is_top_sector': sector_sig['is_top'],
         
-        # Elliott Wave
-        'elliott_accuracy': elliott_data.get('accuracy', 50),
-        'elliott_total_predictions': elliott_data.get('total_predictions', 0),
-        'elliott_wave_count': elliott_details['wave_count'],
-        'elliott_sub_waves': elliott_details['sub_waves'],
-        'elliott_current_wave': elliott_details['current_wave'],
-        'elliott_wave_confidence': elliott_details['wave_confidence'],
-        'elliott_is_bullish': elliott_details['is_bullish'],
-        'elliott_wave_position': elliott_details['wave_position'],
-        
+         # Elliott Wave - ✅ None-safe
+         'elliott_accuracy': elliott_data.get('accuracy', 50),
+         'elliott_total_predictions': elliott_data.get('total_predictions', 0),
+         'elliott_wave_count': elliott_details['wave_count'] if elliott_details else 'No Data',
+         'elliott_sub_waves': elliott_details['sub_waves'] if elliott_details else 'N/A',
+         'elliott_current_wave': elliott_details['current_wave'] if elliott_details else 'Unknown',
+         'elliott_wave_confidence': elliott_details['wave_confidence'] if elliott_details else 0,
+         'elliott_is_bullish': elliott_details['is_bullish'] if elliott_details else False,
+         'elliott_wave_position': elliott_details['wave_position'] if elliott_details else 'Unknown',
+    
+    # ... rest of fields ...
         # ফাইনাল
         'model_availability': model_avail,
         'final_combined_score': round(final_score, 1),
