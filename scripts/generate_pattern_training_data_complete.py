@@ -5259,6 +5259,291 @@ def get_example_weight(pattern_type, sector_strength, reliability):
     return min(weight, 5.0)
 
 
+def calculate_timeframe_confluence(symbol_data, idx=None):
+    """
+    🔥 Multi-Timeframe Confluence Analyzer
+    Uses: Weekly (5-period) + Daily (20-period) + Intraday Momentum
+    Your mongodb.csv has: Daily OHLCV data
+    
+    Features:
+    - Weekly trend (5-period SMA on daily data)
+    - Daily trend (20-period SMA crossover)
+    - Intraday momentum (3-period proxy)
+    - RSI multi-timeframe alignment
+    - Volume confirmation
+    - Score: 0-100
+    - Confidence boost: -20 to +20
+    - Detailed breakdown for LLM training
+    """
+    
+    if symbol_data is None or len(symbol_data) < 50:
+        return {
+            'confluence': 50,
+            'confidence_boost': 0,
+            'label': 'INSUFFICIENT DATA',
+            'trends': {},
+            'breakdown': 'Not enough data for multi-timeframe analysis.'
+        }
+    
+    closes = np.array(symbol_data['close'].values)
+    volumes = np.array(symbol_data['volume'].values) if 'volume' in symbol_data.columns else np.ones(len(closes))
+    
+    current_price = closes[-1]
+    data_len = len(closes)
+    
+    # ============================================================
+    # 1. WEEKLY TREND (5-period on daily = 1 week proxy)
+    # ============================================================
+    weekly_period = min(5, data_len)
+    weekly_closes = closes[-weekly_period:] if data_len >= weekly_period else closes
+    
+    weekly_sma = np.mean(weekly_closes)
+    weekly_trend = 'UP' if closes[-1] > weekly_sma else 'DOWN'
+    
+    # Weekly RSI (5-period proxy)
+    weekly_returns = np.diff(weekly_closes)
+    weekly_gains = np.sum(weekly_returns[weekly_returns > 0]) if len(weekly_returns) > 0 else 0
+    weekly_losses = abs(np.sum(weekly_returns[weekly_returns < 0])) if len(weekly_returns) > 0 else 1
+    weekly_rsi = 100 - (100 / (1 + weekly_gains / max(weekly_losses, 1e-10)))
+    
+    # Weekly strength
+    if weekly_rsi < 35:
+        weekly_status = 'OVERSOLD'
+    elif weekly_rsi > 65:
+        weekly_status = 'OVERBOUGHT'
+    else:
+        weekly_status = 'NEUTRAL'
+    
+    # ============================================================
+    # 2. DAILY TREND (20-period SMA crossover)
+    # ============================================================
+    daily_period = min(20, data_len)
+    daily_closes = closes[-daily_period:] if data_len >= daily_period else closes
+    
+    # Short-term SMA (5)
+    sma_short = np.mean(closes[-5:]) if len(closes) >= 5 else np.mean(closes)
+    # Medium-term SMA (20)
+    sma_long = np.mean(daily_closes)
+    
+    daily_trend = 'UP' if sma_short > sma_long else 'DOWN'
+    
+    # Daily RSI (14-period)
+    rsi_period = min(14, data_len - 1)
+    daily_returns = np.diff(closes[-rsi_period-1:]) if data_len > rsi_period else np.diff(closes)
+    daily_gains = np.sum(daily_returns[daily_returns > 0]) if len(daily_returns) > 0 else 0
+    daily_losses = abs(np.sum(daily_returns[daily_returns < 0])) if len(daily_returns) > 0 else 1
+    daily_rsi = 100 - (100 / (1 + daily_gains / max(daily_losses, 1e-10)))
+    
+    if daily_rsi < 35:
+        daily_status = 'OVERSOLD'
+    elif daily_rsi > 65:
+        daily_status = 'OVERBOUGHT'
+    else:
+        daily_status = 'NEUTRAL'
+    
+    # ============================================================
+    # 3. INTRADAY MOMENTUM (3-period proxy from daily data)
+    # ============================================================
+    intraday_period = min(3, data_len)
+    intraday_closes = closes[-intraday_period:] if data_len >= intraday_period else closes
+    
+    intraday_momentum = (intraday_closes[-1] / intraday_closes[0] - 1) * 100 if len(intraday_closes) >= 2 else 0
+    
+    if intraday_momentum > 0.2:
+        intraday_trend = 'UP'
+    elif intraday_momentum < -0.2:
+        intraday_trend = 'DOWN'
+    else:
+        intraday_trend = 'FLAT'
+    
+    # ============================================================
+    # 4. PRICE POSITION (52-week range)
+    # ============================================================
+    high_52w = np.max(closes[-min(252, data_len):])
+    low_52w = np.min(closes[-min(252, data_len):])
+    range_52w = high_52w - low_52w
+    
+    if range_52w > 0:
+        price_position = (current_price - low_52w) / range_52w * 100
+    else:
+        price_position = 50
+    
+    if price_position > 80:
+        position_label = 'NEAR 52W HIGH'
+    elif price_position < 20:
+        position_label = 'NEAR 52W LOW'
+    elif price_position > 60:
+        position_label = 'UPPER RANGE'
+    elif price_position < 40:
+        position_label = 'LOWER RANGE'
+    else:
+        position_label = 'MID RANGE'
+    
+    # ============================================================
+    # 5. VOLUME CONFIRMATION
+    # ============================================================
+    recent_vol = np.mean(volumes[-5:]) if len(volumes) >= 5 else np.mean(volumes)
+    older_vol = np.mean(volumes[-20:-5]) if len(volumes) >= 20 else recent_vol
+    
+    if recent_vol > older_vol * 1.2:
+        volume_trend = 'INCREASING'
+        volume_signal = 'CONFIRMING'
+    elif recent_vol < older_vol * 0.8:
+        volume_trend = 'DECREASING'
+        volume_signal = 'WEAKENING'
+    else:
+        volume_trend = 'STABLE'
+        volume_signal = 'NEUTRAL'
+    
+    # ============================================================
+    # 6. TREND STRENGTH (using closes vs SMA)
+    # ============================================================
+    sma_50 = np.mean(closes[-min(50, data_len):])
+    
+    # Distance from SMA-50
+    distance_from_sma50 = (current_price / sma_50 - 1) * 100 if sma_50 > 0 else 0
+    
+    if distance_from_sma50 > 10:
+        trend_strength = 'STRONG BULLISH'
+    elif distance_from_sma50 > 3:
+        trend_strength = 'BULLISH'
+    elif distance_from_sma50 < -10:
+        trend_strength = 'STRONG BEARISH'
+    elif distance_from_sma50 < -3:
+        trend_strength = 'BEARISH'
+    else:
+        trend_strength = 'NEUTRAL'
+    
+    # ============================================================
+    # 7. RSI CONFLUENCE
+    # ============================================================
+    rsi_statuses = [weekly_status, daily_status]
+    
+    if rsi_statuses.count('OVERSOLD') == 2:
+        rsi_confluence = 'BULLISH (Both Oversold)'
+    elif rsi_statuses.count('OVERBOUGHT') == 2:
+        rsi_confluence = 'BEARISH (Both Overbought)'
+    elif 'OVERSOLD' in rsi_statuses:
+        rsi_confluence = 'MILDLY BULLISH (Partial Oversold)'
+    elif 'OVERBOUGHT' in rsi_statuses:
+        rsi_confluence = 'MILDLY BEARISH (Partial Overbought)'
+    else:
+        rsi_confluence = 'NEUTRAL'
+    
+    # ============================================================
+    # 8. SCORING (0-100)
+    # ============================================================
+    trends = {
+        'Weekly': weekly_trend,
+        'Daily': daily_trend,
+        'Intraday': intraday_trend
+    }
+    
+    up_count = sum(1 for t in trends.values() if t == 'UP')
+    down_count = sum(1 for t in trends.values() if t == 'DOWN')
+    
+    # Base score from trend alignment
+    if up_count == 3:
+        base_score = 90
+        alignment = 'FULL BULLISH (All Up)'
+    elif down_count == 3:
+        base_score = 10
+        alignment = 'FULL BEARISH (All Down)'
+    elif up_count == 2:
+        base_score = 70
+        alignment = 'MOSTLY BULLISH (2/3 Up)'
+    elif down_count == 2:
+        base_score = 30
+        alignment = 'MOSTLY BEARISH (2/3 Down)'
+    else:
+        base_score = 50
+        alignment = 'MIXED'
+    
+    # Adjustments
+    if 'OVERSOLD' in rsi_statuses:
+        base_score += 8
+    
+    if 'OVERBOUGHT' in rsi_statuses:
+        base_score -= 8
+    
+    if volume_signal == 'CONFIRMING' and up_count >= 2:
+        base_score += 5
+    elif volume_signal == 'CONFIRMING' and down_count >= 2:
+        base_score -= 5
+    
+    if price_position < 20 and weekly_trend == 'UP':
+        base_score += 5  # Near 52W low but starting to turn up
+    
+    if price_position > 80 and weekly_trend == 'DOWN':
+        base_score -= 5  # Near 52W high but starting to turn down
+    
+    final_score = max(5, min(95, base_score))
+    
+    # ============================================================
+    # 9. CONFIDENCE BOOST for LLM
+    # ============================================================
+    if final_score >= 80:
+        confidence_boost = 15
+        signal = '🔥 STRONG SIGNAL'
+    elif final_score >= 65:
+        confidence_boost = 8
+        signal = '✅ MODERATE SIGNAL'
+    elif final_score >= 45:
+        confidence_boost = 0
+        signal = '⏳ NEUTRAL'
+    elif final_score >= 30:
+        confidence_boost = -8
+        signal = '⚠️ WEAK SIGNAL'
+    else:
+        confidence_boost = -15
+        signal = '❌ AVOID'
+    
+    # ============================================================
+    # 10. DETAILED BREAKDOWN for LLM Training
+    # ============================================================
+    breakdown = f"""
+📊 MULTI-TIMEFRAME CONFLUENCE ANALYSIS:
+────────────────────────────────────────────────────────────────────────────────
+📅 Weekly Trend:   {weekly_trend:<6} (RSI: {weekly_rsi:.1f} - {weekly_status})
+📅 Daily Trend:    {daily_trend:<6} (RSI: {daily_rsi:.1f} - {daily_status})
+⚡ Intraday:       {intraday_trend:<6} (Momentum: {intraday_momentum:+.2f}%)
+
+📈 Trend Strength:    {trend_strength} (SMA50: {sma_50:.2f}, {distance_from_sma50:+.1f}%)
+📍 Price Position:   {position_label} ({price_position:.0f}% of 52W range)
+📊 Volume:           {volume_trend} ({volume_signal})
+
+🔗 Alignment:        {alignment}
+📉 RSI Confluence:   {rsi_confluence}
+
+🎯 CONFLUENCE SCORE: {final_score}/100 → {signal}
+📈 Confidence Boost: {confidence_boost:+d}
+"""
+    
+    return {
+        'confluence': final_score,
+        'confidence_boost': confidence_boost,
+        'label': alignment,
+        'signal': signal,
+        'trends': trends,
+        'rsi_values': {
+            'weekly': round(weekly_rsi, 1),
+            'daily': round(daily_rsi, 1)
+        },
+        'rsi_confluence': rsi_confluence,
+        'rsi_statuses': {
+            'weekly': weekly_status,
+            'daily': daily_status
+        },
+        'volume_trend': volume_trend,
+        'volume_signal': volume_signal,
+        'up_count': up_count,
+        'down_count': down_count,
+        'price_position': round(price_position, 1),
+        'position_label': position_label,
+        'trend_strength': trend_strength,
+        'breakdown': breakdown
+    }
+
 # =========================================================
 # MAIN FUNCTION
 # =========================================================
