@@ -293,11 +293,20 @@ def verify_patchtst_data():
     print(f"\n🔍 Verifying PatchTST data...")
     print("-" * 40)
     
+    # Sector চেক - recursive glob
+    sector_path = Path("./csv/sector")
+    if sector_path.exists():
+        sector_files = list(sector_path.rglob("*.csv"))  # ✅ recursive
+        sector_ok = len(sector_files) > 0
+    else:
+        sector_ok = False
+        sector_files = []
+    
     checks = {
         "mongodb.csv": Path("./csv/mongodb.csv").exists(),
         "support_resistance.csv": Path("./csv/support_resistance.csv").exists(),
         "rsi_diver.csv": Path("./csv/rsi_diver.csv").exists(),
-        "sector/": Path("./csv/sector").exists() and len(list(Path("./csv/sector").glob("*.csv"))) > 0,
+        "sector/": sector_ok,
     }
     
     all_ok = True
@@ -307,29 +316,71 @@ def verify_patchtst_data():
             all_ok = False
         print(f"   {status} {name}")
     
+    # Sector details
+    if sector_ok:
+        weekly_path = sector_path / "weekly"
+        daily_path = sector_path / "daily"
+        
+        weekly = len(list(weekly_path.glob("*.csv"))) if weekly_path.exists() else 0
+        daily = len(list(daily_path.glob("*.csv"))) if daily_path.exists() else 0
+        
+        print(f"      📂 sector/weekly/ → {weekly} files")
+        print(f"      📂 sector/daily/ → {daily} files")
+        print(f"      📂 Total sector files: {len(sector_files)}")
+        
+        # Show sector names
+        if weekly > 0:
+            sectors = [f.stem.replace('_weekly', '') for f in weekly_path.glob("*_weekly.csv")]
+            print(f"      🏭 Weekly sectors: {', '.join(sorted(sectors))}")
+    else:
+        print(f"      ⚠️ sector directory empty or missing")
+    
     # PatchTST models
     models_dir = Path("./csv/patchtst_models")
     if models_dir.exists():
         symbols = [d.name for d in models_dir.iterdir() 
                   if d.is_dir() and not d.name.startswith('_')]
         if symbols:
-            # Count total checkpoints
             ckpt_count = len(list(models_dir.rglob("epoch_*.pt")))
-            print(f"   ✅ patchtst_models/ ({len(symbols)} symbols, {ckpt_count} checkpoints)")
+            pt_count = len(list(models_dir.rglob("*.pt")))
+            json_count = len(list(models_dir.rglob("*.json")))
+            pkl_count = len(list(models_dir.rglob("*.pkl")))
+            
+            print(f"   ✅ patchtst_models/")
+            print(f"      🧠 Symbols: {len(symbols)}")
+            print(f"      📦 Checkpoints: {ckpt_count}")
+            print(f"      📄 JSON files: {json_count}")
+            print(f"      🥒 PKL files: {pkl_count}")
+            print(f"      📊 Total model files: {pt_count + json_count + pkl_count}")
         else:
-            print(f"   ℹ️ patchtst_models/ (empty)")
+            print(f"   ℹ️ patchtst_models/ (empty directory)")
     else:
         print(f"   ℹ️ patchtst_models/ (not created yet)")
+    
+    # Additional checks
+    print(f"\n📋 Full CSV directory stats:")
+    csv_dir = Path("./csv")
+    if csv_dir.exists():
+        total_files = len(list(csv_dir.rglob("*")))
+        total_csv = len(list(csv_dir.rglob("*.csv")))
+        total_dirs = len([d for d in csv_dir.rglob("*") if d.is_dir()])
+        print(f"   📁 Total files: {total_files}")
+        print(f"   📊 CSV files: {total_csv}")
+        print(f"   📂 Subdirectories: {total_dirs}")
     
     print(f"-" * 40)
     
     if all_ok:
         print(f"✅ Core data verified!")
+        print(f"   Ready for PatchTST training!")
     else:
         print(f"⚠️ Some core files missing. Run: python tst_download.py")
+        # Show specific issues
+        for name, exists in checks.items():
+            if not exists:
+                print(f"   ❌ Missing: {name}")
     
     return all_ok
-
 
 # =========================================================
 # MAIN
