@@ -133,7 +133,7 @@ print("="*70)
 # =========================================================
 print("\n📂 Loading Support/Resistance data...")
 sr_df = pd.read_csv(SUPPORT_RESISTANCE_PATH)
-target_symbols = sr_df['symbol'].unique().tolist()
+target_symbols = pd.read_csv(MONGO_PATH)['symbol'].unique().tolist()  # 396
 print(f"   ✅ Loaded {len(sr_df)} signals for {len(target_symbols)} symbols")
 
 # =========================================================
@@ -837,7 +837,9 @@ output_df = pd.DataFrame(results)
 
 # স্কোর অনুযায়ী সর্ট
 output_df = output_df.sort_values('final_combined_score', ascending=False)
-
+output_df = output_df[
+    (output_df['final_combined_score'] >= 55)
+]
 # সেভ
 output_df.to_csv(FINAL_OUTPUT_PATH, index=False)
 
