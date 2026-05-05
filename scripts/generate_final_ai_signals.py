@@ -549,6 +549,20 @@ def get_patch_tst_signal(symbol):
 # =========================================================
 # generate_final_ai_signals.py - get_sector_score() ফাংশনে:
 
+def get_sector_from_mongodb(symbol):
+    """সরাসরি mongodb.csv থেকে সেক্টর নাম নিন"""
+    try:
+        if os.path.exists(MONGO_PATH):
+            df = pd.read_csv(MONGO_PATH)
+            sym_data = df[df['symbol'] == symbol]
+            if len(sym_data) > 0:
+                sector = sym_data['sector'].iloc[-1]  # Latest sector
+                if pd.notna(sector) and sector not in ['Other', 'Unknown', '']:
+                    return {'score': 50, 'name': str(sector), 'is_top': False}
+    except:
+        pass
+    return {'score': 50, 'name': 'Unknown', 'is_top': False}
+
 def get_sector_score(symbol):
     """Sector ranking score - সরাসরি mongodb.csv থেকে সেক্টর নিন"""
     if not SECTOR_AVAILABLE or sector_engine is None:
@@ -576,20 +590,6 @@ def get_sector_score(symbol):
     except:
         return get_sector_from_mongodb(symbol)
 
-
-def get_sector_from_mongodb(symbol):
-    """সরাসরি mongodb.csv থেকে সেক্টর নাম নিন"""
-    try:
-        if os.path.exists(MONGO_PATH):
-            df = pd.read_csv(MONGO_PATH)
-            sym_data = df[df['symbol'] == symbol]
-            if len(sym_data) > 0:
-                sector = sym_data['sector'].iloc[-1]  # Latest sector
-                if pd.notna(sector) and sector not in ['Other', 'Unknown', '']:
-                    return {'score': 50, 'name': str(sector), 'is_top': False}
-    except:
-        pass
-    return {'score': 50, 'name': 'Unknown', 'is_top': False}
 # =========================================================
 # ১১. Agentic Loop এগ্রিগেটেড স্কোর (fallback for global)
 # =========================================================
