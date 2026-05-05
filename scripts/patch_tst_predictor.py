@@ -794,11 +794,11 @@ class PatchTSTPredictor:
         )
     
     def _create_optimizer(self, lr, model=None):
-    """Create optimizer - with optional model parameter"""
-    m = model if model is not None else self.model
-    if m is None:
-        return None
-    return torch.optim.AdamW(m.parameters(), lr=lr, weight_decay=1e-5)
+        """Create optimizer - with optional model parameter"""
+        m = model if model is not None else self.model
+        if m is None:
+            return None
+        return torch.optim.AdamW(m.parameters(), lr=lr, weight_decay=1e-5)
 
 # =========================================================
 # INTEGRATION WITH env_trading.py
