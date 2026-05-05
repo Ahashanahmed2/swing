@@ -1107,7 +1107,7 @@ def train_patchtst_with_checkpoint(
     y_train, y_val = y[:split_idx], y[split_idx:]
     
     model = predictor._create_model(X.shape[2])
-    optimizer = predictor._create_optimizer(learning_rate)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
     scheduler = predictor._create_scheduler(optimizer, epochs)
     
     start_epoch = 0
