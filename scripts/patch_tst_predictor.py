@@ -11,6 +11,7 @@
 # ✅ Weekly Fine-tune + Monthly Retrain
 # ✅ MAX QUALITY: Market Cap + EMA + Walk-Forward + OneCycleLR + Adaptive Params
 # ✅ ULTIMATE: 3-Layer LSTM, CosineAnnealing, Gradient Accumulation, Extended Epochs
+# ✅ RATE-LIMIT SAFE: 40s delay between HF uploads, max 90 commits/hour
 
 import numpy as np
 import pandas as pd
@@ -18,6 +19,7 @@ from pathlib import Path
 import pickle
 import json
 import os
+import time
 import warnings
 from datetime import datetime, timedelta
 from collections import deque
@@ -263,9 +265,6 @@ class PatchTSTPredictor:
         if self.use_rsi_div_features:
             self._load_rsi_divergence()
     
-    # patch_tst_predictor.py - PatchTSTPredictor ক্লাসের ভিতরে
-    # _load_sector_features() ফাংশনটি (প্রায় Line 160-180) রিপ্লেস করুন:
-
     def _load_sector_features(self):
         sector_dir = Path('./csv/sector')
         if not sector_dir.exists():
@@ -274,53 +273,21 @@ class PatchTSTPredictor:
         try:
             weekly_files = list(sector_dir.glob('weekly/*.csv'))
             daily_files = list(sector_dir.glob('daily/*.csv'))
-
-            # সেক্টর থেকে সিম্বল ম্যাপিং
-            mongo_path = './csv/mongodb.csv'
-            sector_to_symbols = {}
-            if os.path.exists(mongo_path):
-                try:
-                    mongo_df = pd.read_csv(mongo_path)
-                    if 'sector' in mongo_df.columns:
-                        mongo_df['clean_sector'] = mongo_df['sector'].str.lower().str.replace('&', 'and').str.replace(' ', '_')
-                        for sector_name, group in mongo_df.groupby('clean_sector'):
-                            sector_to_symbols[sector_name] = list(group['symbol'].unique())
-                    else:
-                        self.use_sector_features = False
-                        return
-                except:
-                    self.use_sector_features = False
-                    return
-            else:
-                self.use_sector_features = False
-                return
-
             for f in weekly_files + daily_files:
                 try:
                     df = pd.read_csv(f)
                     has_rsi = 'rsi' in df.columns
-                
-                    sector_slug = f.stem.replace('_weekly', '').replace('_daily', '')
-                
-                    symbols = sector_to_symbols.get(sector_slug, [])
-                    if not symbols:
-                        symbols = sector_to_symbols.get(sector_slug.replace('_', ' '), [])
-                
-                    if not symbols:
-                        continue
-
-                    for sym in symbols:
-                        if sym not in self.sector_data:
-                            self.sector_data[sym] = {}
-                    
-                        last_row = df.iloc[-1]
-                        self.sector_data[sym]['sector_returns'] = float(last_row.get('returns', df['close'].pct_change().iloc[-1] if 'close' in df.columns else 0))
-                        self.sector_data[sym]['sector_volume'] = float(last_row.get('volume_ratio', 1))
-                        if has_rsi:
-                            self.sector_data[sym]['sector_rsi'] = float(last_row.get('rsi', 50))
+                    for _, row in df.iterrows():
+                        symbol = row.get('symbol', '')
+                        if symbol:
+                            if symbol not in self.sector_data:
+                                self.sector_data[symbol] = {}
+                            self.sector_data[symbol]['sector_returns'] = float(row.get('returns', 0))
+                            self.sector_data[symbol]['sector_volume'] = float(row.get('volume_ratio', 1))
+                            if has_rsi:
+                                self.sector_data[symbol]['sector_rsi'] = float(row.get('rsi', 50))
                 except:
                     pass
-                
             print(f"   ✅ Loaded sector features for {len(self.sector_data)} symbols")
         except:
             self.use_sector_features = False
@@ -886,11 +853,16 @@ class FineTunablePatchTST(PatchTSTPredictor):
 
 
 # =========================================================
-# SIMPLE CHECKPOINT MANAGER (Local Only)
+# ✅ RATE-LIMIT SAFE CHECKPOINT MANAGER
 # =========================================================
 
 class SimpleCheckpointManager:
-    """Checkpoint System: Save/Load local, Backup to HF"""
+    """Checkpoint System: Save/Load local, Backup to HF (40s delay between uploads)"""
+    
+    # Class-level upload tracker (shared across all instances)
+    _last_upload_time = None
+    _upload_queue = []
+    _min_upload_interval = 40  # seconds
     
     def __init__(self, symbol, hf_repo="ahashanahmed/csv"):
         self.symbol = symbol
@@ -966,28 +938,53 @@ class SimpleCheckpointManager:
         return {'status': 'not_started'}
     
     def upload_to_hf(self, message=None):
-        hf_token = os.getenv("hf_token")
+        """Upload to HF with 40-second delay between uploads (Rate-Limit Safe)"""
+        hf_token = os.getenv("hf_token") or os.getenv("HF_TOKEN", "")
         if not hf_token:
+            print(f"   ⚠️ No HF_TOKEN, skipping backup")
             return False
+        
+        # ✅ Check if enough time has passed since last upload
+        now = datetime.now()
+        if SimpleCheckpointManager._last_upload_time is not None:
+            elapsed = (now - SimpleCheckpointManager._last_upload_time).total_seconds()
+            if elapsed < SimpleCheckpointManager._min_upload_interval:
+                wait_time = SimpleCheckpointManager._min_upload_interval - elapsed
+                print(f"   ⏳ Rate limit: waiting {wait_time:.0f}s before upload...")
+                time.sleep(wait_time)
+        
         try:
             from huggingface_hub import HfApi
             api = HfApi(token=hf_token)
             hf_path = f"patchtst_models/{self.symbol}"
+            
             if message is None:
                 status = self.get_status()
                 message = f"💾 Checkpoint: {self.symbol} epoch {status.get('last_epoch', '?')}"
+            
             api.upload_folder(
-                folder_path=str(self.base_dir), path_in_repo=hf_path,
-                repo_id=self.hf_repo, repo_type="dataset", commit_message=message
+                folder_path=str(self.base_dir),
+                path_in_repo=hf_path,
+                repo_id=self.hf_repo,
+                repo_type="dataset",
+                commit_message=message
             )
+            
+            # ✅ Update last upload time
+            SimpleCheckpointManager._last_upload_time = datetime.now()
+            
             print(f"   ☁️ Backup uploaded to HF: {hf_path}")
             return True
+            
         except Exception as e:
             print(f"   ⚠️ HF backup failed: {str(e)[:100]}")
             return False
     
     def upload_final_to_hf(self):
-        return self.upload_to_hf(message=f"✅ FINAL MODEL: {self.symbol} - {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        """Upload final trained model to HF (Rate-Limit Safe)"""
+        return self.upload_to_hf(
+            message=f"✅ FINAL MODEL: {self.symbol} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        )
 
 
 # =========================================================
@@ -1275,6 +1272,7 @@ def train_patchtst_with_checkpoint(
     elif corrected_accuracy >= min_accuracy:
         print(f"   ✅ Accuracy {corrected_accuracy:.1%} >= {min_accuracy:.0%} threshold")
         if backup_to_hf:
+            # ✅ Rate-Limit Safe upload
             checkpoint_mgr.upload_final_to_hf()
             uploaded = True
             print(f"   ☁️ Uploaded to HF!")
@@ -1305,6 +1303,7 @@ if __name__ == "__main__":
     print("🚀 PatchTST ULTIMATE QUALITY Auto-Pilot Training")
     print(f"   ✅ 3-Layer LSTM | ✅ CosineAnnealingWarmRestarts | ✅ Gradient Accumulation")
     print(f"   ✅ Extended Epochs | ✅ Residual Connections | ✅ Layer Normalization")
+    print(f"   ✅ Rate-Limit Safe: 40s delay between HF uploads")
     print("="*60)
     
     data_path = sys.argv[1] if len(sys.argv) > 1 else './csv/mongodb.csv'
@@ -1386,6 +1385,7 @@ if __name__ == "__main__":
     print(f"   Scheduler: CosineAnnealingWarmRestarts")
     print(f"   Gradient: Accumulation ×4")
     print(f"   Validation: Walk-Forward CV (5 folds)")
+    print(f"   HF Upload: 40s delay (rate-limit safe)")
     
     results = []
     hf_uploads = 0
