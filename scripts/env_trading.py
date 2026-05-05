@@ -495,6 +495,7 @@ class MultiSymbolTradingEnv(gym.Env):
         self.sr_feature_dim = 3
         
         # Total state dim
+        self.market_cap_feature_dim = 1  # ✅ যোগ করুন
         self.effective_state_dim = (
             self.state_dim +
             self.sector_feature_dim +
@@ -506,12 +507,10 @@ class MultiSymbolTradingEnv(gym.Env):
             self.regime_feature_dim +
             self.patch_tst_feature_dim +
             self.rsi_div_feature_dim +
-            self.sr_feature_dim
+            self.sr_feature_dim +
+            self.market_cap_feature_dim
         )
 
-
-        self.market_cap_feature_dim = 1  # ✅ যোগ করুন
-        self.effective_state_dim = (... + self.market_cap_feature_dim)
 
         # -------- Spaces --------
         self.action_space = spaces.MultiDiscrete([3] * self.n_symbols)
