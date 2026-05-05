@@ -793,9 +793,12 @@ class PatchTSTPredictor:
             hidden_dim=self.hidden_dim, pred_len=self.pred_len
         )
     
-    def _create_optimizer(self, lr):
-        return torch.optim.AdamW(self.model.parameters() if self.model else None, lr=lr, weight_decay=1e-5) if self.model else None
-
+    def _create_optimizer(self, lr, model=None):
+    """Create optimizer - with optional model parameter"""
+    m = model if model is not None else self.model
+    if m is None:
+        return None
+    return torch.optim.AdamW(m.parameters(), lr=lr, weight_decay=1e-5)
 
 # =========================================================
 # INTEGRATION WITH env_trading.py
