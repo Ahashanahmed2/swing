@@ -9,10 +9,11 @@ import subprocess
 import os
 
 scripts = [
-    "scripts/hf_download.py",
-    "scripts/export_unknown_symbols.py",
-    "scripts/generate_pdf.py",
-    "scripts/dayliMassage.py",
+    #"scripts/hf_download.py",
+    #"scripts/export_unknown_symbols.py",
+    "scripts/cleanup_ppo_all.py",
+    #"scripts/generate_pdf.py",
+    #"scripts/dayliMassage.py",
 ]
 
 for script in scripts:
