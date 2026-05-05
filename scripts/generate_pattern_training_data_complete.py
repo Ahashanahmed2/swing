@@ -4771,7 +4771,9 @@ def get_all_patterns():
 def generate_complete_pattern_data(symbol, df_row, pattern_type, config, indicator_values, metrics, variation_idx=0, symbol_data=None, idx=None):
     current_price = df_row['close']
     current_date = df_row['date']
-    sector = df_row.get('sector', 'Unknown')
+    sector = str(df_row.get('sector', 'Unknown'))
+    if sector.lower() == 'nan':
+        sector = 'Unknown'
 
     rsi = indicator_values.get('rsi', 50)
     macd = indicator_values.get('macd', 0)
