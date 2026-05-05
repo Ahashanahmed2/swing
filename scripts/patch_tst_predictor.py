@@ -269,8 +269,8 @@ class PatchTSTPredictor:
             self.use_sector_features = False
             return
         try:
-            weekly_files = list(sector_dir.glob('*weekly*.csv'))
-            daily_files = list(sector_dir.glob('*daily*.csv'))
+            weekly_files = list(sector_dir.glob('weekly/*.csv'))
+            daily_files = list(sector_dir.glob('daily/*.csv'))
             for f in weekly_files + daily_files:
                 try:
                     df = pd.read_csv(f)
