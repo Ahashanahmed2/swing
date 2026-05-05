@@ -966,7 +966,7 @@ class SimpleCheckpointManager:
         return {'status': 'not_started'}
     
     def upload_to_hf(self, message=None):
-        hf_token = os.getenv("HF_TOKEN", "")
+        hf_token = os.getenv("hf_token")
         if not hf_token:
             return False
         try:
