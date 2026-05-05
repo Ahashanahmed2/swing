@@ -4781,7 +4781,35 @@ def generate_complete_pattern_data(symbol, df_row, pattern_type, config, indicat
     rsi_div = indicator_values.get('rsi_divergence', 'None')
     avg_vol = indicator_values.get('avg_volume', volume)
 
+    # ✅ NEW: Market Cap Info
+    free_float_mcap = df_row.get('freeFloatMarketCap', 0)
+    mcap_cr = free_float_mcap / 10_000_000 if free_float_mcap else 0
+    mcap_label = 'Large Cap' if mcap_cr > 5000 else 'Mid Cap' if mcap_cr > 1000 else 'Small Cap' if mcap_cr > 100 else 'Micro Cap'
     
+    # ✅ NEW: Sector Details
+    sector_strength = get_sector_strength(sector)
+    sector_rotation = get_sector_rotation(sector)
+    peer_rank = get_peer_rank(symbol, sector)
+    
+    # ✅ NEW: Sector Weekly/Daily Data
+    sector_weekly = load_sector_weekly_data(sector)
+    sector_daily = load_sector_daily_data(sector)
+    sector_weekly_rsi = sector_weekly.get('rsi', 50) if sector_weekly else 50
+    sector_daily_rsi = sector_daily.get('rsi', 50) if sector_daily else 50
+    sector_rsi_div = detect_sector_rsi_divergence(sector_weekly, sector_daily)
+    
+    # ✅ NEW: Pattern Success Rate
+    pattern_stats = get_pattern_success_rate(pattern_type)
+    
+    # ✅ NEW: Multi-Timeframe Confluence
+    if symbol_data is not None and idx is not None:
+        confluence = calculate_timeframe_confluence(symbol_data)
+        confluence_score = confluence.get('confluence', 50)
+        confluence_boost = confluence.get('confidence_boost', 0)
+    else:
+        confluence_score = 50
+        confluence_boost = 0
+
     # ✅ এখানে VARIATION_TEMPLATES যোগ করুন (নতুন)
     VARIATION_TEMPLATES = [
         {"price_header": "📊 PRICE DATA:", "include_sector": True, "include_wyckoff": True},
@@ -4811,6 +4839,10 @@ def generate_complete_pattern_data(symbol, df_row, pattern_type, config, indicat
     confidence += (rsi < 40 and config['bias'] == 'Bullish') * 5
     confidence += (rsi > 60 and config['bias'] == 'Bearish') * 5
     confidence += (volume > avg_vol * 1.5) * 5
+    # ✅ NEW: Dynamic confidence boosts
+    confidence += confluence_boost  # Multi-TF alignment
+    confidence += (5 if pattern_stats.get('reliability') == 'HIGH' else 0)
+    confidence += (3 if sector_strength in ['Strong', 'Very Strong'] else 0)
 
     sector_analysis = get_sector_analysis(sector, symbol, current_price)
     confidence += sector_analysis.get('confidence_boost', 0)
@@ -4821,26 +4853,47 @@ def generate_complete_pattern_data(symbol, df_row, pattern_type, config, indicat
     variation_note = f" [VARIATION {variation_idx + 1}]" if variation_idx > 0 else " [ORIGINAL SEQUENCE]"
     pattern_display = pattern_type if random.random() < 0.5 else "Unknown Pattern"
 
-    
+    # ✅ NEW: Enhanced Sector Details
     sector_details = ""
-    if template["include_sector"]:  # ✅ টেমপ্লেট অনুযায়ী সেক্টর দেখান
-        sector_details = f"""
-    #🏭 SECTOR: {sector} | Strength: {sector_analysis.get('strength', 'Neutral')} | Rotation: {sector_analysis.get('rotation', 'None')}
-    """
+    market_cap_section = f"""
+📊 STOCK OVERVIEW:
+────────────────────────────────────────────────────────────────────────────────
+Symbol: {symbol}
+Sector: {sector} | Strength: {sector_strength} | Rotation: {sector_rotation}
+Market Cap: ₹{mcap_cr:.1f} Cr ({mcap_label}) | Peer Rank: {peer_rank}
+
+📈 SECTOR ANALYSIS:
+────────────────────────────────────────────────────────────────────────────────
+Sector Weekly RSI: {sector_weekly_rsi:.1f} | Sector Daily RSI: {sector_daily_rsi:.1f}
+Sector RSI Divergence: {sector_rsi_div}
+Multi-Timeframe Confluence: {confluence_score}%
+
+📊 PATTERN RELIABILITY:
+────────────────────────────────────────────────────────────────────────────────
+Historical Success: {pattern_stats['success_rate']*100:.1f}% ({pattern_stats['total_samples']} samples)
+Reliability: {pattern_stats.get('reliability', 'UNKNOWN')}
+"""
+    
+    if template["include_sector"]:
+        sector_details += market_cap_section
+    else:
+        sector_details += f"""
+🏭 SECTOR: {sector} | Strength: {sector_analysis.get('strength', 'Neutral')} | Rotation: {sector_analysis.get('rotation', 'None')}
+"""
 
     price_sequence_text = ""
     if symbol_data is not None and idx is not None:
         price_sequence_text, _, _, _ = generate_advanced_price_sequence(symbol_data, idx)
 
     wyckoff_text = ""
-    if template["include_wyckoff"] and symbol_data is not None and idx is not None:  # ✅ টেমপ্লেট অনুযায়ী Wyckoff
+    if template["include_wyckoff"] and symbol_data is not None and idx is not None:
         wyckoff_text, _ = detect_volume_price_cycle(symbol_data, idx)
     forward_text = ""
     if symbol_data is not None and idx is not None:
         forward_text = generate_forward_looking_analysis(symbol_data, idx)
 
     pa_report, _, _, _, _, _, _ = analyze_price_action_complete(symbol_data, idx) if symbol_data is not None and idx is not None else ("", None, None, None, None, None, None)
-
+    
     # Additional analysis for complete pattern
     liquidity_info = detect_fixed_range_liquidity(symbol_data) if symbol_data is not None else None
     zscore_info = calculate_zscore_signals(symbol_data) if symbol_data is not None else None
@@ -4897,6 +4950,313 @@ Risk-Reward: {rr_ratio:.2f} | Confidence: {confidence:.1f}%
 
 ================================================================================
 """
+
+# =========================================================
+# ✅ NEW: SECTOR + MARKET CAP + PEER COMPARISON FUNCTIONS
+# =========================================================
+
+def load_sector_weekly_data(sector):
+    """Load sector weekly CSV data"""
+    sector_slug = sector.lower().replace(' ', '_').replace('&', 'and')
+    filepath = Path(f'./csv/sector/weekly/{sector_slug}_weekly.csv')
+    
+    if filepath.exists():
+        try:
+            df = pd.read_csv(filepath)
+            if len(df) > 0:
+                return df.iloc[-1].to_dict()  # Latest row
+        except:
+            pass
+    
+    # Fallback: try other name formats
+    for f in Path('./csv/sector/weekly/').glob('*.csv'):
+        if sector_slug in f.stem:
+            try:
+                df = pd.read_csv(f)
+                if len(df) > 0:
+                    return df.iloc[-1].to_dict()
+            except:
+                pass
+    
+    return None
+
+
+def load_sector_daily_data(sector):
+    """Load sector daily CSV data"""
+    sector_slug = sector.lower().replace(' ', '_').replace('&', 'and')
+    filepath = Path(f'./csv/sector/daily/{sector_slug}_daily.csv')
+    
+    if filepath.exists():
+        try:
+            df = pd.read_csv(filepath)
+            if len(df) > 0:
+                return df.iloc[-1].to_dict()
+        except:
+            pass
+    
+    return None
+
+
+def detect_sector_rsi_divergence(weekly_data, daily_data):
+    """Detect RSI divergence between weekly and daily"""
+    if not weekly_data or not daily_data:
+        return 'None'
+    
+    weekly_rsi = weekly_data.get('rsi', 50)
+    daily_rsi = daily_data.get('rsi', 50)
+    weekly_close = weekly_data.get('close', 0)
+    daily_close = daily_data.get('close', 0)
+    
+    # Weekly RSI < Daily RSI + Weekly close < Daily close
+    if weekly_rsi < 40 and daily_rsi > 50 and weekly_close < daily_close:
+        return 'Bullish (Weekly Oversold + Daily Recovery)'
+    elif weekly_rsi > 60 and daily_rsi < 50 and weekly_close > daily_close:
+        return 'Bearish (Weekly Overbought + Daily Decline)'
+    
+    return 'None'
+
+
+def get_sector_strength(sector):
+    """
+    ডাইনামিক সেক্টর স্ট্রেন্থ ক্যালকুলেশন।
+    নিচের ফিচারগুলোর ওপর ভিত্তি করে ০-১০০ স্কোর তৈরি করে:
+    1. Sector Momentum (২০ দিনের গড় রিটার্ন)
+    2. Sector Relative Strength (মার্কেটের তুলনায়)
+    3. Sector Breadth (কত শতাংশ স্টক SMA-২০ এর উপরে)
+    4. Sector RSI (weekly ও daily-র গড়)
+    5. Sector Volume Trend (৫ দিন বনাম ২০ দিনের গড় ভলিউম)
+    """
+    try:
+        # মৌলিক ডাটা সোর্স
+        market_df = pd.read_csv('./csv/mongodb.csv')
+        sector_df = market_df[market_df['sector'].str.lower() == sector.lower()].copy()
+        
+        if len(sector_df) < 50:
+            return 'Unknown'
+        
+        # সেক্টরের সব সিম্বলের লেটেস্ট ডাটা নেই
+        symbols = sector_df['symbol'].unique()
+        latest_data = sector_df.sort_values('date').groupby('symbol').tail(1)
+        
+        # ১. Sector Momentum (গড় ২০ দিনের রিটার্ন)
+        momentum_scores = []
+        for sym in symbols:
+            sym_data = sector_df[sector_df['symbol'] == sym].sort_values('date')
+            if len(sym_data) >= 20:
+                ret_20d = (sym_data['close'].iloc[-1] / sym_data['close'].iloc[-20] - 1) * 100
+                momentum_scores.append(ret_20d)
+        avg_momentum = np.mean(momentum_scores) if momentum_scores else 0
+        
+        # ২. বাজার তুলনা (Relative Strength)
+        market_avg_return = 0
+        all_sectors_data = market_df.sort_values('date').groupby('symbol').tail(1)
+        if len(all_sectors_data) >= 50:
+            market_avg_return = all_sectors_data['close'].pct_change(20).mean() * 100
+        
+        relative_strength = avg_momentum - market_avg_return
+        
+        # ৩. Sector Breadth (কতগুলা স্টক sma-২০ এর ওপরে)
+        above_sma20_count = 0
+        for sym in symbols:
+            sym_data = sector_df[sector_df['symbol'] == sym].sort_values('date')
+            if len(sym_data) >= 20:
+                sma20 = sym_data['close'].rolling(20).mean().iloc[-1]
+                if sym_data['close'].iloc[-1] > sma20:
+                    above_sma20_count += 1
+        breadth = (above_sma20_count / len(symbols) * 100) if len(symbols) > 0 else 50
+        
+        # ৪. Sector RSI (weekly file থেকে; ফাইল না থাকলে daily থেকে অথবা market data থেকে guess)
+        rsi_weekly = 50
+        rsi_daily = 50
+        sector_slug = sector.lower().replace(' ', '_').replace('&', 'and')
+        
+        # weekly ফাইল চেক
+        weekly_path = Path(f'./csv/sector/weekly/{sector_slug}_weekly.csv')
+        if weekly_path.exists():
+            try:
+                wk_df = pd.read_csv(weekly_path)
+                if 'rsi' in wk_df.columns and len(wk_df) > 0:
+                    rsi_weekly = wk_df['rsi'].iloc[-1]
+            except: pass
+        
+        # daily ফাইল চেক
+        daily_path = Path(f'./csv/sector/daily/{sector_slug}_daily.csv')
+        if daily_path.exists():
+            try:
+                dy_df = pd.read_csv(daily_path)
+                if 'rsi' in dy_df.columns and len(dy_df) > 0:
+                    rsi_daily = dy_df['rsi'].iloc[-1]
+            except: pass
+        
+        avg_rsi = (rsi_weekly + rsi_daily) / 2
+        
+        # ৫. Volume Trend (৫-দিন vs ২০-দিন ভলিউম)
+        if 'volume' in latest_data.columns and len(latest_data) >= 5:
+            avg_vol_5 = latest_data['volume'].tail(5).mean()
+            avg_vol_20 = latest_data['volume'].tail(20).mean() if len(latest_data) >= 20 else avg_vol_5
+            vol_trend = (avg_vol_5 / avg_vol_20 - 1) * 100 if avg_vol_20 > 0 else 0
+        else:
+            vol_trend = 0
+        
+        # স্কোরিং (0-100)
+        score = 0
+        
+        # Momentum (max 30 points)
+        if avg_momentum > 5: score += 30
+        elif avg_momentum > 2: score += 20
+        elif avg_momentum > 0: score += 10
+        
+        # Relative Strength (max 20 points)
+        if relative_strength > 3: score += 20
+        elif relative_strength > 0: score += 10
+        elif relative_strength < -3: score += 0
+        
+        # Breadth (max 20 points)
+        if breadth > 70: score += 20
+        elif breadth > 50: score += 10
+        
+        # RSI (max 15 points)
+        if 40 <= avg_rsi <= 70: score += 15
+        elif 30 <= avg_rsi <= 80: score += 8
+        
+        # Volume Trend (max 15 points)
+        if vol_trend > 10: score += 15
+        elif vol_trend > 0: score += 10
+        elif vol_trend < -10: score += 5
+        
+        # চূড়ান্ত লেবেল
+        if score >= 70: return 'Strong'
+        elif score >= 45: return 'Moderate'
+        else: return 'Weak'
+        
+    except Exception as e:
+        print(f"   ⚠️ Could not calculate dynamic strength for {sector}: {e}")
+        return 'Unknown'
+
+def get_sector_rotation(sector):
+    """Detect sector rotation signal"""
+    perf_path = './csv/sector_performance.csv'
+    
+    if os.path.exists(perf_path):
+        try:
+            perf_df = pd.read_csv(perf_path)
+            if 'sector' in perf_df.columns and 'momentum' in perf_df.columns:
+                perf_df = perf_df.sort_values('momentum', ascending=False)
+                
+                top3 = perf_df.head(3)['sector'].tolist()
+                bottom3 = perf_df.tail(3)['sector'].tolist()
+                
+                if sector in top3:
+                    return 'Rotation IN (Top 3)'
+                elif sector in bottom3:
+                    return 'Rotation OUT (Bottom 3)'
+                else:
+                    return 'Neutral'
+        except:
+            pass
+    
+    return 'Unknown'
+
+
+def get_sector_symbols(sector):
+    """Get all symbols in a sector from mongodb.csv"""
+    try:
+        df = pd.read_csv('./csv/mongodb.csv')
+        if 'sector' in df.columns:
+            symbols = df[df['sector'] == sector]['symbol'].unique().tolist()
+            return symbols
+    except:
+        pass
+    return []
+
+
+def get_market_cap(symbol):
+    """Get market cap for a symbol"""
+    try:
+        df = pd.read_csv('./csv/mongodb.csv')
+        sym_data = df[df['symbol'] == symbol]
+        if len(sym_data) > 0 and 'freeFloatMarketCap' in sym_data.columns:
+            return sym_data['freeFloatMarketCap'].iloc[-1]
+    except:
+        pass
+    return 0
+
+
+def get_peer_rank(symbol, sector):
+    """Get peer ranking within sector"""
+    sector_symbols = get_sector_symbols(sector)
+    
+    if not sector_symbols or symbol not in sector_symbols:
+        return 'Unknown'
+    
+    symbol_mcap = get_market_cap(symbol)
+    peer_mcaps = [get_market_cap(s) for s in sector_symbols if s != symbol]
+    peer_mcaps = [m for m in peer_mcaps if m > 0]
+    
+    if not peer_mcaps:
+        return 'N/A (No peers)'
+    
+    rank = sum(1 for m in peer_mcaps if m > symbol_mcap) + 1
+    total = len(peer_mcaps) + 1
+    percentile = (total - rank) / total * 100
+    
+    if percentile > 80:
+        return f'Top {percentile:.0f}% (Leader)'
+    elif percentile > 50:
+        return f'Top {percentile:.0f}% (Above Avg)'
+    elif percentile > 20:
+        return f'Bottom {100-percentile:.0f}% (Below Avg)'
+    else:
+        return f'Bottom {100-percentile:.0f}% (Laggard)'
+
+
+def get_pattern_success_rate(pattern_name):
+    """Get historical success rate of a pattern"""
+    history_path = './csv/pattern_history.json'
+    
+    if os.path.exists(history_path):
+        try:
+            with open(history_path) as f:
+                history = json.load(f)
+            
+            stats = history.get(pattern_name, {})
+            total = stats.get('total', 0)
+            success = stats.get('success', 0)
+            
+            if total > 10:
+                return {
+                    'success_rate': round(success / total, 3),
+                    'total_samples': total,
+                    'reliability': 'HIGH' if success/total > 0.65 else 'MEDIUM' if success/total > 0.50 else 'LOW'
+                }
+        except:
+            pass
+    
+    return {'success_rate': 0.5, 'total_samples': 0, 'reliability': 'UNKNOWN'}
+
+
+def get_example_weight(pattern_type, sector_strength, reliability):
+    """Calculate priority weight for curriculum learning"""
+    weight = 1.0
+    
+    # High priority patterns
+    high_priority = ['Impulse Wave', 'Order Block', 'Bullish Order Block', 
+                     'Bearish Order Block', 'RSI Divergence', 'Fair Value Gap (FVG)',
+                     'Liquidity Sweep', 'Break of Structure (BOS)']
+    if pattern_type in high_priority:
+        weight *= 2.0
+    
+    # Strong sector
+    if sector_strength == 'Strong':
+        weight *= 1.5
+    
+    # Historically reliable
+    if reliability == 'HIGH':
+        weight *= 2.0
+    elif reliability == 'MEDIUM':
+        weight *= 1.2
+    
+    return min(weight, 5.0)
 
 
 # =========================================================
