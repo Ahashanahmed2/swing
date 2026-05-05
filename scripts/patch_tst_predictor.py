@@ -1000,6 +1000,8 @@ class MistakeLearner:
             }, f, indent=2)
     
     def record(self, date, predicted_prob, actual_return):
+        predicted_prob = float(predicted_prob)  # ✅ numpy float32 → Python float
+        actual_return = float(actual_return)    # ✅ numpy float32 → Python float
         pred_dir = 'UP' if predicted_prob > 0.5 else 'DOWN'
         actual_dir = 'UP' if actual_return > 0.005 else 'DOWN' if actual_return < -0.005 else 'FLAT'
         was_wrong = pred_dir != actual_dir and actual_dir != 'FLAT'
