@@ -48,7 +48,6 @@ scripts = [
     "scripts/down_macd.py",
     "scripts/ai_trade.py",
     "scripts/xgboost_retrain.py",
-    "scripts/xgboost_Elliott_support.py",
     #"scripts/ppo_train.py",no
     "scripts/nightly_trader.py",
     #"scripts/agentic_loop.py",no
