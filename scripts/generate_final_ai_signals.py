@@ -132,7 +132,20 @@ print("="*70)
 # ১. সাপোর্ট/রেজিস্ট্যান্স ডেটা লোড
 # =========================================================
 print("\n📂 Loading Support/Resistance data...")
-sr_df = pd.read_csv(SUPPORT_RESISTANCE_PATH)
+# generate_final_ai_signals.py - Line ~95:
+SUPPORT_RESISTANCE_PATH = "./output/ai_signal/support_resistant.csv"
+
+# ✅ ফিক্স:
+try:
+    sr_df = pd.read_csv(SUPPORT_RESISTANCE_PATH)
+    target_symbols = sr_df['symbol'].unique().tolist()
+    print(f"   ✅ Loaded {len(sr_df)} S/R signals")
+except FileNotFoundError:
+    # S/R ফাইল নেই → mongodb থেকে symbols নেই
+    print(f"   ⚠️ S/R file not found, using all symbols from mongodb")
+    mongo_df = pd.read_csv(MONGO_PATH)
+    target_symbols = mongo_df['symbol'].unique().tolist()
+    sr_df = pd.DataFrame()  # Empty dataframe
 target_symbols = pd.read_csv(MONGO_PATH)['symbol'].unique().tolist()  # 396
 print(f"   ✅ Loaded {len(sr_df)} signals for {len(target_symbols)} symbols")
 
