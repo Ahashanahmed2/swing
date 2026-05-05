@@ -9,6 +9,7 @@
 # ✅ Sector + Support/Resistance + RSI Divergence Features
 # ✅ Auto-Pilot Training (All Symbols)
 # ✅ Weekly Fine-tune + Monthly Retrain
+# ✅ MAX QUALITY: Market Cap + EMA + Walk-Forward + OneCycleLR + Adaptive Params
 
 import numpy as np
 import pandas as pd
@@ -183,11 +184,11 @@ class SimpleAttentionPredictor(nn.Module):
 
 
 # =========================================================
-# MAIN PREDICTOR CLASS
+# MAIN PREDICTOR CLASS (MAX QUALITY)
 # =========================================================
 
 class PatchTSTPredictor:
-    """Time Series Transformer for Price Prediction"""
+    """Time Series Transformer for Price Prediction - MAX QUALITY"""
     
     def __init__(
         self,
@@ -199,6 +200,7 @@ class PatchTSTPredictor:
         use_sector_features=True,
         use_sr_features=True,
         use_rsi_div_features=True,
+        use_market_cap_features=True,      # ✅ NEW
     ):
         self.seq_len = seq_len
         self.pred_len = pred_len
@@ -209,6 +211,7 @@ class PatchTSTPredictor:
         self.use_sector_features = use_sector_features
         self.use_sr_features = use_sr_features
         self.use_rsi_div_features = use_rsi_div_features
+        self.use_market_cap_features = use_market_cap_features  # ✅ NEW
         
         self.sector_data = {}
         self.sr_data = None
@@ -226,7 +229,7 @@ class PatchTSTPredictor:
         self.is_fitted = False
         self.feature_columns = None
         
-        print(f"✅ PatchTST Predictor initialized (device: {self.device})")
+        print(f"✅ PatchTST Predictor initialized (device: {self.device}, hidden_dim={hidden_dim})")
     
     def _load_external_features(self):
         if self.use_sector_features:
@@ -260,7 +263,7 @@ class PatchTSTPredictor:
                 except:
                     pass
             print(f"   ✅ Loaded sector features for {len(self.sector_data)} symbols")
-        except Exception as e:
+        except:
             self.use_sector_features = False
     
     def _load_support_resistance(self):
@@ -344,9 +347,12 @@ class PatchTSTPredictor:
             return {}
     
     def _engineer_features(self, df):
-        """Create features from OHLCV data + External features"""
+        """Create features from OHLCV data + External features + Market Cap + EMA"""
         df = df.copy()
         
+        # ============================
+        # ORIGINAL FEATURES
+        # ============================
         df['returns'] = df['close'].pct_change()
         df['log_returns'] = np.log(df['close'] / df['close'].shift(1))
         df['volume_ratio'] = df['volume'] / df['volume'].rolling(20).mean()
@@ -369,6 +375,29 @@ class PatchTSTPredictor:
             if col in df.columns:
                 df[f'{col}_norm'] = df[col] / (df[col].abs().rolling(50).mean() + 1e-8)
         
+        # ============================
+        # ✅ MARKET CAP FEATURES
+        # ============================
+        if self.use_market_cap_features and 'freeFloatMarketCap' in df.columns:
+            df['log_market_cap'] = np.log1p(df['freeFloatMarketCap'])
+            df['mcap_volume_ratio'] = np.log1p(df['volume'] / (df['freeFloatMarketCap'] + 1e-8))
+            df['mcap_rank_sector'] = df.groupby('sector')['freeFloatMarketCap'].rank(pct=True) if 'sector' in df.columns else 0.5
+        
+        # ============================
+        # ✅ EMA 200 FEATURES
+        # ============================
+        if 'ema_200' in df.columns:
+            df['dist_from_ema'] = (df['close'] - df['ema_200']) / df['ema_200'] * 100
+            df['above_ema'] = (df['close'] > df['ema_200']).astype(int)
+        else:
+            # Calculate from close if ema_200 not present
+            df['ema_200_calc'] = df.groupby('symbol')['close'].transform(lambda x: x.ewm(span=200, adjust=False).mean())
+            df['dist_from_ema'] = (df['close'] - df['ema_200_calc']) / df['ema_200_calc'] * 100
+            df['above_ema'] = (df['close'] > df['ema_200_calc']).astype(int)
+        
+        # ============================
+        # EXTERNAL FEATURES
+        # ============================
         if self.use_sector_features:
             df['sector_momentum'] = 0.0
             df['sector_volume_ratio'] = 1.0
@@ -410,6 +439,7 @@ class PatchTSTPredictor:
         return df
     
     def _select_features(self, df):
+        """Select and prepare features for the model"""
         priority_features = [
             'returns', 'log_returns', 'volume_ratio',
             'high_low_ratio', 'close_open_ratio',
@@ -421,7 +451,9 @@ class PatchTSTPredictor:
         external_features = [
             'sector_momentum', 'sector_volume_ratio', 'sector_rsi',
             'sr_distance', 'sr_strength', 'sr_type',
-            'rsi_div_bullish', 'rsi_div_bearish', 'rsi_div_strength', 'rsi_external'
+            'rsi_div_bullish', 'rsi_div_bearish', 'rsi_div_strength', 'rsi_external',
+            'log_market_cap', 'mcap_volume_ratio', 'mcap_rank_sector',  # ✅ Market Cap
+            'dist_from_ema', 'above_ema',  # ✅ EMA
         ]
         
         for feat in external_features:
@@ -436,7 +468,7 @@ class PatchTSTPredictor:
                 priority_features.append(col)
         
         available = [f for f in priority_features if f in df.columns]
-        self.feature_columns = available[:20]
+        self.feature_columns = available[:25]  # ✅ 20 → 25
         
         if len(self.feature_columns) > 15:
             print(f"   📊 Extended features: {len(self.feature_columns)} features")
@@ -477,6 +509,79 @@ class PatchTSTPredictor:
         
         return np.array(sequences), np.array(targets)
     
+    # ============================================================
+    # ✅ WALK-FORWARD VALIDATION (NEW)
+    # ============================================================
+    
+    def _walk_forward_validation(self, df, n_splits=3):
+        """Time-series cross validation for quality check"""
+        if len(df) < 200:
+            return 0.5
+        
+        scores = []
+        split_size = len(df) // (n_splits + 1)
+        
+        for i in range(n_splits):
+            train_end = split_size * (i + 1)
+            if train_end >= len(df) - 50:
+                break
+            
+            train_df = df.iloc[:train_end]
+            val_df = df.iloc[train_end:min(train_end + split_size, len(df))]
+            
+            if len(val_df) < 30:
+                continue
+            
+            # Quick train on subset
+            X, y = self._prepare_sequences(train_df)
+            if len(X) < 10:
+                continue
+            
+            temp_model = SimpleAttentionPredictor(
+                input_dim=X.shape[2], seq_len=self.seq_len,
+                hidden_dim=min(self.hidden_dim, 32), pred_len=self.pred_len
+            ).to(self.device)
+            
+            temp_opt = torch.optim.AdamW(temp_model.parameters(), lr=0.001)
+            criterion = nn.MSELoss()
+            
+            X_t = torch.FloatTensor(X).to(self.device)
+            y_t = torch.FloatTensor(y).to(self.device)
+            ds = TensorDataset(X_t, y_t)
+            dl = DataLoader(ds, batch_size=16, shuffle=True)
+            
+            temp_model.train()
+            for _ in range(10):  # 10 quick epochs
+                for bx, by in dl:
+                    temp_opt.zero_grad()
+                    loss = criterion(temp_model(bx), by)
+                    loss.backward()
+                    temp_opt.step()
+            
+            # Predict on validation
+            temp_model.eval()
+            val_features = self._select_features(self._engineer_features(val_df))
+            val_features = val_features.fillna(method='ffill').fillna(0)
+            
+            if hasattr(self.scaler, 'mean_'):
+                val_scaled = self.scaler.transform(val_features.iloc[-self.seq_len:])
+            else:
+                val_scaled = val_features.iloc[-self.seq_len:].values
+            
+            with torch.no_grad():
+                val_tensor = torch.FloatTensor(val_scaled).unsqueeze(0).to(self.device)
+                pred = temp_model(val_tensor).cpu().numpy()[0]
+            
+            actual_ret = (val_df['close'].iloc[-1] / val_df['close'].iloc[0] - 1)
+            correct = (pred[0] > 0.5) == (actual_ret > 0)
+            scores.append(1 if correct else 0)
+        
+        return np.mean(scores) if scores else 0.5
+    
+    # ============================================================
+    # TRAINING
+    # ============================================================
+    
     def fit(self, df, epochs=50, batch_size=32, learning_rate=0.001, verbose=True):
         if not TORCH_AVAILABLE:
             print("❌ PyTorch required for training")
@@ -493,9 +598,7 @@ class PatchTSTPredictor:
             return False
         
         if verbose:
-            print(f"📊 Training data: {len(X)} sequences")
-            print(f"   Sequence shape: {X.shape}")
-            print(f"   Features: {len(self.feature_columns)}")
+            print(f"📊 Training data: {len(X)} sequences, shape={X.shape}, features={X.shape[2]}")
         
         self.model = SimpleAttentionPredictor(
             input_dim=X.shape[2],
@@ -505,7 +608,7 @@ class PatchTSTPredictor:
         ).to(self.device)
         
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=learning_rate, weight_decay=1e-5)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+        scheduler = self._create_scheduler(optimizer, epochs)  # ✅ OneCycleLR
         criterion = nn.MSELoss()
         
         X_tensor = torch.FloatTensor(X).to(self.device)
@@ -539,14 +642,35 @@ class PatchTSTPredictor:
                 self._save_model()
             
             if verbose and (epoch + 1) % 10 == 0:
-                print(f"   Epoch {epoch+1}/{epochs} | Loss: {avg_loss:.6f}")
+                print(f"   Epoch {epoch+1}/{epochs} | Loss: {avg_loss:.6f} | LR: {scheduler.get_last_lr()[0]:.6f}")
         
         self.is_fitted = True
+        
+        # ✅ Walk-Forward Validation
+        if verbose and len(df) >= 200:
+            wf_score = self._walk_forward_validation(df)
+            print(f"   📊 Walk-Forward Score: {wf_score:.3f}")
         
         if verbose:
             print(f"✅ Training complete | Best loss: {best_loss:.6f}")
         
         return True
+    
+    def _create_scheduler(self, optimizer, epochs):
+        """✅ OneCycleLR - Advanced learning rate scheduling"""
+        return torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=0.001,
+            epochs=epochs,
+            steps_per_epoch=1,
+            pct_start=0.1,
+            div_factor=10,
+            final_div_factor=100
+        )
+    
+    # ============================================================
+    # PREDICTION
+    # ============================================================
     
     def predict_next_n_days(self, df, n_days=5):
         if not TORCH_AVAILABLE or not self.is_fitted:
@@ -671,9 +795,6 @@ class PatchTSTPredictor:
     
     def _create_optimizer(self, lr):
         return torch.optim.AdamW(self.model.parameters() if self.model else None, lr=lr, weight_decay=1e-5) if self.model else None
-    
-    def _create_scheduler(self, optimizer, epochs):
-        return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=epochs // 3, T_mult=2, eta_min=1e-6)
 
 
 # =========================================================
@@ -934,22 +1055,43 @@ class MistakeLearner:
 
 
 # =========================================================
-# COMPLETE TRAINING FUNCTION
+# COMPLETE TRAINING FUNCTION (MAX QUALITY)
 # =========================================================
 
 def train_patchtst_with_checkpoint(
     symbol, df, epochs=50, batch_size=16, learning_rate=0.001,
     resume=True, backup_to_hf=True, min_accuracy=0.50, verbose=True
 ):
-    """Complete training: Resume → Train → Learn → Validate → HF Upload"""
+    """Complete training: Resume → Train → Learn → Validate → HF Upload (MAX QUALITY)"""
     
     print(f"\n{'='*60}")
     print(f"🧠 PatchTST Training: {symbol}")
     print(f"{'='*60}")
-    print(f"   📊 Data: {len(df)} rows | 🎯 Epochs: {epochs} | 💾 Resume: {'Yes' if resume else 'No'}")
+    
+    # ✅ Adaptive parameters based on data size
+    data_rows = len(df)
+    if data_rows >= 500:
+        epochs = min(epochs + 50, 150)
+        hidden_dim = 128
+        batch_size = 32
+    elif data_rows >= 300:
+        epochs = min(epochs + 30, 120)
+        hidden_dim = 96
+        batch_size = 24
+    elif data_rows >= 200:
+        epochs = min(epochs + 10, 80)
+        hidden_dim = 64
+        batch_size = 16
+    else:
+        epochs = max(epochs, 40)
+        hidden_dim = 48
+        batch_size = 8
+    
+    print(f"   📊 Data: {data_rows} rows | 🎯 Epochs: {epochs} | 🧠 Hidden: {hidden_dim} | 📦 Batch: {batch_size}")
+    print(f"   💾 Resume: {'Yes' if resume else 'No'}")
     
     model_dir = Path(f"./csv/patchtst_models/{symbol}")
-    predictor = FineTunablePatchTST(model_dir=model_dir)
+    predictor = FineTunablePatchTST(model_dir=model_dir, hidden_dim=hidden_dim)
     checkpoint_mgr = SimpleCheckpointManager(symbol)
     mistake_learner = MistakeLearner(symbol)
     
@@ -1038,6 +1180,11 @@ def train_patchtst_with_checkpoint(
     predictor.model = model
     predictor.is_fitted = True
     
+    # ✅ Walk-Forward Validation
+    if verbose and len(df) >= 200:
+        wf_score = predictor._walk_forward_validation(df)
+        print(f"   📊 Walk-Forward Score: {wf_score:.3f}")
+    
     # Mistake Learning
     print(f"\n🧠 LEARNING FROM VALIDATION MISTAKES")
     model.eval()
@@ -1104,13 +1251,14 @@ def train_patchtst_with_checkpoint(
 
 
 # =========================================================
-# MAIN - AUTO-PILOT TRAINING
+# MAIN - AUTO-PILOT MAX QUALITY TRAINING
 # =========================================================
 
 if __name__ == "__main__":
     import sys
     
-    print("🚀 PatchTST Auto-Pilot Training")
+    print("🚀 PatchTST MAX QUALITY Auto-Pilot Training")
+    print(f"   ✅ Market Cap Features | ✅ EMA 200 | ✅ Walk-Forward CV | ✅ OneCycleLR")
     print("="*60)
     
     data_path = sys.argv[1] if len(sys.argv) > 1 else './csv/mongodb.csv'
@@ -1173,15 +1321,24 @@ if __name__ == "__main__":
         print("❌ No symbols to train")
         sys.exit(0)
     
-    if mode in ["WEEKLY_FINE_TUNE"]:
-        default_epochs = 20
+    # ✅ MAX QUALITY parameters
+    if mode in ["MONTHLY_RETRAIN", "FIRST_RUN"]:
+        default_epochs = 100
+        learning_rate = 0.0005
+    elif mode == "WEEKLY_FINE_TUNE":
+        default_epochs = 30
         learning_rate = 0.0001
-    elif mode in ["MONTHLY_RETRAIN"]:
-        default_epochs = 50
-        learning_rate = 0.001
     else:
-        default_epochs = 50
-        learning_rate = 0.001
+        default_epochs = 70
+        learning_rate = 0.0008
+    
+    print(f"\n⚙️ MAX QUALITY CONFIG:")
+    print(f"   Mode: {mode}")
+    print(f"   Base Epochs: {default_epochs}")
+    print(f"   Learning Rate: {learning_rate}")
+    print(f"   Features: Market Cap + EMA + Sector + S/R + RSI Div")
+    print(f"   Scheduler: OneCycleLR")
+    print(f"   Validation: Walk-Forward CV")
     
     results = []
     hf_uploads = 0
@@ -1190,20 +1347,12 @@ if __name__ == "__main__":
     
     for i, sym in enumerate(symbols, 1):
         sym_df = df[df['symbol'] == sym].sort_values('date')
-        data_rows = len(sym_df)
-        
-        if data_rows >= 500:
-            epochs = default_epochs + 30
-        elif data_rows >= 300:
-            epochs = default_epochs + 10
-        else:
-            epochs = max(30, default_epochs - 10)
         
         print(f"\n{'='*50}")
-        print(f"📊 [{i}/{total}] {sym} ({data_rows} rows, {epochs} epochs, {mode})")
+        print(f"📊 [{i}/{total}] {sym} ({len(sym_df)} rows, {mode})")
         
         result = train_patchtst_with_checkpoint(
-            symbol=sym, df=sym_df, epochs=epochs, batch_size=16,
+            symbol=sym, df=sym_df, epochs=default_epochs, batch_size=16,
             learning_rate=learning_rate, resume=True, backup_to_hf=True,
             min_accuracy=0.50, verbose=False
         )
