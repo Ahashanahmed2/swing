@@ -133,6 +133,7 @@ for _, r in gape_df.iterrows():
         'symbol': symbol,
         'date': date.date(),
         'buy': buy_price,
+        'high':last_row_high,
         'SL': SL_price,
         'tp': tp_price,
         'position_size': position_size,      # ✅ NEW
