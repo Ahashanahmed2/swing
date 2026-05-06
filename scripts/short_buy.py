@@ -97,6 +97,7 @@ for _, row in bullish_df.iterrows():
                 'divergence_date': divergence_date.strftime('%Y-%m-%d'),
                 'divergence_low': divergence_low,
                 'breakout_low': first_low,
+                'breakout_high': first_candle['high'],
                 'strength': row['strength']
             })
 
@@ -202,7 +203,9 @@ if all_signals:
     # Save short_buy.csv (only bullish signals for compatibility)
     if bullish_signals:
         short_buy_df = pd.DataFrame(bullish_signals)
-        short_buy_df = short_buy_df[['symbol', 'divergence_low', 'divergence_date', 'breakout_low']]
+        short_buy_df = short_buy_df[['symbol', 'divergence_low', 'divergence_date', 'breakout_low', 'breakout_high']]
+        # rename for simplicity
+        short_buy_df.rename(columns={'breakout_high': 'high'}, inplace=True)
         short_buy_df.to_csv(SHORT_BUY_FILE, index=False)
         print(f"\n✅ Short Buy signals saved to: {SHORT_BUY_FILE}")
     else:
