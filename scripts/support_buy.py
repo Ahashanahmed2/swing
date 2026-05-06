@@ -144,7 +144,7 @@ for _, row in sr_df.iterrows():
         continue
 
     next_row = df_symbol.iloc[match_idx + 1]
-     last_high = next_row['high']
+    last_high = next_row['high']
 
     # ✅ Support condition
     if next_row['low'] > current_low:
