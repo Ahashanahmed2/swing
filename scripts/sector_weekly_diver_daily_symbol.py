@@ -412,6 +412,8 @@ def generate_all_signals():
                             'composite_score': composite_score,
                             'symbol': sym,
                             'sector': sector_name,
+                            'high': sym_row.get('last_high', sym_row.get('last_price', '')),  # ✅ NEW
+    # ... বাকি সব আগের মত
                             'weekly_divergence': 'Bullish',
                             'weekly_strength_label': div_result['strength_label'],
                             'weekly_strength_score': div_result['strength_score'],
