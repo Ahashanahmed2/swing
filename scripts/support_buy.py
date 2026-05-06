@@ -144,6 +144,7 @@ for _, row in sr_df.iterrows():
         continue
 
     next_row = df_symbol.iloc[match_idx + 1]
+     last_high = next_row['high']
 
     # ✅ Support condition
     if next_row['low'] > current_low:
@@ -191,6 +192,7 @@ for _, row in sr_df.iterrows():
         results.append({
             'type': row['type'],
             'symbol': symbol,
+            'high': last_high,
             'level_date': row['level_date'],
             'level_price': row['level_price'],
             'gap_days': row['gap_days'],
