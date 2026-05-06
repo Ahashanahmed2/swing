@@ -31,7 +31,7 @@ os.makedirs(os.path.dirname(output_path), exist_ok=True)
 # ---------------------------------------------------------
 # Clear old results
 # ---------------------------------------------------------
-full_cols = ["no", "date", "symbol", "buy", "SL", "tp", "position_size", "exposure_bdt", "actual_risk_bdt", "diff", "RRR"]
+full_cols = ["no", "date", "symbol", "buy"," high", "SL", "tp", "position_size", "exposure_bdt", "actual_risk_bdt", "diff", "RRR"]
 empty_df = pd.DataFrame(columns=full_cols)
 empty_df.to_csv(output_path, index=False)
 
@@ -141,6 +141,7 @@ for symbol, group in mongo_groups:
         "date": A["date"],
         "symbol": symbol,
         "buy": buy,
+        "high": A["high"],
         "SL": SL,
         "tp": tp,
         "position_size": position_size,
@@ -179,19 +180,19 @@ if results:
 
         # ✅ Final column order (with position sizing)
         result_df = result_df[[
-            "no", "date", "symbol", "buy", "SL", "tp",
+            "no", "date", "symbol", "buy", "SL", "tp","high",
             "position_size", "exposure_bdt", "actual_risk_bdt",
             "diff", "RRR"
         ]]
     else:
         result_df = pd.DataFrame(columns=[
-            "no", "date", "symbol", "buy", "SL", "tp",
+            "no", "date", "symbol", "buy", "SL", "tp","high",
             "position_size", "exposure_bdt", "actual_risk_bdt",
             "diff", "RRR"
         ])
 else:
     result_df = pd.DataFrame(columns=[
-        "no", "date", "symbol", "buy", "SL", "tp",
+        "no", "date", "symbol", "buy", "SL", "tp","high",
         "position_size", "exposure_bdt", "actual_risk_bdt",
         "diff", "RRR"
     ])
