@@ -115,7 +115,7 @@ else:
 # ---------------------------------------------------------
 # ✅ SAVE BUY SIGNALS (empty)
 # ---------------------------------------------------------
-buy_df = pd.DataFrame(columns=['No', 'date', 'symbol', 'buy', 'SL'])
+buy_df = pd.DataFrame(columns=['No', 'date', 'symbol', 'buy','high','sl'])
 
 # -------------------------------
 # DELETE OLD FILE & SAVE
