@@ -722,6 +722,7 @@ for i, symbol in enumerate(target_symbols):
     # মার্কেট ডেটা
     if symbol in latest_market.index:
         market_row = latest_market.loc[symbol]
+        current_high = market_row.get('high', 0) if hasattr(market_row, 'get') else 0
     else:
         market_row = pd.Series({'close': 0, 'rsi': 50, 'macd': 0, 'sector': 'Unknown'})
     
@@ -783,6 +784,7 @@ for i, symbol in enumerate(target_symbols):
         'symbol': symbol,
         'date': str(market_row.get('date', ''))[:10] if hasattr(market_row, 'get') else '',
         'current_price': market_row.get('close', 0) if hasattr(market_row, 'get') else 0,
+        'high':current_high,
         'sector': sector_sig['name'],
         
         # LLM
