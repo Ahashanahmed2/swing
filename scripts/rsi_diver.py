@@ -7,7 +7,7 @@ import os
 # =========================
 INPUT_FILE = './csv/mongodb.csv'
 OUTPUT_DIR = './output/ai_signal'
-# OUTPUT_FILE = f'{OUTPUT_DIR}/rsi_diver.csv'  # কমেন্ট করা হয়েছে
+OUTPUT_FILE = f'{OUTPUT_DIR}/rsi_diver.csv'  # কমেন্ট করা হয়েছে
 
 # Create output directory
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -170,9 +170,9 @@ if divergence_dict:
     ]
     output_df = output_df[column_order]
 
-    # output_df.to_csv(OUTPUT_FILE, index=False)  # কমেন্ট করা হয়েছে
+    output_df.to_csv(OUTPUT_FILE, index=False)  # কমেন্ট করা হয়েছে
     print(f"✅ Found {len(output_df)} divergences")
-    # print(f"📊 Saved to: {OUTPUT_FILE}")  # কমেন্ট করা হয়েছে
+    print(f"📊 Saved to: {OUTPUT_FILE}")  # কমেন্ট করা হয়েছে
 
     # Print summary
     print("\n📈 Divergence Summary:")
@@ -184,8 +184,8 @@ else:
     print("⚠️ No divergences found")
     # Create empty CSV with new headers
     empty_df = pd.DataFrame(columns=['symbol', 'divergence_type', 'strength', 'last_date', 'last_price', 'last_high', 'lr', 'pd', 'pp', 'pr', 'gape'])
-    # empty_df.to_csv(OUTPUT_FILE, index=False)  # কমেন্ট করা হয়েছে
-    # print(f"📄 Empty file created: {OUTPUT_FILE}")  # কমেন্ট করা হয়েছে
+    empty_df.to_csv(OUTPUT_FILE, index=False)  # কমেন্ট করা হয়েছে
+    print(f"📄 Empty file created: {OUTPUT_FILE}")  # কমেন্ট করা হয়েছে
 
 # =========================
 # Also save to old location for compatibility
