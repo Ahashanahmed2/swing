@@ -146,10 +146,10 @@ for symbol, group in df.groupby('symbol'):
                     'last_date': last_date.strftime('%Y-%m-%d'),
                     'last_price': last_high,
                     'last_low': last_low,
-                    'lr': last_rsi,
+                    'lr': round(last_rsi, 2),
                     'pd': upper_date.strftime('%Y-%m-%d'),
                     'pp': upper_high,
-                    'pr': upper_rsi,
+                    'pr': round(upper_rsi, 2),
                     'gape': gape_count,
                     'strength': 'Strong' if (upper_rsi - last_rsi) > 5 else 'Moderate'
                 }
