@@ -53,8 +53,8 @@ for symbol, group in df.groupby('symbol'):
     last_high = last_row['high']
     last_rsi = last_row['rsi']
 
-    # Find divergence
-    for i in range(1, min(len(group_sorted), 20)):  # Check last 20 candles only
+    # Find divergence - check last 60 candles now
+    for i in range(1, min(len(group_sorted), 60)):
         upper_row = group_sorted.iloc[i]
         upper_date = upper_row['date']
         upper_low = upper_row['low']
@@ -80,6 +80,9 @@ for symbol, group in df.groupby('symbol'):
             # Check if any candle low breaks the line
             mask = (group_sorted['date'] >= upper_date) & (group_sorted['date'] <= last_date)
             segment = group_sorted[mask]
+            
+            # Calculate gape (number of candles between previous and last, excluding both endpoints)
+            gape_count = len(segment) - 2  # -2 to exclude the two compared candles
 
             broken = False
             for _, row in segment.iterrows():
@@ -96,10 +99,11 @@ for symbol, group in df.groupby('symbol'):
                     'last_date': last_date.strftime('%Y-%m-%d'),
                     'last_price': last_low,
                     'last_high': last_high,
-                    'last_rsi': last_rsi,
-                    'previous_date': upper_date.strftime('%Y-%m-%d'),
-                    'previous_price': upper_low,
-                    'previous_rsi': upper_rsi,
+                    'lr': last_rsi,
+                    'pd': upper_date.strftime('%Y-%m-%d'),
+                    'pp': upper_low,
+                    'pr': upper_rsi,
+                    'gape': gape_count,
                     'strength': 'Strong' if (last_rsi - upper_rsi) > 5 else 'Moderate'
                 }
             break  # Take first valid match
@@ -123,6 +127,9 @@ for symbol, group in df.groupby('symbol'):
             # Check if any candle high breaks the line
             mask = (group_sorted['date'] >= upper_date) & (group_sorted['date'] <= last_date)
             segment = group_sorted[mask]
+            
+            # Calculate gape (number of candles between previous and last, excluding both endpoints)
+            gape_count = len(segment) - 2  # -2 to exclude the two compared candles
 
             broken = False
             for _, row in segment.iterrows():
@@ -139,10 +146,11 @@ for symbol, group in df.groupby('symbol'):
                     'last_date': last_date.strftime('%Y-%m-%d'),
                     'last_price': last_high,
                     'last_low': last_low,
-                    'last_rsi': last_rsi,
-                    'previous_date': upper_date.strftime('%Y-%m-%d'),
-                    'previous_price': upper_high,
-                    'previous_rsi': upper_rsi,
+                    'lr': last_rsi,
+                    'pd': upper_date.strftime('%Y-%m-%d'),
+                    'pp': upper_high,
+                    'pr': upper_rsi,
+                    'gape': gape_count,
                     'strength': 'Strong' if (upper_rsi - last_rsi) > 5 else 'Moderate'
                 }
             break  # Take first valid match
@@ -154,11 +162,11 @@ if divergence_dict:
     output_df = pd.DataFrame(divergence_dict.values())
     output_df = output_df.sort_values('symbol')
 
-    # Reorder columns
+    # Reorder columns with new naming
     column_order = [
         'symbol', 'divergence_type', 'strength',
-        'last_date', 'last_price', 'last_high', 'last_rsi',
-        'previous_date', 'previous_price', 'previous_rsi'
+        'last_date', 'last_price', 'last_high', 'lr',
+        'pd', 'pp', 'pr', 'gape'
     ]
     output_df = output_df[column_order]
 
@@ -168,14 +176,14 @@ if divergence_dict:
 
     # Print summary
     print("\n📈 Divergence Summary:")
-    print("-" * 50)
+    print("-" * 60)
     for _, row in output_df.iterrows():
-        print(f"{row['symbol']:<12} {row['divergence_type']:<8} {row['strength']:<8} Last: {row['last_date']}")
+        print(f"{row['symbol']:<12} {row['divergence_type']:<8} {row['strength']:<8} Gape: {row['gape']:<3} Last: {row['last_date']}")
 
 else:
     print("⚠️ No divergences found")
-    # Create empty CSV with headers
-    empty_df = pd.DataFrame(columns=['symbol', 'divergence_type', 'strength', 'last_date', 'last_price', 'last_high', 'last_rsi', 'previous_date', 'previous_price', 'previous_rsi'])
+    # Create empty CSV with new headers
+    empty_df = pd.DataFrame(columns=['symbol', 'divergence_type', 'strength', 'last_date', 'last_price', 'last_high', 'lr', 'pd', 'pp', 'pr', 'gape'])
     # empty_df.to_csv(OUTPUT_FILE, index=False)  # কমেন্ট করা হয়েছে
     # print(f"📄 Empty file created: {OUTPUT_FILE}")  # কমেন্ট করা হয়েছে
 
