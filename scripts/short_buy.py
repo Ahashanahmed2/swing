@@ -12,6 +12,8 @@ from datetime import datetime
 RSI_DIVER_FILE = './csv/rsi_diver.csv'
 MONGO_FILE = './csv/mongodb.csv'
 SHORT_BUY_FILE = './csv/short_buy.csv'
+OUTPUT_DIR = './output/ai_signal'
+OUTPUT_FILE = f'{OUTPUT_DIR}/short_buy.csv'
 
 # =========================
 # Load Data
@@ -90,22 +92,25 @@ for _, row in bullish_df.iterrows():
         
         # Get the first candle after divergence
         first_candle = symbol_data.iloc[0]
-        first_low = first_candle['low']
+        breakout_date = first_candle['date']
+        breakout_low = first_candle['low']
+        breakout_high = first_candle['high']
 
         # Check breakout: First candle's low > divergence low (Breakout)
-        if first_low > divergence_low:
+        if breakout_low > divergence_low:
             bullish_signals.append({
                 'symbol': symbol,
                 'signal_type': 'BUY (Bullish Breakout)',
-                'divergence_date': divergence_date.strftime('%Y-%m-%d'),
-                'divergence_low': divergence_low,
-                'breakout_low': first_low,
-                'breakout_high': first_candle['high'],
+                'dd': divergence_date.strftime('%Y-%m-%d'),
+                'dl': divergence_low,
+                'date': breakout_date.strftime('%Y-%m-%d'),
+                'low': breakout_low,
+                'high': breakout_high,
                 'strength': row['strength'],
                 'gape': gape_value
             })
 
-            print(f"✅ {symbol:<12} | Gape: {gape_value:<3} | Breakout Low: ${first_low:.2f} > Div Low: ${divergence_low:.2f}")
+            print(f"✅ {symbol:<12} | Gape: {gape_value:<3} | Breakout Low: ${breakout_low:.2f} > Div Low: ${divergence_low:.2f}")
     
     except (IndexError, KeyError) as e:
         # Skip symbols with data issues (trading halted, missing columns, etc.)
@@ -140,27 +145,34 @@ if all_signals:
 
     for _, row in df_signals.iterrows():
         print(f"\n📈 {row['no']}. {row['symbol']} - {row['signal_type']}")
-        print(f"   Divergence Date: {row['divergence_date']} | Low: ${row['divergence_low']:.2f}")
-        print(f"   Breakout Low: ${row['breakout_low']:.2f} | High: ${row['breakout_high']:.2f}")
+        print(f"   Divergence Date: {row['dd']} | Divergence Low: ${row['dl']:.2f}")
+        print(f"   Breakout Date: {row['date']} | Breakout Low: ${row['low']:.2f} | High: ${row['high']:.2f}")
         print(f"   Gape: {row['gape']} | Strength: {row['strength']}")
 
-    # Save short_buy.csv with gape column
+    # Save short_buy.csv with new column names
     short_buy_df = pd.DataFrame(bullish_signals)
-    short_buy_df = short_buy_df[['symbol', 'divergence_low', 'divergence_date', 'breakout_low', 'breakout_high', 'gape']]
-    # rename for simplicity
-    short_buy_df.rename(columns={'breakout_high': 'high'}, inplace=True)
+    short_buy_df = short_buy_df[['symbol', 'dl', 'dd', 'date', 'low', 'high', 'gape']]
     short_buy_df.to_csv(SHORT_BUY_FILE, index=False)
     print(f"\n✅ Short Buy signals saved to: {SHORT_BUY_FILE}")
     print(f"📋 Columns: {list(short_buy_df.columns)}")
 
+    # Create output directory and save to new location
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    short_buy_df.to_csv(OUTPUT_FILE, index=False)
+    print(f"✅ Also saved to: {OUTPUT_FILE}")
+
 else:
     print("\n❌ No breakout signals generated")
 
-    # Create empty file with gape column
-    empty_short = pd.DataFrame(columns=['symbol', 'divergence_low', 'divergence_date', 'breakout_low', 'high', 'gape'])
+    # Create empty file with new column names
+    empty_short = pd.DataFrame(columns=['symbol', 'dl', 'dd', 'date', 'low', 'high', 'gape'])
     empty_short.to_csv(SHORT_BUY_FILE, index=False)
+    print(f"📄 Empty file created: {SHORT_BUY_FILE}")
 
-    print(f"📄 Empty files created")
+    # Create empty file in output directory
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    empty_short.to_csv(OUTPUT_FILE, index=False)
+    print(f"📄 Empty file created: {OUTPUT_FILE}")
 
 # =========================
 # Risk Management Summary
