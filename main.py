@@ -48,7 +48,7 @@ scripts = [
     "scripts/macd.py",
     "scripts/macd_daily.py",
     "scripts/down_macd.py",
-    "scripts/ai_trade.py",
+    #"scripts/ai_trade.py",
     "scripts/xgboost_retrain.py",
     #"scripts/ppo_train.py",no
     "scripts/nightly_trader.py",
