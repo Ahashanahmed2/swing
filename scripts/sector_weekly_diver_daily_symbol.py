@@ -354,11 +354,17 @@ def generate_all_signals():
         # ============================
         # SWD SIGNAL: Weekly Divergence Only
         # ============================
+
+        if sector_name.lower() == 'unknown' or sector_name == 'Unknown':
+            print(f"   ⚠ SWD: Unknown sector skipped")
+            continue  # ← এই সেক্টর skip করে পরবর্তী সেক্টরে যান
+
         swd_signal = {
             'signal_date': datetime.now().strftime('%Y-%m-%d'),
             'sector': sector_name,
         }
         swd_signals.append(swd_signal)
+
         
         swd_log['signals'].append({
             'date': datetime.now().strftime('%Y-%m-%d'),
