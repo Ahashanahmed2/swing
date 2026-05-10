@@ -97,12 +97,12 @@ for _, fail_row in fail_df.iterrows():
                 # Add to passed signals
                 passed_signals.append({
                     'symbol': symbol,
-                    'fail_date': fail_date.strftime('%Y-%m-%d'),
-                    'fail_high': fail_high,
-                    'fail_low': fail_low,
-                    'pass_date': subsequent_row['date'].strftime('%Y-%m-%d'),
-                    'pass_high': subsequent_row['high'],
-                    'pass_low': subsequent_row['low']
+                    #'fail_date': fail_date.strftime('%Y-%m-%d'),
+                    #'fail_high': fail_high,
+                    #'fail_low': fail_low,
+                    'date': subsequent_row['date'].strftime('%Y-%m-%d'),
+                    'high': subsequent_row['high'],
+                    'low': subsequent_row['low']
                 })
                 
                 print(f"✅ {symbol:<12} | Passed! High: ${subsequent_row['high']:.2f} > ${fail_high:.2f} | Low: ${subsequent_row['low']:.2f} > ${fail_low:.2f}")
