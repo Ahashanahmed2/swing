@@ -34,7 +34,7 @@ scripts = [
     #"scripts/liquidly.py",no
     "scripts/orderblock.py",
     #"scripts/fail_short_buy_pass.py",
-    #"scripts/fail_short_buy.py",
+    "scripts/fail_short_buy.py",
     "scripts/short_buy.py",
     "scripts/short_buy_check.py",
     "scripts/rsi_diver.py",
