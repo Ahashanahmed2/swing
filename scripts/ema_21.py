@@ -8,7 +8,7 @@ import sys
 # -------------------------------------------------------------------
 csv_path = './csv/mongodb.csv'
 output_dir = './output/ai_signal'
-output_file = os.path.join(output_dir, 'ema_200.csv')
+output_file = os.path.join(output_dir, 'ema_21.csv')
 
 # Check if CSV exists
 if not os.path.exists(csv_path):
@@ -21,10 +21,10 @@ df = pd.read_csv(csv_path)
 # Convert date
 df['date'] = pd.to_datetime(df['date'])
 
-# Check if ema_200 column exists
-if 'ema_200' not in df.columns:
-    print("❌ 'ema_200' column not found in the CSV file.")
-    print("Please run the main script first to generate EMA-200 values.")
+# Check if ema_21 column exists
+if 'ema_21' not in df.columns:
+    print("❌ 'ema_21' column not found in the CSV file.")
+    print("Please run the main script first to generate EMA-21 values.")
     sys.exit(1)
 
 print(f"✅ Total records: {len(df)}")
@@ -40,36 +40,39 @@ df = df.sort_values(['symbol', 'date'])
 # Step 3: Find symbols meeting the condition
 # -------------------------------------------------------------------
 print("\n🔍 Finding symbols where:")
-print("   - Previous day close was below EMA-200")
-print("   - Latest day close is above EMA-200")
+print("   - Latest candle: High > EMA-21")
+print("   - AND Latest candle: Low <= EMA-21")
+print("   (EMA-21 is INSIDE the latest candle)")
 
 def find_signals(group):
     # Sort by date
     group = group.sort_values('date')
     
-    # Need at least 2 rows to check previous day
-    if len(group) < 2:
+    # Need at least 1 row
+    if len(group) < 1:
         return pd.DataFrame()
     
-    # Get latest row
+    # Get latest row only
     latest = group.iloc[-1]
     
-    # Get previous day's row
-    prev = group.iloc[-2]
-    
-    # Check condition using existing ema_200 column
-    if (pd.notna(prev['ema_200']) and 
-        pd.notna(latest['ema_200']) and
-        prev['close'] < prev['ema_200'] and 
-        latest['close'] > latest['ema_200']):
+    # Check condition using ema_21 column
+    if (pd.notna(latest['ema_21']) and 
+        pd.notna(latest['high']) and 
+        pd.notna(latest['low'])):
         
-        return pd.DataFrame({
-            'symbol': [latest['symbol']],
-            'date': [latest['date']],
-            'close': [latest['close']]
-        })
-    else:
-        return pd.DataFrame()
+        # 🔥 মূল কন্ডিশন:
+        # High > EMA-21 AND Low <= EMA-21
+        if latest['high'] > latest['ema_21'] and latest['low'] <= latest['ema_21']:
+            return pd.DataFrame({
+                'symbol': [latest['symbol']],
+                'date': [latest['date']],
+                'close': [latest['close']],
+                'high': [latest['high']],
+                'low': [latest['low']],
+                'ema_21': [latest['ema_21']]
+            })
+    
+    return pd.DataFrame()
 
 # Process each symbol
 signal_dfs = []
@@ -92,9 +95,10 @@ if signal_dfs:
     # Show results
     print("\n📊 Signals found:")
     for _, row in result_df.iterrows():
-        print(f"   - {row['symbol']}: {row['date'].strftime('%Y-%m-%d')} | Close: {row['close']:.2f}")
+        print(f"   - {row['symbol']}: {row['date'].strftime('%Y-%m-%d')} | "
+              f"High: {row['high']:.2f} | Low: {row['low']:.2f} | EMA-21: {row['ema_21']:.2f}")
 else:
-    result_df = pd.DataFrame(columns=['symbol', 'date', 'close'])
+    result_df = pd.DataFrame(columns=['symbol', 'date', 'close', 'high', 'low', 'ema_21'])
     print("\n❌ No symbols found matching the condition")
 
 # Save to CSV
