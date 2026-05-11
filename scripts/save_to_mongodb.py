@@ -51,10 +51,10 @@ FILES_TO_SAVE = [
         "description": "MACD Daily Signals"
     },
     {
-        "path": "./output/ai_signal/ema_200.csv",
-        "collection": "ema_200_signals",
+        "path": "./output/ai_signal/ema_21.csv",
+        "collection": "ema_21_signals",
         "has_date": False,
-        "description": "EMA 200 Signals"
+        "description": "EMA 21 Signals"
     },
     {
         "path": "./output/ai_signal/swrsi.csv",
@@ -69,7 +69,7 @@ FILES_TO_SAVE = [
 # MongoDB কানেকশন
 # =========================================================
 def connect_mongodb():
-    """MongoDB-তে কানেক্ট করে ক্লায়েন্ট রিটার্ন করে"""
+    ""MongoDB-তে কানেক্ট করে ক্লায়েন্ট রিটার্ন করে"""
     if not MONGODB_URI:
         print("❌ MONGODBEMAIL_URI environment variable not set!")
         return None
