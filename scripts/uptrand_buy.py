@@ -104,7 +104,7 @@ def create_uptrand_buy_signals():
     mongodb_csv = './csv/mongodb.csv'
     uptrand_csv = './csv/uptrand.csv'
     output_dir = './output/ai_signal/'
-    output_file = os.path.join(output_dir, 'uptrand.csv')
+    output_file = os.path.join(output_dir, 'uptrand_buy.csv')
     
     os.makedirs(output_dir, exist_ok=True)
     
