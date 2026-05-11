@@ -1,3 +1,4 @@
+#trend_signal.py
 import pandas as pd
 import os
 from datetime import datetime
@@ -24,18 +25,15 @@ def merge_and_track_new_symbols(old_df, new_df, symbol_col='symbol'):
     return final_df, new_only_df
 
 
-def create_uptrend_downtrend_signals():
+def create_uptrend_signals():
 
     mongodb_csv = './csv/mongodb.csv'
     trand_base_dir = './csv/trand/'
     output_dir = './csv/'
-    ai_output_dir = './output/ai_signal'
 
     os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(ai_output_dir, exist_ok=True)
 
     uptrend_file = os.path.join(output_dir, 'uptrand.csv')
-    downtrend_file = os.path.join(output_dir, 'downtrand.csv')
 
     print(f"Reading {mongodb_csv}...")
 
@@ -67,7 +65,6 @@ def create_uptrend_downtrend_signals():
     print(f"✅ Found {len(latest_data)} symbols")
 
     uptrend_signals = []
-    downtrend_signals = []
 
     # --------------------------------------------------
     # Signal detection
@@ -75,7 +72,6 @@ def create_uptrend_downtrend_signals():
     for symbol, info in latest_data.items():
         symbol_dir = os.path.join(trand_base_dir, symbol)
         high_file = os.path.join(symbol_dir, 'high.csv')
-        low_file = os.path.join(symbol_dir, 'low.csv')
 
         latest_close = info['close']
         latest_date = info['date']
@@ -104,44 +100,18 @@ def create_uptrend_downtrend_signals():
             except Exception as e:
                 print(f"⚠️ High error ({symbol}): {e}")
 
-                # ---------------- DOWNTREND ----------------
-        if os.path.exists(low_file):
-            try:
-                low_df = pd.read_csv(low_file)
-                low_df['date'] = pd.to_datetime(low_df['date'])
-
-                if len(low_df) >= 2:
-                    p1_price = float(low_df.iloc[0]['price'])
-                    p2_price = float(low_df.iloc[1]['price'])
-
-                    p1_date = low_df.iloc[0]['date']
-                    p2_date = low_df.iloc[1]['date']
-
-                    if p1_price > latest_close < p2_price and p1_price > p2_price:
-                        downtrend_signals.append({
-                            'date': latest_date,
-                            'symbol': symbol,
-                            'close': latest_close,
-                            'p1_date': p1_date,
-                            'p2_date': p2_date
-                        })
-            except Exception as e:
-                print(f"⚠️ Low error ({symbol}): {e}")
-
-
     # --------------------------------------------------
     # SAVE UPTREND
     # --------------------------------------------------
     if uptrend_signals:
         new_up_df = pd.DataFrame(uptrend_signals)
-       # old_up_df = pd.read_csv(uptrend_file) if os.path.exists(uptrend_file) else None
         
-        # সাবধানে পুরোনো ডেটা লোড করা
+        # পুরোনো ডেটা লোড করা
         old_up_df = None
         if os.path.exists(uptrend_file):
             try:
                 old_up_df = pd.read_csv(uptrend_file)
-                if old_up_df.empty:  # ফাইল থাকলেও যদি ডেটা খালি হয়
+                if old_up_df.empty:
                     old_up_df = None
             except pd.errors.EmptyDataError:
                 print(f"⚠️ {uptrend_file} ফাইলটি খালি ছিল, নতুন ফাইল তৈরি হচ্ছে")
@@ -149,71 +119,30 @@ def create_uptrend_downtrend_signals():
             except Exception as e:
                 print(f"⚠️ {uptrend_file} পড়তে সমস্যা: {e}, নতুন ফাইল তৈরি হচ্ছে")
                 old_up_df = None
-        final_up_df, new_up_symbols = merge_and_track_new_symbols(
+        
+        # শুধুমাত্র নতুন সিম্বল অ্যাড হবে, পুরোনোটা অপরিবর্তিত থাকবে
+        final_up_df, _ = merge_and_track_new_symbols(
             old_up_df, new_up_df
         )
 
         final_up_df.to_csv(uptrend_file, index=False)
 
-        if not new_up_symbols.empty:
-            new_up_symbols.to_csv(
-                os.path.join(ai_output_dir, 'uptrand.csv'),
-                index=False
-            )
-
         print("✅ Uptrend updated")
 
     else:
-        pd.DataFrame().to_csv(uptrend_file, index=False)
-        print("❌ No uptrend → cleared")
+        # আগের ডেটা মুছে না, শুধু নতুন signal না থাকলে পুরোনো ফাইল রেখে দিবে
+        if not os.path.exists(uptrend_file):
+            pd.DataFrame().to_csv(uptrend_file, index=False)
+        print("❌ No uptrend signals found")
 
-    # --------------------------------------------------
-    # SAVE DOWNTREND
-    # --------------------------------------------------
-    if downtrend_signals:
-        new_down_df = pd.DataFrame(downtrend_signals)
-        #old_down_df = pd.read_csv(downtrend_file) if os.path.exists(downtrend_file) else None
-        
-        # old_down_df = pd.read_csv(downtrend_file) if os.path.exists(downtrend_file) else None
-        old_down_df = None
-        if os.path.exists(downtrend_file):
-            try:
-                old_down_df = pd.read_csv(downtrend_file)
-                if old_down_df.empty:
-                    old_down_df = None
-            except pd.errors.EmptyDataError:
-                print(f"⚠️ {downtrend_file} ফাইলটি খালি ছিল, নতুন ফাইল তৈরি হচ্ছে")
-                old_down_df = None
-            except Exception as e:
-                print(f"⚠️ {downtrend_file} পড়তে সমস্যা: {e}, নতুন ফাইল তৈরি হচ্ছে")
-                old_down_df = None
-        
-        final_down_df, new_down_symbols = merge_and_track_new_symbols(
-            old_down_df, new_down_df
-        )
-
-        final_down_df.to_csv(downtrend_file, index=False)
-
-        if not new_down_symbols.empty:
-            new_down_symbols.to_csv(
-                os.path.join(ai_output_dir, 'downtrand.csv'),
-                index=False
-            )
-
-        print("✅ Downtrend updated")
-
-    else:
-        pd.DataFrame().to_csv(downtrend_file, index=False)
-        print("❌ No downtrend → cleared")
-
-    print("\n🎯 Trend breakout / breakdown detection completed!")
+    print("\n🎯 Trend breakout detection completed!")
 
 
 def main():
     print("=" * 60)
-    print("TREND BREAKOUT / BREAKDOWN DETECTION")
+    print("TREND BREAKOUT DETECTION")
     print("=" * 60)
-    create_uptrend_downtrend_signals()
+    create_uptrend_signals()
 
 
 if __name__ == "__main__":
