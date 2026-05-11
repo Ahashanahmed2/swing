@@ -51,8 +51,9 @@ scripts = [
     #"scripts/ai_trade.py",
     "scripts/xgboost_retrain.py",
     #"scripts/ppo_train.py",no
-    "scripts/nightly_trader.py",
+    #"scripts/nightly_trader.py",
     #"scripts/agentic_loop.py",no
+    "scripts/daily_buy.py",
     "scripts/generate_final_ai_signals.py",
     "scripts/generate_pdf.py",
     "scripts/upload_csv.py",
