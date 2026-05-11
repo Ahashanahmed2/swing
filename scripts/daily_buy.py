@@ -229,25 +229,31 @@ if file_latest_dates:
         # ডুপ্লিকেট সিম্বল রিমুভ করুন (একই সিম্বল একাধিক ফাইলে থাকলে)
         result_df = result_df.drop_duplicates(subset=['symbol'], keep='first')
 
-        # daily_buy.py-র শেষে (result_df.to_csv(output_file) এর আগে) যোগ করুন:
-
-        # ✅ mongodb.csv থেকে high নিন
+        # ✅ mongodb.csv থেকে high নিন (শুধু result_df-তে থাকা symbol গুলোর)
         mongo_path = './csv/mongodb.csv'
         if os.path.exists(mongo_path):
             mongo_df = pd.read_csv(mongo_path)
             mongo_df['date'] = pd.to_datetime(mongo_df['date'])
-    
-            # প্রতিটি সিম্বলের সর্বশেষ high
-            latest = mongo_df.sort_values('date').groupby('symbol').tail(1)[['symbol', 'high']]
-    
-            # merge with result_df
-            result_df = result_df.merge(latest, on='symbol', how='left')
-    
-            # high NaN থাকলে buy দিয়ে fill
-            if 'high' not in result_df.columns:
-                result_df['high'] = result_df['buy']
-            else:
-                result_df['high'] = result_df['high'].fillna(result_df['buy'])
+
+            # ✅ শুধু result_df-তে থাকা symbol গুলোর latest high আনুন
+            if 'symbol' in result_df.columns and len(result_df) > 0:
+                # result_df-র symbol গুলোর লিস্ট
+                target_symbols = result_df['symbol'].unique()
+        
+                # MongoDB থেকে শুধু ঐ symbol গুলো filter করুন
+                mongo_filtered = mongo_df[mongo_df['symbol'].isin(target_symbols)]
+        
+                # filter করা ডাটা থেকে latest high বের করুন
+                latest = mongo_filtered.sort_values('date').groupby('symbol').tail(1)[['symbol', 'high']]
+        
+                # merge with result_df
+                result_df = result_df.merge(latest, on='symbol', how='left')
+        
+                # high NaN থাকলে buy দিয়ে fill
+                if 'high' not in result_df.columns:
+                    result_df['high'] = result_df['buy']
+                else:
+                    result_df['high'] = result_df['high'].fillna(result_df['buy'])
         result_df.to_csv(output_file, index=False)
 
         print(f"\n{'='*50}")
