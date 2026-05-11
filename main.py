@@ -22,7 +22,7 @@ scripts = [
     "scripts/sync_emails.py",
     "scripts/trand.py",
     "scripts/trend_signal.py",
-   
+    "scripts/uptrand_buy.py",
     #"scripts/pattarn.py",no
     #"scripts/elliott_wave.py",
     "scripts/ema_21.py",
