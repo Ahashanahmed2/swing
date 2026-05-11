@@ -244,8 +244,10 @@ if file_latest_dates:
             result_df = result_df.merge(latest, on='symbol', how='left')
     
             # high NaN থাকলে buy দিয়ে fill
-            result_df['high'] = result_df['high'].fillna(result_df['buy'])
-        # ফলাফল CSV হিসেবে সংরক্ষণ করুন
+            if 'high' not in result_df.columns:
+                result_df['high'] = result_df['buy']
+            else:
+                result_df['high'] = result_df['high'].fillna(result_df['buy'])
         result_df.to_csv(output_file, index=False)
 
         print(f"\n{'='*50}")
