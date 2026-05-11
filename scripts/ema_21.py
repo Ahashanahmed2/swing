@@ -57,12 +57,12 @@ def find_signals(group):
     
     # Check condition using ema_21 column
     if (pd.notna(latest['ema_21']) and 
-        pd.notna(latest['high']) and 
+        pd.notna(latest['close']) and 
         pd.notna(latest['low'])):
         
         # 🔥 মূল কন্ডিশন:
         # High > EMA-21 AND Low <= EMA-21
-        if latest['high'] > latest['ema_21'] and latest['low'] <= latest['ema_21']:
+        if latest['close'] > latest['ema_21'] and latest['low'] <= latest['ema_21']:
             return pd.DataFrame({
                 'symbol': [latest['symbol']],
                 'date': [latest['date']],
