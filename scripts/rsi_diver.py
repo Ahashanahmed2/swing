@@ -102,7 +102,7 @@ for symbol, group in df.groupby('symbol'):
                     'lr': round(last_rsi, 2),
                     'pd': upper_date.strftime('%Y-%m-%d'),
                     'pp': upper_low,
-                    'pr': round(upper_rsi, 2)
+                    'pr': round(upper_rsi, 2),
                     'gape': gape_count,
                     'strength': 'Strong' if (last_rsi - upper_rsi) > 5 else 'Moderate'
                 }
