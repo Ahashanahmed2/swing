@@ -9,7 +9,7 @@ files_info = {
     "gape": "./csv/gape_buy.csv", 
     "rsi": "./csv/rsi_30_buy.csv",
     "swing": "./csv/swing_buy.csv",
-    "uptrend": "./output/ai_signal/uptrand.csv"
+    "uptrend": "./output/ai_signal/uptrand_buy.csv"
 }
 
 # আউটপুট ডিরেক্টরি ও ফাইল
