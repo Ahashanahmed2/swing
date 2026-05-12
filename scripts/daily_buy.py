@@ -155,15 +155,17 @@ if file_latest_dates:
                     # সারির ডাটা কপি করুন
                     row_data = row.to_dict()
 
+                    # p1_date, p2_date বাদ দিন (row_data থেকেই)
+                    row_data.pop('p1_date', None)
+                    row_data.pop('p2_date', None)
+                    row_data.pop('latest_date', None)
+
                     # symbol কলাম যোগ করুন (যদি আগে থেকে না থাকে)
                     if 'symbol' not in row_data:
                         row_data['symbol'] = symbol
 
                     # 'file' কলাম যোগ করুন
                     row_data['file'] = file_key
-                    
-                    # তারিখ যোগ করুন
-                    row_data['latest_date'] = overall_latest_date.date()
 
                     # লিস্টে যোগ করুন
                     latest_date_data.append(row_data)
@@ -214,7 +216,7 @@ if file_latest_dates:
         ordered_columns = []
         
         # প্রথমে symbol এবং file রাখুন
-        preferred_order = ['symbol', 'file', 'buy', 'latest_date']
+        preferred_order = ['symbol', 'file', 'buy']
         for col in preferred_order:
             if col in result_df.columns and col not in ordered_columns:
                 ordered_columns.append(col)
@@ -246,14 +248,31 @@ if file_latest_dates:
                 # filter করা ডাটা থেকে latest high বের করুন
                 latest = mongo_filtered.sort_values('date').groupby('symbol').tail(1)[['symbol', 'high']]
         
-                # merge with result_df
-                result_df = result_df.merge(latest, on='symbol', how='left')
+                # ✅ merge এর পরিবর্তে map ব্যবহার করুন (high_x, high_y হবে না)
+                high_map = dict(zip(latest['symbol'], latest['high']))
+                
+                # high কলাম আগে থেকেই থাকলে update, না থাকলে create
+                if 'high' not in result_df.columns:
+                    result_df['high'] = result_df['symbol'].map(high_map)
+                else:
+                    # বিদ্যমান high কলামের NaN গুলো fill করুন
+                    mongodb_highs = result_df['symbol'].map(high_map)
+                    result_df['high'] = result_df['high'].fillna(mongodb_highs)
         
                 # high NaN থাকলে buy দিয়ে fill
-                if 'high' not in result_df.columns:
-                    result_df['high'] = result_df['buy']
-                else:
-                    result_df['high'] = result_df['high'].fillna(result_df['buy'])
+                result_df['high'] = result_df['high'].fillna(result_df['buy'])
+        
+        # ✅ p1_date, p2_date, latest_date কলাম বাদ দিন (সিকিউরিটির জন্য)
+        columns_to_drop = ['p1_date', 'p2_date', 'latest_date']
+        for col in columns_to_drop:
+            if col in result_df.columns:
+                result_df = result_df.drop(columns=[col])
+
+        # ✅ high_x, high_y থাকলে বাদ দিন (সিকিউরিটির জন্য)
+        high_extra_cols = [col for col in result_df.columns if col.startswith('high_')]
+        if high_extra_cols:
+            result_df = result_df.drop(columns=high_extra_cols)
+
         result_df.to_csv(output_file, index=False)
 
         print(f"\n{'='*50}")
