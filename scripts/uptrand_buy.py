@@ -130,7 +130,7 @@ def create_uptrand_buy_signals():
     print(f"📖 Reading {uptrand_csv}...")
     try:
         uptrand_df = pd.read_csv(uptrand_csv)
-        uptrand_df['date'] = pd.to_datetime(uptrand_df['date'])
+        uptrand_df['date'] = pd.to_datetime(uptrand_df['date'], format='mixed')
     except pd.errors.EmptyDataError:
         print("⚠️ uptrand.csv is empty")
         return
