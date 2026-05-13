@@ -44,7 +44,6 @@ scripts = [
     #"scripts/g_gape_buy.py",
     #"scripts/g_swing_buy.py",
     #"scripts/g_30_buy.py",
-    "scripts/csv_to_ai_signal_file_transport.py",
     "scripts/macd.py",
     "scripts/macd_daily.py",
     "scripts/down_macd.py",
