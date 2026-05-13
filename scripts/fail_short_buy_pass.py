@@ -44,7 +44,7 @@ mongo_df['date'] = pd.to_datetime(mongo_df['date'])
 fail_df['date'] = pd.to_datetime(fail_df['date'])
 
 # Ensure all required columns exist in MongoDB
-required_mongo_cols = ['symbol', 'date', 'high', 'low']
+required_mongo_cols = ['symbol', 'date', 'high', 'low','close']
 for col in required_mongo_cols:
     if col not in mongo_df.columns:
         print(f"❌ Error: Missing required column '{col}' in MongoDB!")
@@ -105,7 +105,7 @@ for _, fail_row in fail_df.iterrows():
                     'low': subsequent_row['low']
                 })
                 
-                print(f"✅ {symbol:<12} | Passed! High: ${subsequent_row['high']:.2f} > ${fail_high:.2f} | Low: ${subsequent_row['low']:.2f} > ${fail_low:.2f}")
+                print(f"✅ {symbol:<12} | Passed! High: ${subsequent_row['close']:.2f} > ${fail_high:.2f} | Low: ${subsequent_row['low']:.2f} > ${fail_low:.2f}")
                 break
         
         # If not passed, update with latest MongoDB data
