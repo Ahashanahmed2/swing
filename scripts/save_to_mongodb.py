@@ -69,7 +69,7 @@ FILES_TO_SAVE = [
 # MongoDB কানেকশন
 # =========================================================
 def connect_mongodb():
-    ""MongoDB-তে কানেক্ট করে ক্লায়েন্ট রিটার্ন করে"""
+    """MongoDB-তে কানেক্ট করে ক্লায়েন্ট রিটার্ন করে"""
     if not MONGODB_URI:
         print("❌ MONGODBEMAIL_URI environment variable not set!")
         return None
