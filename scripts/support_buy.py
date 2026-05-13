@@ -195,7 +195,7 @@ for _, row in sr_df.iterrows():
             'high': last_high,
             'level_date': row['level_date'],
             'level_price': row['level_price'],
-            'gap_days': row['gap_days'],
+            'gape': row['gap_days'],
             'strength': row['strength'],
             'xgb_prob': round(prob, 2),
             'confidence': round(confidence, 2),
@@ -217,7 +217,7 @@ output_df = pd.DataFrame(results)
 # -----------------------------
 if not output_df.empty:
     output_df = output_df.sort_values(
-        by=['buy_score', 'confidence', 'gap_days'],
+        by=['buy_score', 'confidence', 'gape],
         ascending=[False, False, True]
     )
 
@@ -235,7 +235,7 @@ print("="*70)
 if not output_df.empty:
     print(output_df['signal'].value_counts().to_string())
     print(f"\n🔥 TOP 10 SIGNALS:")
-    print(output_df[['symbol', 'signal', 'buy_score', 'xgb_prob', 'confidence']].head(10).to_string())
+    print(output_df[['symbol', 'signal', 'buy_score', 'xgb_prob', 'confidence','gape']].head(10).to_string())
 else:
     print("❌ No signals generated!")
 
