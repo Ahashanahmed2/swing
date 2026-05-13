@@ -16,8 +16,11 @@ Path(output_dir).mkdir(parents=True, exist_ok=True)
 
 latest_date_data = []
 file_latest_dates = {}
+file_dataframes = {}  # ✅ DataFrame cache
 
-# Step 1: Find latest dates
+date_columns = ['date', 'Date', 'DATE', 'timestamp', 'Timestamp', 'TIMESTAMP']
+
+# Step 1: Find latest dates AND cache DataFrames
 for file_key, file_path in files_info.items():
     try:
         if not os.path.exists(file_path):
@@ -28,8 +31,6 @@ for file_key, file_path in files_info.items():
             continue
 
         date_column = None
-        date_columns = ['date', 'Date', 'DATE', 'timestamp', 'Timestamp', 'TIMESTAMP']
-
         for col in date_columns:
             if col in df.columns:
                 date_column = col
@@ -44,25 +45,17 @@ for file_key, file_path in files_info.items():
         if not df.empty:
             latest_date = df[date_column].max()
             file_latest_dates[file_key] = latest_date
+            file_dataframes[file_key] = df  # ✅ Cache
     except:
         continue
 
-# Step 2: Collect latest data
+# Step 2: Collect data using cached DataFrames
 if file_latest_dates:
     overall_latest_date = max(file_latest_dates.values())
     
-    for file_key, file_path in files_info.items():
+    for file_key, df in file_dataframes.items():  # ✅ ক্যাশ থেকে নেওয়া
         try:
-            if not os.path.exists(file_path):
-                continue
-
-            df = pd.read_csv(file_path)
-            if df.empty:
-                continue
-
             date_column = None
-            date_columns = ['date', 'Date', 'DATE', 'timestamp', 'Timestamp', 'TIMESTAMP']
-
             for col in date_columns:
                 if col in df.columns:
                     date_column = col
@@ -71,27 +64,20 @@ if file_latest_dates:
             if date_column is None:
                 continue
             
-            df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
-            df = df.dropna(subset=[date_column])
-            
-            if df.empty:
-                continue
-            
             latest_data = df[df[date_column] == overall_latest_date]
             
             if len(latest_data) == 0:
                 continue
             
             for _, row in latest_data.iterrows():
-                symbol = None
                 if 'symbol' in df.columns:
                     symbol = str(row['symbol'])
-                
-                if symbol:
-                    row_data = row.to_dict()
-                    row_data['symbol'] = symbol
-                    row_data['file'] = file_key
-                    latest_date_data.append(row_data)
+                    
+                    if symbol:
+                        row_data = row.to_dict()
+                        row_data['symbol'] = symbol
+                        row_data['file'] = file_key
+                        latest_date_data.append(row_data)
         except:
             continue
     
@@ -100,17 +86,15 @@ if file_latest_dates:
         
         # close -> buy conversion
         close_columns = [col for col in result_df.columns if col.lower() == 'close']
-        if close_columns:
-            for close_col in close_columns:
-                if 'buy' not in result_df.columns:
-                    result_df['buy'] = result_df[close_col]
-                result_df = result_df.drop(columns=[close_col])
+        for close_col in close_columns:
+            if 'buy' not in result_df.columns:
+                result_df['buy'] = result_df[close_col]
+            result_df = result_df.drop(columns=[close_col])
         
         # Column ordering
         ordered_columns = []
-        preferred_order = ['symbol', 'file', 'buy']
-        for col in preferred_order:
-            if col in result_df.columns and col not in ordered_columns:
+        for col in ['symbol', 'file', 'buy']:
+            if col in result_df.columns:
                 ordered_columns.append(col)
         
         for col in result_df.columns:
@@ -132,11 +116,9 @@ if file_latest_dates:
                 latest = mongo_filtered.sort_values('date').groupby('symbol').tail(1)[['symbol', 'high']]
                 
                 high_map = dict(zip(latest['symbol'], latest['high']))
-                
-                if 'high' not in result_df.columns:
-                    result_df['high'] = result_df['symbol'].map(high_map)
-                
-                result_df['high'] = result_df['high'].fillna(result_df['buy'])
+                result_df['high'] = result_df['symbol'].map(high_map)  # ✅ buy fillna বাদ
         
         result_df.to_csv(output_file, index=False)
         print(f"✅ Saved {len(result_df)} symbols to {output_file}")
+else:
+    print("❌ No valid data found")
