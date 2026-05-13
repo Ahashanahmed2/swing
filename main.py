@@ -55,11 +55,12 @@ scripts = [
     #"scripts/agentic_loop.py",no
     "scripts/daily_buy.py",
     "scripts/generate_final_ai_signals.py",
+    "scripts/save_to_mongodb.py",
     "scripts/generate_pdf.py",
     "scripts/upload_csv.py",
     "scripts/dayliMassage.py",
     "scripts/email_reports.py",
-    "scripts/save_to_mongodb.py"
+    
     
     #"scripts/generate_pattern_training_data_complete.py",no
     #"scripts/llm_tra"in.py",no
