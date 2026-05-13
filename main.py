@@ -27,7 +27,7 @@ scripts = [
     #"scripts/elliott_wave.py",
     "scripts/ema_21.py",
     "scripts/support.py",
-    "scripts/buy_csv.py",
+    #"scripts/buy_csv.py",
     #"scripts/buy.py",no
     "scripts/trade_stock_ai.py",
     "scripts/swing_buy.py",
