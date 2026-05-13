@@ -40,36 +40,45 @@ df = df.sort_values(['symbol', 'date'])
 # Step 3: Find symbols meeting the condition
 # -------------------------------------------------------------------
 print("\n🔍 Finding symbols where:")
-print("   - Latest candle: High > EMA-21")
+print("   - Latest candle: Close > EMA-21")
 print("   - AND Latest candle: Low <= EMA-21")
-print("   (EMA-21 is INSIDE the latest candle)")
+print("   - AND Previous row High < Latest row Close")
+print("   (EMA-21 is INSIDE the latest candle, with gap above previous high)")
 
 def find_signals(group):
     # Sort by date
     group = group.sort_values('date')
     
-    # Need at least 1 row
-    if len(group) < 1:
+    # Need at least 2 rows (1 previous + 1 latest)
+    if len(group) < 2:
         return pd.DataFrame()
     
-    # Get latest row only
+    # Get latest row and previous row
     latest = group.iloc[-1]
+    previous = group.iloc[-2]
     
     # Check condition using ema_21 column
     if (pd.notna(latest['ema_21']) and 
         pd.notna(latest['close']) and 
-        pd.notna(latest['low'])):
+        pd.notna(latest['low']) and
+        pd.notna(previous['high'])):
         
         # 🔥 মূল কন্ডিশন:
-        # High > EMA-21 AND Low <= EMA-21
-        if latest['close'] > latest['ema_21'] and latest['low'] <= latest['ema_21']:
+        # 1. Close > EMA-21
+        # 2. Low <= EMA-21
+        # 3. Previous High < Latest Close
+        if (latest['close'] > latest['ema_21'] and 
+            latest['low'] <= latest['ema_21'] and 
+            previous['high'] < latest['close']):
+            
             return pd.DataFrame({
                 'symbol': [latest['symbol']],
                 'date': [latest['date']],
                 'close': [latest['close']],
                 'high': [latest['high']],
                 'low': [latest['low']],
-                'ema_21': [latest['ema_21']]
+                'ema_21': [latest['ema_21']],
+                'prev_high': [previous['high']]
             })
     
     return pd.DataFrame()
@@ -96,9 +105,11 @@ if signal_dfs:
     print("\n📊 Signals found:")
     for _, row in result_df.iterrows():
         print(f"   - {row['symbol']}: {row['date'].strftime('%Y-%m-%d')} | "
-              f"High: {row['high']:.2f} | Low: {row['low']:.2f} | EMA-21: {row['ema_21']:.2f}")
+              f"Close: {row['close']:.2f} | High: {row['high']:.2f} | "
+              f"Low: {row['low']:.2f} | EMA-21: {row['ema_21']:.2f} | "
+              f"Prev High: {row['prev_high']:.2f}")
 else:
-    result_df = pd.DataFrame(columns=['symbol', 'date', 'close', 'high', 'low', 'ema_21'])
+    result_df = pd.DataFrame(columns=['symbol', 'date', 'close', 'high', 'low', 'ema_21', 'prev_high'])
     print("\n❌ No symbols found matching the condition")
 
 # Save to CSV
