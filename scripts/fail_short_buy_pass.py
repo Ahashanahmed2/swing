@@ -91,7 +91,7 @@ for _, fail_row in fail_df.iterrows():
         # 2. low > fail_low (new low is higher than previous low)
         passed = False
         for _, subsequent_row in symbol_data.iterrows():
-            if (subsequent_row['close] > fail_high) and (subsequent_row['low'] > fail_low):
+            if (subsequent_row['close'] > fail_high) and (subsequent_row['low'] > fail_low):
                 passed = True
                 
                 # Add to passed signals
