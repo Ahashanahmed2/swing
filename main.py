@@ -24,15 +24,15 @@ scripts = [
     "scripts/trend_signal.py",
     "scripts/uptrand_buy.py",
     #"scripts/pattarn.py",no
-    #"scripts/elliott_wave.py",
+    #"scripts/elliott_wave.py",no
     "scripts/ema_21.py",
     "scripts/support.py",
-    #"scripts/buy_csv.py",
+    #"scripts/buy_csv.py",no
     #"scripts/buy.py",no
     "scripts/trade_stock_ai.py",
     "scripts/swing_buy.py",
     #"scripts/liquidly.py",no
-    "scripts/orderblock.py",
+    #"scripts/orderblock.py",no
     "scripts/fail_short_buy_pass.py",
     "scripts/fail_short_buy.py",
     "scripts/short_buy_check.py",
