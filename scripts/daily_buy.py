@@ -1,9 +1,7 @@
 import pandas as pd
 import os
 from pathlib import Path
-from datetime import datetime
 
-# ফাইল পাথগুলি এবং তাদের সংক্ষিপ্ত নাম
 files_info = {
     "short": "./csv/short_buy.csv",
     "gape": "./csv/gape_buy.csv", 
@@ -12,39 +10,25 @@ files_info = {
     "uptrend": "./output/ai_signal/uptrand_buy.csv"
 }
 
-# আউটপুট ডিরেক্টরি ও ফাইল
 output_dir = "./output/ai_signal/"
 output_file = os.path.join(output_dir, "daily_buy.csv")
-
-# আউটপুট ডিরেক্টরি তৈরি করুন (যদি না থাকে)
 Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-# প্রতিটি ফাইলের জন্য সর্বশেষ তারিখের ডেটা সংরক্ষণ করার লিস্ট
 latest_date_data = []
-
-# প্রতিটি ফাইলের সর্বশেষ তারিখ ট্র্যাক রাখার জন্য
 file_latest_dates = {}
 
-# প্রতিটি ফাইল প্রসেস করুন এবং সর্বশেষ তারিখ খুঁজে বের করুন
-#print("Finding latest dates from all files...")
+# Step 1: Find latest dates
 for file_key, file_path in files_info.items():
     try:
-        # ফাইলটি বিদ্যমান কিনা পরীক্ষা করুন
         if not os.path.exists(file_path):
-            #print(f"Warning: File '{file_path}' not found. Skipping...")
             continue
 
-        # CSV ফাইল পড়ুন
         df = pd.read_csv(file_path)
-
-        # ফাইলে কোনো ডাটা আছে কিনা পরীক্ষা করুন
         if df.empty:
-            #print(f"Warning: File '{file_key}' is empty. Skipping...")
             continue
 
-        # তারিখ কলাম খুঁজুন
         date_column = None
-        date_columns = ['date', 'Date', 'DATE', 'timestamp', 'Timestamp', 'TIMESTAMP', 'p1_date', 'p2_date']
+        date_columns = ['date', 'Date', 'DATE', 'timestamp', 'Timestamp', 'TIMESTAMP']
 
         for col in date_columns:
             if col in df.columns:
@@ -52,57 +36,32 @@ for file_key, file_path in files_info.items():
                 break
 
         if date_column is None:
-            #print(f"Warning: No date column found in '{file_key}'. Skipping file...")
             continue
         
-        # তারিখ কলামকে datetime ফরম্যাটে কনভার্ট করুন
-        try:
-            df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
-            
-            # নাল ভ্যালু রিমুভ করুন
-            df = df.dropna(subset=[date_column])
-            
-            if df.empty:
-                #print(f"Warning: No valid dates in '{file_key}'. Skipping file...")
-                continue
-            else:
-                # সর্বশেষ তারিখ খুঁজুন
-                latest_date = df[date_column].max()
-                file_latest_dates[file_key] = latest_date
-                #print(f"Info: '{file_key}' - latest date is {latest_date.date()}")
-                
-        except Exception as e:
-            #print(f"Warning: Could not parse date column in '{file_key}'. Error: {e}")
-            continue
-
-    except Exception as e:
-        #print(f"Error reading file '{file_path}': {str(e)}")
+        df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
+        df = df.dropna(subset=[date_column])
+        
+        if not df.empty:
+            latest_date = df[date_column].max()
+            file_latest_dates[file_key] = latest_date
+    except:
         continue
 
-# যদি কোনো ফাইলে তারিখ পাওয়া যায়
+# Step 2: Collect latest data
 if file_latest_dates:
-    # সব ফাইলের সর্বশেষ তারিখগুলোর মধ্যে থেকে সবচেয়ে সাম্প্রতিক তারিখ খুঁজুন
     overall_latest_date = max(file_latest_dates.values())
-    #print(f"\nOverall latest date across all files: {overall_latest_date.date()}")
-    
-    # এখন শুধুমাত্র overall_latest_date তারিখের ডেটা সংগ্রহ করুন
-    #print(f"\nCollecting data only for date: {overall_latest_date.date()}")
     
     for file_key, file_path in files_info.items():
         try:
-            # ফাইলটি বিদ্যমান কিনা পরীক্ষা করুন
             if not os.path.exists(file_path):
                 continue
 
-            # CSV ফাইল পড়ুন
             df = pd.read_csv(file_path)
-            
             if df.empty:
                 continue
 
-            # তারিখ কলাম খুঁজুন
             date_column = None
-            date_columns = ['date', 'Date', 'DATE', 'timestamp', 'Timestamp', 'TIMESTAMP', 'p1_date', 'p2_date']
+            date_columns = ['date', 'Date', 'DATE', 'timestamp', 'Timestamp', 'TIMESTAMP']
 
             for col in date_columns:
                 if col in df.columns:
@@ -112,212 +71,72 @@ if file_latest_dates:
             if date_column is None:
                 continue
             
-            # তারিখ কলামকে datetime ফরম্যাটে কনভার্ট করুন
             df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
-            
-            # নাল ভ্যালু রিমুভ করুন
             df = df.dropna(subset=[date_column])
             
             if df.empty:
                 continue
             
-            # শুধুমাত্র overall_latest_date তারিখের ডাটা নিন
             latest_data = df[df[date_column] == overall_latest_date]
             
             if len(latest_data) == 0:
-                # যদি এই ফাইলে overall_latest_date না থাকে, তাহলে ফাইলের নিজের সর্বশেষ তারিখের ডেটা নিন
-                if file_key in file_latest_dates:
-                    file_latest_date = file_latest_dates[file_key]
-                    latest_data = df[df[date_column] == file_latest_date]
-                    print(f"  '{file_key}': Using file's latest date {file_latest_date.date()} (not matching overall latest)")
-                else:
-                    continue
-            else:
-                print(f"  '{file_key}': Found {len(latest_data)} symbols for overall latest date")
+                continue
             
-            # প্রতিটি সারির জন্য প্রসেস করুন
-            for index, row in latest_data.iterrows():
+            for _, row in latest_data.iterrows():
                 symbol = None
-
-                # 'symbol' কলাম আছে কিনা পরীক্ষা করুন
                 if 'symbol' in df.columns:
                     symbol = str(row['symbol'])
-                else:
-                    # সাধারণ কলাম নামগুলি পরীক্ষা করুন
-                    common_symbol_columns = ['SYMBOL', 'Symbol', 'Ticker', 'ticker', 'name', 'Name']
-
-                    for col in common_symbol_columns:
-                        if col in df.columns:
-                            symbol = str(row[col])
-                            break
-
+                
                 if symbol:
-                    # সারির ডাটা কপি করুন
                     row_data = row.to_dict()
-
-                    # p1_date, p2_date বাদ দিন (row_data থেকেই)
-                    row_data.pop('p1_date', None)
-                    row_data.pop('p2_date', None)
-                    row_data.pop('latest_date', None)
-
-                    # symbol কলাম যোগ করুন (যদি আগে থেকে না থাকে)
-                    if 'symbol' not in row_data:
-                        row_data['symbol'] = symbol
-
-                    # 'file' কলাম যোগ করুন
+                    row_data['symbol'] = symbol
                     row_data['file'] = file_key
-
-                    # লিস্টে যোগ করুন
                     latest_date_data.append(row_data)
-
-        except Exception as e:
-            #print(f"Error processing file '{file_path}' for latest date: {str(e)}")
+        except:
             continue
     
-    # যদি কোনো ডাটা পাওয়া যায়
     if latest_date_data:
-        # লিস্ট থেকে DataFrame তৈরি করুন
         result_df = pd.DataFrame(latest_date_data)
         
-        # 1. NO নামের সকল কলাম বাতিল করুন
-        no_columns = [col for col in result_df.columns if col.upper() == 'NO']
-        if no_columns:
-            #print(f"\nRemoving 'NO' columns: {no_columns}")
-            result_df = result_df.drop(columns=no_columns)
-        
-        # 2. close কলাম থাকলে তার value buy কলামে রাখুন এবং close কলাম বাতিল করুন
+        # close -> buy conversion
         close_columns = [col for col in result_df.columns if col.lower() == 'close']
         if close_columns:
-            #print(f"\nProcessing 'close' columns: {close_columns}")
-            
-            # প্রতিটি close কলামের জন্য
             for close_col in close_columns:
-                # যদি buy কলাম না থাকে, তাহলে নতুন create করুন
                 if 'buy' not in result_df.columns:
                     result_df['buy'] = result_df[close_col]
-                else:
-                    # buy কলাম আছে, তাহলে close কলামের মান দিয়ে update করুন
-                    # শুধুমাত্র যেখানে buy কলামে ভ্যালু নেই বা নাল আছে
-                    mask = result_df['buy'].isna() | (result_df['buy'] == '')
-                    result_df.loc[mask, 'buy'] = result_df.loc[mask, close_col]
-                
-                # close কলাম বাতিল করুন
                 result_df = result_df.drop(columns=[close_col])
-                #print(f"  Moved values from '{close_col}' to 'buy' column and removed '{close_col}'")
-
-        # 'symbol' এবং 'file' কলাম নিশ্চিত করুন
-        if 'symbol' not in result_df.columns:
-            print("Error: 'symbol' column not found in any data.")
-
-        if 'file' not in result_df.columns:
-            print("Error: 'file' column was not created.")
-
-        # কলামগুলির ক্রম ঠিক করুন
-        ordered_columns = []
         
-        # প্রথমে symbol এবং file রাখুন
+        # Column ordering
+        ordered_columns = []
         preferred_order = ['symbol', 'file', 'buy']
         for col in preferred_order:
             if col in result_df.columns and col not in ordered_columns:
                 ordered_columns.append(col)
         
-        # বাকি কলাম যোগ করুন
         for col in result_df.columns:
             if col not in ordered_columns:
                 ordered_columns.append(col)
-
+        
         result_df = result_df[ordered_columns]
-
-        # ডুপ্লিকেট সিম্বল রিমুভ করুন (একই সিম্বল একাধিক ফাইলে থাকলে)
         result_df = result_df.drop_duplicates(subset=['symbol'], keep='first')
-
-        # ✅ mongodb.csv থেকে high নিন (শুধু result_df-তে থাকা symbol গুলোর)
+        
+        # MongoDB high merge
         mongo_path = './csv/mongodb.csv'
         if os.path.exists(mongo_path):
             mongo_df = pd.read_csv(mongo_path)
             mongo_df['date'] = pd.to_datetime(mongo_df['date'])
-
-            # ✅ শুধু result_df-তে থাকা symbol গুলোর latest high আনুন
+            
             if 'symbol' in result_df.columns and len(result_df) > 0:
-                # result_df-র symbol গুলোর লিস্ট
                 target_symbols = result_df['symbol'].unique()
-        
-                # MongoDB থেকে শুধু ঐ symbol গুলো filter করুন
                 mongo_filtered = mongo_df[mongo_df['symbol'].isin(target_symbols)]
-        
-                # filter করা ডাটা থেকে latest high বের করুন
                 latest = mongo_filtered.sort_values('date').groupby('symbol').tail(1)[['symbol', 'high']]
-        
-                # ✅ merge এর পরিবর্তে map ব্যবহার করুন (high_x, high_y হবে না)
+                
                 high_map = dict(zip(latest['symbol'], latest['high']))
                 
-                # high কলাম আগে থেকেই থাকলে update, না থাকলে create
                 if 'high' not in result_df.columns:
                     result_df['high'] = result_df['symbol'].map(high_map)
-                else:
-                    # বিদ্যমান high কলামের NaN গুলো fill করুন
-                    mongodb_highs = result_df['symbol'].map(high_map)
-                    result_df['high'] = result_df['high'].fillna(mongodb_highs)
-        
-                # high NaN থাকলে buy দিয়ে fill
+                
                 result_df['high'] = result_df['high'].fillna(result_df['buy'])
         
-        # ✅ p1_date, p2_date, latest_date কলাম বাদ দিন (সিকিউরিটির জন্য)
-        columns_to_drop = ['p1_date', 'p2_date', 'latest_date']
-        for col in columns_to_drop:
-            if col in result_df.columns:
-                result_df = result_df.drop(columns=[col])
-
-        # ✅ high_x, high_y থাকলে বাদ দিন (সিকিউরিটির জন্য)
-        high_extra_cols = [col for col in result_df.columns if col.startswith('high_')]
-        if high_extra_cols:
-            result_df = result_df.drop(columns=high_extra_cols)
-
         result_df.to_csv(output_file, index=False)
-
-        print(f"\n{'='*50}")
-        print(f"Successfully saved {len(result_df)} unique symbols to '{output_file}'")
-        print(f"All symbols are from latest date: {overall_latest_date.date()}")
-        print(f"Columns in output file: {list(result_df.columns)}")
-
-        # সোর্স ফাইলের সংখ্যা দেখান
-        #print("\nSymbols count by source file:")
-        file_counts = result_df['file'].value_counts()
-        for file_key, count in file_counts.items():
-            print(f"{file_key}: {count} symbols")
-
-        # প্রথম কিছু সিম্বল দেখান
-        #print(f"\nFirst 10 symbols in output (all from {overall_latest_date.date()}):")
-        for i, (_, row) in enumerate(result_df.head(10).iterrows()):
-            buy_price = row.get('buy', 'N/A')
-            print(f"  {i+1}. {row['symbol']} ({row['file']}) - Buy: {buy_price}")
-
-        # সিম্বল লিস্ট ফাইল হিসেবে সংরক্ষণ করুন
-        symbols_file = os.path.join(output_dir, "daily_symbols.txt")
-        with open(symbols_file, 'w') as f:
-            for symbol in result_df['symbol'].tolist():
-                f.write(f"{symbol}\n")
-        #print(f"\nSymbol list saved to: {symbols_file}")
-
-    else:
-        print(f"\nNo data found for the latest date {overall_latest_date.date()} in any file.")
-        
-else:
-    print("No valid date information found in any input file.")
-
-# অপশনাল: ফলাফল দেখান
-if os.path.exists(output_file):
-    result = pd.read_csv(output_file)
-    print(f"\n{'='*50}")
-    print("Summary of generated daily_buy.csv:")
-    print(f"Total symbols: {len(result)}")
-    print(f"All from date: {overall_latest_date.date() if 'overall_latest_date' in locals() else 'N/A'}")
-    print(f"Sources: {', '.join(result['file'].unique())}")
-    
-    # buy কলামের স্যাম্পল ভ্যালু দেখান
-    if 'buy' in result.columns:
-        print(f"Buy column sample values:")
-        non_null_buy = result['buy'].dropna()
-        if len(non_null_buy) > 0:
-            for i, val in enumerate(non_null_buy.head(5)):
-                print(f"  {i+1}. {val}")
+        print(f"✅ Saved {len(result_df)} symbols to {output_file}")
