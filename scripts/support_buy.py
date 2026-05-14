@@ -217,7 +217,7 @@ output_df = pd.DataFrame(results)
 # -----------------------------
 if not output_df.empty:
     output_df = output_df.sort_values(
-        by=['buy_score', 'confidence', 'gape],
+        by=['buy_score', 'confidence', 'gape'],
         ascending=[False, False, True]
     )
 
