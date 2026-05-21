@@ -5,9 +5,6 @@ from datetime import datetime
 # -----------------------------
 # Paths
 # -----------------------------
-# -----------------------------
-# Load CSV
-# -----------------------------
 sr_df = './csv/support_resistance.csv'
 mongo_df = './csv/mongodb.csv'
 pred_df = './csv/prediction_log.csv'
@@ -16,8 +13,6 @@ meta_df = './csv/model_metadata.csv'
 
 output_path = './output/ai_signal/support_resistant.csv'
 os.makedirs('./output/ai_signal', exist_ok=True)
-
-
 
 # -----------------------------
 # Load CSV
@@ -28,14 +23,14 @@ pred_df = pd.read_csv(pred_df)
 conf_df = pd.read_csv(conf_df)
 meta_df = pd.read_csv(meta_df)
 
-
 # -----------------------------
 # Date convert
 # -----------------------------
 sr_df['current_date'] = pd.to_datetime(sr_df['current_date'], format='mixed', errors='coerce')
-mongo_df['date'] = pd.to_datetime(mongo_df['date'],format='mixed', errors='coerce')
+mongo_df['date'] = pd.to_datetime(mongo_df['date'], format='mixed', errors='coerce')
 pred_df['date'] = pd.to_datetime(pred_df['date'], format='mixed', errors='coerce')
 conf_df['date'] = pd.to_datetime(conf_df['date'], format='mixed', errors='coerce')
+
 # -----------------------------
 # Filter only support
 # -----------------------------
@@ -86,15 +81,6 @@ if 'prob_up' not in xgb_df.columns:
         print("   ⚠️ Using default prob_up = 0.5")
 
 # -----------------------------
-# Filter good models (AUC >= 0.55 - relaxed from 0.60)
-# -----------------------------
-meta_df = meta_df[meta_df['auc'] >= 0.55]
-good_symbols = meta_df['symbol'].unique()
-print(f"\n   Good models (AUC >= 0.55): {len(good_symbols)} symbols")
-
-xgb_df = xgb_df[xgb_df['symbol'].isin(good_symbols)]
-
-# -----------------------------
 # Strength weight
 # -----------------------------
 strength_weight = {
@@ -109,100 +95,93 @@ strength_weight = {
 print("\n🎯 Generating signals...")
 results = []
 skipped = 0
+counter = 1
 
 for _, row in sr_df.iterrows():
     symbol = row['symbol']
     current_date = row['current_date']
     current_low = row['current_low']
+    gap_days = row['gap_days']
+    strength = row['strength']
 
-    # Skip if symbol not in good models
-    if symbol not in good_symbols:
-        skipped += 1
-        continue
-
+    # Get mongodb data for this symbol
     df_symbol = mongo_df[mongo_df['symbol'] == symbol].reset_index(drop=True)
 
-    if len(df_symbol) < 2:
+    if len(df_symbol) == 0:
         skipped += 1
         continue
 
-    # Find matching date (allow up to 5 days difference)
-    date_diff = (df_symbol['date'] - current_date).abs()
-    if len(date_diff) == 0:
+    # Find latest row where date > current_date
+    future_rows = df_symbol[df_symbol['date'] > current_date]
+
+    if len(future_rows) == 0:
         skipped += 1
         continue
 
-    min_diff = date_diff.min()
-    if min_diff.days > 5:
+    # Get the latest row (closest to current_date but after it)
+    latest_row = future_rows.iloc[0]
+
+    # Check support condition: latest low > current_low
+    if latest_row['low'] <= current_low:
         skipped += 1
         continue
 
-    match_idx = date_diff.idxmin()
+    last_high = latest_row['high']
 
-    if match_idx + 1 >= len(df_symbol):
+    # Get XGB prediction for this symbol and date
+    xgb_match = xgb_df[
+        (xgb_df['symbol'] == symbol) &
+        (xgb_df['date'] == current_date)
+    ]
+
+    if len(xgb_match) == 0:
         skipped += 1
         continue
 
-    next_row = df_symbol.iloc[match_idx + 1]
-    last_high = next_row['high']
+    prob = xgb_match.iloc[0]['prob_up']
+    confidence = xgb_match.iloc[0].get('confidence_score', 50)
 
-    # ✅ Support condition
-    if next_row['low'] > current_low:
+    # Handle NaN
+    if pd.isna(prob):
+        prob = 0.5
+    if pd.isna(confidence):
+        confidence = 50
 
-        xgb_match = xgb_df[
-            (xgb_df['symbol'] == symbol) &
-            (xgb_df['date'] == current_date)
-        ]
+    # -----------------------------
+    # 🧠 Score calculation
+    # -----------------------------
+    weight = strength_weight.get(strength, 0.5)
 
-        if len(xgb_match) == 0:
-            skipped += 1
-            continue
+    buy_score = ((prob * 0.6) + ((confidence / 100) * 0.4)) * weight
+    sell_score = 1 - buy_score
 
-        prob = xgb_match.iloc[0]['prob_up']
-        confidence = xgb_match.iloc[0].get('confidence_score', 50)
+    # -----------------------------
+    # Signal label
+    # -----------------------------
+    if buy_score > 0.75:
+        signal = "STRONG BUY"
+    elif buy_score > 0.60:
+        signal = "BUY"
+    elif buy_score < 0.25:
+        signal = "STRONG SELL"
+    elif buy_score < 0.40:
+        signal = "SELL"
+    else:
+        signal = "NEUTRAL"
 
-        # Handle NaN
-        if pd.isna(prob):
-            prob = 0.5
-        if pd.isna(confidence):
-            confidence = 50
-
-        # -----------------------------
-        # 🧠 Score calculation
-        # -----------------------------
-        weight = strength_weight.get(row['strength'], 0.5)
-
-        buy_score = ((prob * 0.6) + ((confidence / 100) * 0.4)) * weight
-        sell_score = 1 - buy_score
-
-        # -----------------------------
-        # Signal label
-        # -----------------------------
-        if buy_score > 0.75:
-            signal = "STRONG BUY"
-        elif buy_score > 0.60:
-            signal = "BUY"
-        elif buy_score < 0.25:
-            signal = "STRONG SELL"
-        elif buy_score < 0.40:
-            signal = "SELL"
-        else:
-            signal = "NEUTRAL"
-
-        results.append({
-            'type': row['type'],
-            'symbol': symbol,
-            'high': last_high,
-            'level_date': row['level_date'],
-            'level_price': row['level_price'],
-            'gape': row['gap_days'],
-            'strength': row['strength'],
-            'xgb_prob': round(prob, 2),
-            'confidence': round(confidence, 2),
-            'buy_score': round(buy_score, 2),
-            'sell_score': round(sell_score, 2),
-            'signal': signal
-        })
+    results.append({
+        'no': counter,
+        'symbol': symbol,
+        'high': last_high,
+        'gape': gap_days,
+        'xgb_prob': round(prob, 2),
+        'confidence': round(confidence, 2),
+        'buy_score': round(buy_score, 2),
+        'sell_score': round(sell_score, 2),
+        'signal': signal
+    })
+    
+    counter += 1
 
 print(f"\n   ✅ Generated: {len(results)} signals")
 print(f"   ⚠️ Skipped: {skipped}")
@@ -220,11 +199,13 @@ if not output_df.empty:
         by=['buy_score', 'confidence', 'gape'],
         ascending=[False, False, True]
     )
+    
+    # Reset index and update serial no
+    output_df = output_df.reset_index(drop=True)
+    output_df['no'] = output_df.index + 1
 
     # Save
     output_df.to_csv(output_path, index=False)
-    
-    # ❌ trade_stock.csv বাদ দেওয়া হয়েছে - PPO signals save করা হচ্ছে না
 
 # -----------------------------
 # Print summary
@@ -235,7 +216,7 @@ print("="*70)
 if not output_df.empty:
     print(output_df['signal'].value_counts().to_string())
     print(f"\n🔥 TOP 10 SIGNALS:")
-    print(output_df[['symbol', 'signal', 'buy_score', 'xgb_prob', 'confidence','gape']].head(10).to_string())
+    print(output_df[['no', 'symbol', 'signal', 'buy_score', 'xgb_prob', 'confidence', 'gape']].head(10).to_string())
 else:
     print("❌ No signals generated!")
 
