@@ -73,7 +73,7 @@ if file_latest_dates:
                     for _, row in df.iterrows():
                         symbol = str(row[symbol_col]).strip()
                         if symbol:
-                            row_data = {'symbol': symbol, 'file': 'fail_short'}
+                            row_data = {'symbol': symbol, 'file': file_key}
                             # অন্য কলামগুলোও যোগ
                             for col in df.columns:
                                 if col != symbol_col:
@@ -117,6 +117,18 @@ if file_latest_dates:
                 result_df['buy'] = result_df[close_col]
             result_df = result_df.drop(columns=[close_col])
         
+        # ✅ একই symbol-এর file কলাম মার্জ, শুধু symbol, file, buy কলাম রেখে
+        agg_dict = {'file': lambda x: ','.join(sorted(set(x)))}
+        
+        # অন্য যে কলামগুলো থাকবে, সেগুলোও যোগ
+        other_cols = [col for col in result_df.columns if col not in ['symbol', 'file', 'buy']]
+        for col in other_cols:
+            agg_dict[col] = 'first'
+        agg_dict['buy'] = 'first'
+        
+        # ✅ এক symbol = এক row
+        result_df = result_df.groupby('symbol', as_index=False).agg(agg_dict)
+        
         # Column ordering
         ordered_columns = []
         for col in ['symbol', 'file', 'buy']:
@@ -128,7 +140,6 @@ if file_latest_dates:
                 ordered_columns.append(col)
         
         result_df = result_df[ordered_columns]
-        result_df = result_df.drop_duplicates(subset=['symbol'], keep='first')
         
         # MongoDB high merge
         mongo_path = './csv/mongodb.csv'
