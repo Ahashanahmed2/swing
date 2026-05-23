@@ -7,7 +7,8 @@ files_info = {
     "gape": "./csv/gape_buy.csv", 
     "rsi": "./csv/rsi_30_buy.csv",
     "swing": "./csv/swing_buy.csv",
-    "uptrend": "./output/ai_signal/uptrand_buy.csv"
+    "uptrend": "./output/ai_signal/uptrand_buy.csv",
+    "fail_short": "./output/ai_signal/fail_short_buy_pass.csv"
 }
 
 output_dir = "./output/ai_signal/"
@@ -28,6 +29,11 @@ for file_key, file_path in files_info.items():
 
         df = pd.read_csv(file_path)
         if df.empty:
+            continue
+
+        # ✅ fail_short ফাইল আলাদাভাবে হ্যান্ডেল
+        if file_key == "fail_short":
+            file_dataframes[file_key] = df
             continue
 
         date_column = None
@@ -55,6 +61,26 @@ if file_latest_dates:
     
     for file_key, df in file_dataframes.items():  # ✅ ক্যাশ থেকে নেওয়া
         try:
+            # ✅ fail_short ফাইলের ডাটা সরাসরি যোগ
+            if file_key == "fail_short":
+                symbol_col = None
+                for col in ['SYMBOL', 'symbol', 'Symbol']:
+                    if col in df.columns:
+                        symbol_col = col
+                        break
+                
+                if symbol_col:
+                    for _, row in df.iterrows():
+                        symbol = str(row[symbol_col]).strip()
+                        if symbol:
+                            row_data = {'symbol': symbol, 'file': 'fail_short'}
+                            # অন্য কলামগুলোও যোগ
+                            for col in df.columns:
+                                if col != symbol_col:
+                                    row_data[col] = row[col]
+                            latest_date_data.append(row_data)
+                continue
+
             date_column = None
             for col in date_columns:
                 if col in df.columns:
@@ -116,7 +142,7 @@ if file_latest_dates:
                 latest = mongo_filtered.sort_values('date').groupby('symbol').tail(1)[['symbol', 'high']]
                 
                 high_map = dict(zip(latest['symbol'], latest['high']))
-                result_df['high'] = result_df['symbol'].map(high_map)  # ✅ buy fillna বাদ
+                result_df['high'] = result_df['symbol'].map(high_map)
         
         result_df.to_csv(output_file, index=False)
         print(f"✅ Saved {len(result_df)} symbols to {output_file}")
