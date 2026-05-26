@@ -215,8 +215,7 @@ print("📊 SIGNAL SUMMARY")
 print("="*70)
 if not output_df.empty:
     print(output_df['signal'].value_counts().to_string())
-    print(f"\n🔥 TOP 10 SIGNALS:")
-    print(output_df[['no', 'symbol', 'signal', 'buy_score', 'xgb_prob', 'confidence', 'gape']].head(10).to_string())
+    # "TOP 10 SIGNALS" প্রিন্ট করার লজিক এখান থেকে সরিয়ে দেওয়া হয়েছে
 else:
     print("❌ No signals generated!")
 
