@@ -38,6 +38,7 @@ scripts = [
     "scripts/short_buy_check.py",
     "scripts/short_buy.py",
     "scripts/rsi_diver.py",
+    "scripts/bullish_strong.py",
     "scripts/rsi_crose_above_30.py",
     "scripts/gape.py",
     "scripts/gape_buy.py",
