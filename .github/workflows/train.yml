@@ -2,7 +2,7 @@ name: LLM Train
 
 on:
   schedule:
-      - cron: "0 21 * * *"
+      - cron: "53 1 * * 2"
   workflow_dispatch:  # ম্যানুয়ালি চালাতে পারবে
 
 permissions:
