@@ -1,4 +1,3 @@
-#bullish_strong.py
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -115,8 +114,11 @@ def process_bullish_strong(input_file='./csv/rsi_diver.csv', output_dir='./outpu
             (df_filtered['LAST_HIGH'] >= 10)
         ].copy()
         
-        # শুধু প্রয়োজনীয় কলাম রাখা (LAST_DATE বাদ, RSI কলাম যোগ)
+        # শুধু প্রয়োজনীয় কলাম রাখা
         bullish_strong = bullish_strong[['SYMBOL', 'LAST_HIGH', 'LAST_RSI', 'PREVIOUS_RSI', 'LAST_PRICE', 'PREVIOUS_PRICE', 'PREVIOUS_DATE', 'GAPE']].copy()
+        
+        # আউটপুটে LAST_HIGH -> HIGH নাম পরিবর্তন
+        bullish_strong.rename(columns={'LAST_HIGH': 'HIGH'}, inplace=True)
         
         # সিরিয়াল নং যোগ করা
         bullish_strong.reset_index(drop=True, inplace=True)
@@ -164,7 +166,7 @@ if __name__ == "__main__":
     
     print("\n" + "=" * 60)
     print("আউটপুট ফাইল: ./output/ai_signal/bullish_strong.csv")
-    print("কলাম: NO, SYMBOL, LAST_HIGH, LAST_RSI, PREVIOUS_RSI,")
+    print("কলাম: NO, SYMBOL, HIGH, LAST_RSI, PREVIOUS_RSI,")
     print("       LAST_PRICE, PREVIOUS_PRICE, PREVIOUS_DATE, GAPE,")
     print("       BULLISH_COUNT, BULLISH_PCT, BEARISH_COUNT, BEARISH_PCT,")
     print("       BULL_BEAR_RATIO, RATIO_TEXT, MARKET_BIAS")
