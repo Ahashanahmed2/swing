@@ -8,7 +8,8 @@ files_info = {
     "rsi": "./csv/rsi_30_buy.csv",
     "swing": "./csv/swing_buy.csv",
     "uptrend": "./output/ai_signal/uptrand_buy.csv",
-    "fail_short": "./output/ai_signal/fail_short_buy_pass.csv"
+    "fail_short": "./output/ai_signal/fail_short_buy_pass.csv",
+    "bullish_strong": "./output/ai_signal/bullish_strong.csv"
 }
 
 output_dir = "./output/ai_signal/"
@@ -17,7 +18,7 @@ Path(output_dir).mkdir(parents=True, exist_ok=True)
 
 latest_date_data = []
 file_latest_dates = {}
-file_dataframes = {}  # ✅ DataFrame cache
+file_dataframes = {}
 
 date_columns = ['date', 'Date', 'DATE', 'timestamp', 'Timestamp', 'TIMESTAMP']
 
@@ -31,8 +32,7 @@ for file_key, file_path in files_info.items():
         if df.empty:
             continue
 
-        # ✅ fail_short ফাইল আলাদাভাবে হ্যান্ডেল
-        if file_key == "fail_short":
+        if file_key in ["fail_short", "bullish_strong"]:
             file_dataframes[file_key] = df
             continue
 
@@ -51,7 +51,7 @@ for file_key, file_path in files_info.items():
         if not df.empty:
             latest_date = df[date_column].max()
             file_latest_dates[file_key] = latest_date
-            file_dataframes[file_key] = df  # ✅ Cache
+            file_dataframes[file_key] = df
     except:
         continue
 
@@ -59,10 +59,9 @@ for file_key, file_path in files_info.items():
 if file_latest_dates:
     overall_latest_date = max(file_latest_dates.values())
     
-    for file_key, df in file_dataframes.items():  # ✅ ক্যাশ থেকে নেওয়া
+    for file_key, df in file_dataframes.items():
         try:
-            # ✅ fail_short ফাইলের ডাটা সরাসরি যোগ
-            if file_key == "fail_short":
+            if file_key in ["fail_short", "bullish_strong"]:
                 symbol_col = None
                 for col in ['SYMBOL', 'symbol', 'Symbol']:
                     if col in df.columns:
@@ -74,7 +73,6 @@ if file_latest_dates:
                         symbol = str(row[symbol_col]).strip()
                         if symbol:
                             row_data = {'symbol': symbol, 'file': file_key}
-                            # অন্য কলামগুলোও যোগ
                             for col in df.columns:
                                 if col != symbol_col:
                                     row_data[col] = row[col]
@@ -110,26 +108,21 @@ if file_latest_dates:
     if latest_date_data:
         result_df = pd.DataFrame(latest_date_data)
         
-        # close -> buy conversion
         close_columns = [col for col in result_df.columns if col.lower() == 'close']
         for close_col in close_columns:
             if 'buy' not in result_df.columns:
                 result_df['buy'] = result_df[close_col]
             result_df = result_df.drop(columns=[close_col])
         
-        # ✅ একই symbol-এর file কলাম মার্জ, শুধু symbol, file, buy কলাম রেখে
         agg_dict = {'file': lambda x: ','.join(sorted(set(x)))}
         
-        # অন্য যে কলামগুলো থাকবে, সেগুলোও যোগ
         other_cols = [col for col in result_df.columns if col not in ['symbol', 'file', 'buy']]
         for col in other_cols:
             agg_dict[col] = 'first'
         agg_dict['buy'] = 'first'
         
-        # ✅ এক symbol = এক row
         result_df = result_df.groupby('symbol', as_index=False).agg(agg_dict)
         
-        # Column ordering
         ordered_columns = []
         for col in ['symbol', 'file', 'buy']:
             if col in result_df.columns:
@@ -141,7 +134,6 @@ if file_latest_dates:
         
         result_df = result_df[ordered_columns]
         
-        # MongoDB high merge
         mongo_path = './csv/mongodb.csv'
         if os.path.exists(mongo_path):
             mongo_df = pd.read_csv(mongo_path)
