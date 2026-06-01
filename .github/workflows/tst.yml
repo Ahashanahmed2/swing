@@ -2,7 +2,7 @@ name: tst Train
 
 on:
   schedule:
-      - cron: "45 4 * * 1"
+      - cron: "45 4 * * 0"
   workflow_dispatch:  # ম্যানুয়ালি চালাতে পারবে
 
 permissions:
