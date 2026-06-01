@@ -16,10 +16,10 @@ def process_bullish_strong(input_file='./csv/rsi_diver.csv', output_dir='./outpu
         # CSV ফাইল পড়া
         df = pd.read_csv(input_file)
         
-        # প্রয়োজনীয় কলাম সিলেক্ট করা (lr, pr যোগ করা হয়েছে)
+        # প্রয়োজনীয় কলাম সিলেক্ট করা
         df_filtered = df[['symbol', 'divergence_type', 'strength', 'last_date', 'last_high', 'lr', 'pr', 'last_price', 'pp', 'pd', 'gape']].copy()
         
-        # কলাম rename করে বড় হাতের করা
+        # কলাম rename করা
         df_filtered.columns = ['SYMBOL', 'DIVERGENCE_TYPE', 'STRENGTH', 'LAST_DATE', 'LAST_HIGH', 
                                'LAST_RSI', 'PREVIOUS_RSI', 'LAST_PRICE', 'PREVIOUS_PRICE', 'PREVIOUS_DATE', 'GAPE']
         
@@ -54,7 +54,7 @@ def process_bullish_strong(input_file='./csv/rsi_diver.csv', output_dir='./outpu
         print(f"  Bullish:Bearish Ratio : {ratio_text} ({bull_bear_ratio}x)")
         print("=" * 60)
         
-        # Market Bias Analysis based on ratio
+        # Market Bias Analysis based on ratio (শুধু প্রিন্টের জন্য)
         if bull_bear_ratio >= 2.0:
             market_bias = "STRONG_BULLISH"
             bias_comment = "Bullish signals 2x+ more than Bearish"
@@ -115,24 +115,21 @@ def process_bullish_strong(input_file='./csv/rsi_diver.csv', output_dir='./outpu
         ].copy()
         
         # শুধু প্রয়োজনীয় কলাম রাখা
-        bullish_strong = bullish_strong[['SYMBOL', 'LAST_HIGH', 'LAST_RSI', 'PREVIOUS_RSI', 'LAST_PRICE', 'PREVIOUS_PRICE', 'PREVIOUS_DATE', 'GAPE']].copy()
+        bullish_strong = bullish_strong[['SYMBOL', 'LAST_HIGH', 'GAPE']].copy()
         
-        # আউটপুটে LAST_HIGH -> HIGH নাম পরিবর্তন
-        bullish_strong.rename(columns={'LAST_HIGH': 'HIGH'}, inplace=True)
+        # কলামের নাম ছোট হাতের করা (symbol, high, gape)
+        bullish_strong.rename(columns={'SYMBOL': 'symbol', 'LAST_HIGH': 'high', 'GAPE': 'gape'}, inplace=True)
         
-        # সিরিয়াল নং যোগ করা
+        # মার্কেট স্ট্যাটিস্টিক্স কলাম যোগ করা (market_bias বাদ)
+        bullish_strong['buc'] = bullish_count
+        bullish_strong['bu%'] = bullish_pct
+        bullish_strong['bec'] = bearish_count
+        bullish_strong['be%'] = bearish_pct
+        bullish_strong['bbr'] = bull_bear_ratio
+        bullish_strong['rt'] = ratio_text
+        
+        # সিরিয়াল নং বাদ
         bullish_strong.reset_index(drop=True, inplace=True)
-        bullish_strong.index = bullish_strong.index + 1  # 1 থেকে শুরু
-        bullish_strong.insert(0, 'NO', bullish_strong.index)
-        
-        # Market statistics কলাম যোগ করা (Ratio সহ)
-        bullish_strong['BULLISH_COUNT'] = bullish_count
-        bullish_strong['BULLISH_PCT'] = bullish_pct
-        bullish_strong['BEARISH_COUNT'] = bearish_count
-        bullish_strong['BEARISH_PCT'] = bearish_pct
-        bullish_strong['BULL_BEAR_RATIO'] = bull_bear_ratio
-        bullish_strong['RATIO_TEXT'] = ratio_text
-        bullish_strong['MARKET_BIAS'] = market_bias
         
         # CSV ফাইল সংরক্ষণ
         output_file = os.path.join(output_dir, 'bullish_strong.csv')
@@ -166,9 +163,6 @@ if __name__ == "__main__":
     
     print("\n" + "=" * 60)
     print("আউটপুট ফাইল: ./output/ai_signal/bullish_strong.csv")
-    print("কলাম: NO, SYMBOL, HIGH, LAST_RSI, PREVIOUS_RSI,")
-    print("       LAST_PRICE, PREVIOUS_PRICE, PREVIOUS_DATE, GAPE,")
-    print("       BULLISH_COUNT, BULLISH_PCT, BEARISH_COUNT, BEARISH_PCT,")
-    print("       BULL_BEAR_RATIO, RATIO_TEXT, MARKET_BIAS")
+    print("কলাম: symbol, high, gape, buc, bu%, bec, be%, bbr, rt")
     print(f"মোট Row: {len(result)}টি")
     print("=" * 60)
