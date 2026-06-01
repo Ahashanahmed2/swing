@@ -40,10 +40,10 @@ def process_bullish_strong(input_file='./csv/rsi_diver.csv', output_dir='./outpu
             ratio_text = f"{bullish_count}:{bearish_count}"
         elif bullish_count > 0:
             bull_bear_ratio = float('inf')
-            ratio_text = f"{bullish_count}:0 (All Bullish)"
+            ratio_text = f"{bullish_count}:0"
         else:
             bull_bear_ratio = 0
-            ratio_text = "0:0 (No signals)"
+            ratio_text = "0:0"
         
         print("=" * 60)
         print("DIVERGENCE_TYPE বিশ্লেষণ (১০০% এর মধ্যে):")
@@ -51,34 +51,26 @@ def process_bullish_strong(input_file='./csv/rsi_diver.csv', output_dir='./outpu
         print(f"  Bullish : {bullish_count}টি ({bullish_pct}%)")
         print(f"  Bearish : {bearish_count}টি ({bearish_pct}%)")
         print(f"  মোট    : {total}টি (১০০%)")
-        print(f"  Bullish:Bearish Ratio : {ratio_text} ({bull_bear_ratio}x)")
+        print(f"  Ratio : {ratio_text} ({bull_bear_ratio}x)")
         print("=" * 60)
         
-        # Market Bias Analysis based on ratio (শুধু প্রিন্টের জন্য)
+        # Market Bias Analysis (শুধু প্রিন্টের জন্য)
         if bull_bear_ratio >= 2.0:
             market_bias = "STRONG_BULLISH"
-            bias_comment = "Bullish signals 2x+ more than Bearish"
         elif bull_bear_ratio >= 1.5:
             market_bias = "BULLISH"
-            bias_comment = "Bullish signals significantly higher"
         elif bull_bear_ratio > 1.0:
             market_bias = "SLIGHTLY_BULLISH"
-            bias_comment = "Bullish signals slightly higher"
         elif bull_bear_ratio == 1.0:
             market_bias = "NEUTRAL"
-            bias_comment = "Equal Bullish and Bearish signals"
         elif bull_bear_ratio >= 0.5:
             market_bias = "SLIGHTLY_BEARISH"
-            bias_comment = "Bearish signals slightly higher"
         elif bull_bear_ratio > 0:
             market_bias = "BEARISH"
-            bias_comment = "Bearish signals significantly higher"
         else:
             market_bias = "STRONG_BEARISH"
-            bias_comment = "All Bearish signals"
         
         print(f"  Market Bias : {market_bias}")
-        print(f"  Comment     : {bias_comment}")
         print("=" * 60)
         
         # STRENGTH বিশ্লেষণ
@@ -87,24 +79,12 @@ def process_bullish_strong(input_file='./csv/rsi_diver.csv', output_dir='./outpu
         bearish_strong_count = len(df_filtered[(df_filtered['DIVERGENCE_TYPE_CLEAN'] == 'Bearish') & (df_filtered['STRENGTH_CLEAN'] == 'Strong')])
         bearish_moderate_count = len(df_filtered[(df_filtered['DIVERGENCE_TYPE_CLEAN'] == 'Bearish') & (df_filtered['STRENGTH_CLEAN'] == 'Moderate')])
         
-        # Strong Ratio
-        if bearish_strong_count > 0:
-            strong_ratio = round(bullish_strong_count / bearish_strong_count, 2)
-            strong_ratio_text = f"{bullish_strong_count}:{bearish_strong_count}"
-        elif bullish_strong_count > 0:
-            strong_ratio = float('inf')
-            strong_ratio_text = f"{bullish_strong_count}:0 (All Bullish Strong)"
-        else:
-            strong_ratio = 0
-            strong_ratio_text = "0:0 (No Strong signals)"
-        
         print("\nSTRENGTH অনুযায়ী বিশ্লেষণ:")
         print("=" * 60)
         print(f"  Bullish Strong   : {bullish_strong_count}টি")
         print(f"  Bullish Moderate  : {bullish_moderate_count}টি")
         print(f"  Bearish Strong   : {bearish_strong_count}টি")
         print(f"  Bearish Moderate  : {bearish_moderate_count}টি")
-        print(f"  Strong Ratio (B:B) : {strong_ratio_text} ({strong_ratio}x)")
         print("=" * 60)
         
         # Bullish Strong ফিল্টার (STRENGTH = Strong এবং LAST_HIGH >= 10)
@@ -117,16 +97,12 @@ def process_bullish_strong(input_file='./csv/rsi_diver.csv', output_dir='./outpu
         # শুধু প্রয়োজনীয় কলাম রাখা
         bullish_strong = bullish_strong[['SYMBOL', 'LAST_HIGH', 'GAPE']].copy()
         
-        # কলামের নাম ছোট হাতের করা (symbol, high, gape)
+        # কলামের নাম ছোট হাতের করা
         bullish_strong.rename(columns={'SYMBOL': 'symbol', 'LAST_HIGH': 'high', 'GAPE': 'gape'}, inplace=True)
         
-        # মার্কেট স্ট্যাটিস্টিক্স কলাম যোগ করা (market_bias বাদ)
-        bullish_strong['buc'] = bullish_count
-        bullish_strong['bu%'] = bullish_pct
-        bullish_strong['bec'] = bearish_count
-        bullish_strong['be%'] = bearish_pct
-        bullish_strong['bbr'] = bull_bear_ratio
+        # rt এবং bbr কলাম যোগ করা
         bullish_strong['rt'] = ratio_text
+        bullish_strong['bbr'] = bull_bear_ratio
         
         # সিরিয়াল নং বাদ
         bullish_strong.reset_index(drop=True, inplace=True)
@@ -146,7 +122,6 @@ def process_bullish_strong(input_file='./csv/rsi_diver.csv', output_dir='./outpu
             print(f"\n✗ কোনো Bullish Strong সিগন্যাল পাওয়া যায়নি")
             print(f"  (শর্ত: STRENGTH='Strong' এবং LAST_HIGH>=10)")
             print(f"✓ খালি ফাইল তৈরি করা হয়েছে: {output_file}")
-            print(f"  মোট Row: 0টি")
         
         return bullish_strong
         
@@ -158,11 +133,10 @@ def process_bullish_strong(input_file='./csv/rsi_diver.csv', output_dir='./outpu
         return pd.DataFrame()
 
 if __name__ == "__main__":
-    # স্ক্রিপ্ট রান করা
     result = process_bullish_strong()
     
     print("\n" + "=" * 60)
     print("আউটপুট ফাইল: ./output/ai_signal/bullish_strong.csv")
-    print("কলাম: symbol, high, gape, buc, bu%, bec, be%, bbr, rt")
+    print("কলাম: symbol, high, gape, rt, bbr")
     print(f"মোট Row: {len(result)}টি")
     print("=" * 60)
