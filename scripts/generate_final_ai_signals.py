@@ -9,6 +9,7 @@ scripts/generate_final_ai_signals.py
 ✅ PatchTST: Added prediction
 ✅ Original Structure 100% Preserved
 ✅ No Code Deleted
+✅ Stop Loss, Target, Risk-Reward Removed
 """
 
 import pandas as pd
@@ -760,19 +761,9 @@ for i, symbol in enumerate(target_symbols):
     final_score = calculate_final_combined_score(llm_sig, xgb_sig, ppo_sig, agentic_sig, patch_tst_sig, sector_sig)
     final_signal = get_final_signal_label(final_score)
     
-    sr_row = None
-    if not sr_df.empty and 'symbol' in sr_df.columns:
-        sr_match = sr_df[sr_df['symbol'] == symbol]
-        sr_row = sr_match.iloc[0] if len(sr_match) > 0 else None
-
+    # ========== স্টপ লস, টার্গেট, রিস্ক-রিওয়ার্ড বাদ দেওয়া হয়েছে ==========
+    # শুধু entry_price রাখা হয়েছে (LLM থেকে বা close price)
     entry_price = llm_sig['entry'] if llm_sig['entry'] > 0 else market_row.get('close', 0)
-    stop_loss = sr_row['level_price'] * 0.98 if sr_row is not None else entry_price * 0.95
-    target_price = entry_price * 1.05
-    
-    # রিস্ক:রিওয়ার্ড
-    risk = abs(entry_price - stop_loss)
-    reward = abs(target_price - entry_price)
-    risk_reward = round(reward / risk, 2) if risk > 0 else 0
     
     # স্ট্রেন্থ
     if final_score >= 70: strength = 'STRONG'
@@ -784,7 +775,7 @@ for i, symbol in enumerate(target_symbols):
         'symbol': symbol,
         'date': str(market_row.get('date', ''))[:10] if hasattr(market_row, 'get') else '',
         'current_price': market_row.get('close', 0) if hasattr(market_row, 'get') else 0,
-        'high':current_high,
+        'high': current_high,
         'sector': sector_sig['name'],
         
         # LLM
@@ -823,25 +814,22 @@ for i, symbol in enumerate(target_symbols):
         'sector_score': sector_sig['score'],
         'is_top_sector': sector_sig['is_top'],
         
-         # Elliott Wave - ✅ None-safe
-         'elliott_accuracy': elliott_data.get('accuracy', 50),
-         'elliott_total_predictions': elliott_data.get('total_predictions', 0),
-         'elliott_wave_count': elliott_details['wave_count'] if elliott_details else 'No Data',
-         'elliott_sub_waves': elliott_details['sub_waves'] if elliott_details else 'N/A',
-         'elliott_current_wave': elliott_details['current_wave'] if elliott_details else 'Unknown',
-         'elliott_wave_confidence': elliott_details['wave_confidence'] if elliott_details else 0,
-         'elliott_is_bullish': elliott_details['is_bullish'] if elliott_details else False,
-         'elliott_wave_position': elliott_details['wave_position'] if elliott_details else 'Unknown',
-    
-    # ... rest of fields ...
-        # ফাইনাল
+        # Elliott Wave - ✅ None-safe
+        'elliott_accuracy': elliott_data.get('accuracy', 50),
+        'elliott_total_predictions': elliott_data.get('total_predictions', 0),
+        'elliott_wave_count': elliott_details['wave_count'] if elliott_details else 'No Data',
+        'elliott_sub_waves': elliott_details['sub_waves'] if elliott_details else 'N/A',
+        'elliott_current_wave': elliott_details['current_wave'] if elliott_details else 'Unknown',
+        'elliott_wave_confidence': elliott_details['wave_confidence'] if elliott_details else 0,
+        'elliott_is_bullish': elliott_details['is_bullish'] if elliott_details else False,
+        'elliott_wave_position': elliott_details['wave_position'] if elliott_details else 'Unknown',
+        
+        # ফাইনাল (স্টপ লস, টার্গেট, রিস্ক-রিওয়ার্ড বাদ)
         'model_availability': model_avail,
         'final_combined_score': round(final_score, 1),
         'final_signal': final_signal,
         'entry_price': round(entry_price, 2),
-        'stop_loss': round(stop_loss, 2),
-        'target_price': round(target_price, 2),
-        'risk_reward_ratio': risk_reward,
+        # stop_loss, target_price, risk_reward_ratio বাদ দেওয়া হয়েছে
     })
 
 print("\n")
@@ -886,7 +874,7 @@ print(f"\n🔥 TOP 10 BUY SIGNALS:")
 buy_signals = output_df[output_df['final_signal'].str.contains('BUY', na=False)].head(10)
 if len(buy_signals) > 0:
     print(buy_signals[['symbol', 'final_signal', 'final_combined_score', 
-                        'entry_price', 'stop_loss', 'target_price', 'risk_reward_ratio',
+                        'entry_price',
                         'elliott_current_wave', 'elliott_wave_count']].to_string())
 else:
     print("   (No BUY signals yet)")
