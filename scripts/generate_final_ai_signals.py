@@ -9,7 +9,7 @@ scripts/generate_final_ai_signals.py
 ✅ PatchTST: Added prediction
 ✅ Original Structure 100% Preserved
 ✅ No Code Deleted
-✅ Stop Loss, Target, Risk-Reward Removed
+✅ S/R সম্পূর্ণ বাদ - শুধু AI মডেল থেকে সিগনাল
 """
 
 import pandas as pd
@@ -42,7 +42,7 @@ XGB_CONFIDENCE_PATH = "./csv/xgb_confidence.csv"
 AGENTIC_LOOP_STATE = "./csv/agentic_loop_state.json"
 ELLIOTT_BACKTEST_PATH = "./csv/elliott_backtest.json"
 
-FINAL_OUTPUT_PATH = "./output/ai_signal/FINAL_AI_SIGNALS.csv"  # ✅ ঠিক আছে
+FINAL_OUTPUT_PATH = "./output/ai_signal/FINAL_AI_SIGNALS.csv"
 os.makedirs("./output/ai_signal", exist_ok=True)
 
 # =========================================================
@@ -113,41 +113,28 @@ if PATCHTST_AVAILABLE:
 # এআই মডেল ওজন (Weight)
 # =========================================================
 AI_WEIGHTS = {
-    'llm': 0.30,        # LLM - ৩০% (আগে ৪০%)
-    'xgb': 0.25,        # XGBoost - ২৫% (আগে ৩৫%)
+    'llm': 0.30,        # LLM - ৩০%
+    'xgb': 0.25,        # XGBoost - ২৫%
     'ppo': 0.15,        # PPO - ১৫%
-    'agentic': 0.15,    # Agentic Loop - ১৫% (আগে ১০%)
-    'patch_tst': 0.10,  # ✅ PatchTST - ১০% (NEW)
-    'sector': 0.05,     # ✅ Sector - ৫% (NEW)
+    'agentic': 0.15,    # Agentic Loop - ১৫%
+    'patch_tst': 0.10,  # PatchTST - ১০%
+    'sector': 0.05,     # Sector - ৫%
 }
 
 print("="*70)
-print("🤖 COMBINED AI TRADING SIGNAL GENERATOR (FULL)")
+print("🤖 COMBINED AI TRADING SIGNAL GENERATOR (FULL - NO S/R)")
 print("="*70)
 print(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print(f"📊 AI Weights: LLM={AI_WEIGHTS['llm']*100:.0f}% | XGB={AI_WEIGHTS['xgb']*100:.0f}% | PPO={AI_WEIGHTS['ppo']*100:.0f}% | Agentic={AI_WEIGHTS['agentic']*100:.0f}% | PatchTST={AI_WEIGHTS['patch_tst']*100:.0f}% | Sector={AI_WEIGHTS['sector']*100:.0f}%")
 print("="*70)
 
 # =========================================================
-# ১. সাপোর্ট/রেজিস্ট্যান্স ডেটা লোড
+# ১. সিম্বল লোড - S/R বাদ, সরাসরি mongodb থেকে
 # =========================================================
-print("\n📂 Loading Support/Resistance data...")
-# generate_final_ai_signals.py - Line ~95:
-SUPPORT_RESISTANCE_PATH = "./output/ai_signal/support_resistant.csv"
-
-# ✅ ফিক্স:
-try:
-    sr_df = pd.read_csv(SUPPORT_RESISTANCE_PATH)
-    target_symbols = sr_df['symbol'].unique().tolist()
-    print(f"   ✅ Loaded {len(sr_df)} S/R signals")
-except FileNotFoundError:
-    # S/R ফাইল নেই → mongodb থেকে symbols নেই
-    print(f"   ⚠️ S/R file not found, using all symbols from mongodb")
-    mongo_df = pd.read_csv(MONGO_PATH)
-    target_symbols = mongo_df['symbol'].unique().tolist()
-    sr_df = pd.DataFrame()  # Empty dataframe
-target_symbols = pd.read_csv(MONGO_PATH)['symbol'].unique().tolist()  # 396
-print(f"   ✅ Loaded {len(sr_df)} signals for {len(target_symbols)} symbols")
+print("\n📂 Loading symbols from mongodb (S/R independent)...")
+mongo_df = pd.read_csv(MONGO_PATH)
+target_symbols = mongo_df['symbol'].unique().tolist()
+print(f"   ✅ Loaded {len(target_symbols)} symbols")
 
 # =========================================================
 # ২. XGBoost ডেটা লোড
@@ -194,7 +181,7 @@ for symbol in target_symbols:
     if os.path.exists(ppo_path) and SB3_AVAILABLE:
         try:
             ppo_model = PPO.load(ppo_path, device="cpu")
-            obs = np.zeros(54, dtype=np.float32)  # Match state_dim
+            obs = np.zeros(54, dtype=np.float32)
             action, _ = ppo_model.predict(obs, deterministic=True)
             
             if isinstance(action, (list, tuple, np.ndarray)):
@@ -250,7 +237,6 @@ print(f"   ✅ PPO: {ppo_available}/{len(target_symbols)} models loaded with act
 print("\n📂 Initializing Agentic Loop...")
 agentic_available = False
 
-# Load state for agent info
 agentic_state_data = {}
 if os.path.exists(AGENTIC_LOOP_STATE):
     try:
@@ -413,17 +399,16 @@ else:
     print(f"   🔄 Using XGBoost-only mode")
 
 # =========================================================
-# ৮. LLM ইনফারেন্স ফাংশন (✅ UPDATED with Sector)
+# ৮. LLM ইনফারেন্স ফাংশন
 # =========================================================
 def get_llm_signal(symbol, row):
-    """LLM থেকে সিগন্যাল জেনারেট (✅ Sector from engine)"""
+    """LLM থেকে সিগন্যাল জেনারেট"""
     if not llm_available:
         return {
             'signal': 'MODEL_NOT_READY', 'confidence': 0, 'strength': 'N/A',
             'bias': 'NEUTRAL', 'entry': 0, 'stop_loss': 0, 'target': 0
         }
     
-    # ✅ Sector from engine
     sector = 'Unknown'
     if sector_engine:
         try:
@@ -504,7 +489,7 @@ def get_xgb_data(symbol):
     return {'signal': 'N/A', 'confidence': 0, 'prob_up': 0.5, 'auc': 0}
 
 # =========================================================
-# ১০. PPO ডেটা ফেচ (✅ ACTUAL SIGNAL)
+# ১০. PPO ডেটা ফেচ
 # =========================================================
 def get_ppo_data(symbol):
     """PPO সিগন্যাল (actual model)"""
@@ -513,7 +498,7 @@ def get_ppo_data(symbol):
     return {'available': False, 'signal': 'N/A', 'confidence': 0, 'weight': 0, 'action': -1}
 
 # =========================================================
-# ✅ ১০.৫ Agentic Loop Consensus (LIVE)
+# ১০.৫ Agentic Loop Consensus
 # =========================================================
 def get_agentic_signal(symbol):
     """Agentic Loop থেকে লাইভ consensus"""
@@ -538,7 +523,7 @@ def get_agentic_signal(symbol):
         return {'score': 50, 'bias': 'NEUTRAL', 'available': False}
 
 # =========================================================
-# ✅ ১০.৬ PatchTST Prediction (NEW)
+# ১০.৬ PatchTST Prediction
 # =========================================================
 def get_patch_tst_signal(symbol):
     """PatchTST prediction"""
@@ -558,10 +543,8 @@ def get_patch_tst_signal(symbol):
         return {'available': False, 'direction': 'N/A', 'confidence': 0, 'up_prob': 0.5}
 
 # =========================================================
-# ✅ ১০.৭ Sector Score (NEW)
+# ১০.৭ Sector Score
 # =========================================================
-# generate_final_ai_signals.py - get_sector_score() ফাংশনে:
-
 def get_sector_from_mongodb(symbol):
     """সরাসরি mongodb.csv থেকে সেক্টর নাম নিন"""
     try:
@@ -569,7 +552,7 @@ def get_sector_from_mongodb(symbol):
             df = pd.read_csv(MONGO_PATH)
             sym_data = df[df['symbol'] == symbol]
             if len(sym_data) > 0:
-                sector = sym_data['sector'].iloc[-1]  # Latest sector
+                sector = sym_data['sector'].iloc[-1]
                 if pd.notna(sector) and sector not in ['Other', 'Unknown', '']:
                     return {'score': 50, 'name': str(sector), 'is_top': False}
     except:
@@ -577,15 +560,13 @@ def get_sector_from_mongodb(symbol):
     return {'score': 50, 'name': 'Unknown', 'is_top': False}
 
 def get_sector_score(symbol):
-    """Sector ranking score - সরাসরি mongodb.csv থেকে সেক্টর নিন"""
+    """Sector ranking score"""
     if not SECTOR_AVAILABLE or sector_engine is None:
-        # ✅ Fallback: সরাসরি mongodb.csv থেকে সেক্টর
         return get_sector_from_mongodb(symbol)
     
     try:
         sector = sector_engine.get_sector(symbol)
         
-        # ✅ যদি "Other" বা "Unknown" আসে, mongodb থেকে নিন
         if sector in ['Other', 'Unknown', 'other', 'unknown', '']:
             return get_sector_from_mongodb(symbol)
         
@@ -604,7 +585,7 @@ def get_sector_score(symbol):
         return get_sector_from_mongodb(symbol)
 
 # =========================================================
-# ১১. Agentic Loop এগ্রিগেটেড স্কোর (fallback for global)
+# ১১. Agentic Loop এগ্রিগেটেড স্কোর
 # =========================================================
 def get_agentic_score_global():
     """Agentic Loop থেকে global এগ্রিগেটেড স্কোর (fallback)"""
@@ -630,10 +611,10 @@ def get_agentic_score_global():
     return score, bias
 
 # =========================================================
-# ১২. কম্বাইন্ড ফাইনাল স্কোর ক্যালকুলেশন (✅ UPDATED: 7 Sources)
+# ১২. কম্বাইন্ড ফাইনাল স্কোর ক্যালকুলেশন
 # =========================================================
 def calculate_final_combined_score(llm_sig, xgb_sig, ppo_sig, agentic_sig, patch_tst_sig, sector_sig):
-    """সব AI-এর কম্বাইন্ড ফাইনাল স্কোর (7 sources)"""
+    """সব AI-এর কম্বাইন্ড ফাইনাল স্কোর (6 sources)"""
     final_score = 0
     
     # LLM (৩০%)
@@ -663,7 +644,7 @@ def calculate_final_combined_score(llm_sig, xgb_sig, ppo_sig, agentic_sig, patch
     else:
         final_score += 50 * AI_WEIGHTS['ppo']
     
-    # ✅ Agentic Loop (১৫%)
+    # Agentic Loop (১৫%)
     if agentic_sig['available']:
         if agentic_sig['bias'] == 'BUY':
             final_score += agentic_sig['score'] * AI_WEIGHTS['agentic']
@@ -674,13 +655,13 @@ def calculate_final_combined_score(llm_sig, xgb_sig, ppo_sig, agentic_sig, patch
     else:
         final_score += 50 * AI_WEIGHTS['agentic']
     
-    # ✅ PatchTST (১০%)
+    # PatchTST (১০%)
     if patch_tst_sig['available']:
         final_score += patch_tst_sig['up_prob'] * 100 * AI_WEIGHTS['patch_tst']
     else:
         final_score += 50 * AI_WEIGHTS['patch_tst']
     
-    # ✅ Sector (৫%)
+    # Sector (৫%)
     final_score += sector_sig['score'] * AI_WEIGHTS['sector']
     
     return final_score
@@ -733,16 +714,16 @@ for i, symbol in enumerate(target_symbols):
     # XGBoost সিগন্যাল
     xgb_sig = get_xgb_data(symbol)
     
-    # ✅ PPO সিগন্যাল (ACTUAL)
+    # PPO সিগন্যাল
     ppo_sig = get_ppo_data(symbol)
     
-    # ✅ Agentic Loop (LIVE)
+    # Agentic Loop
     agentic_sig = get_agentic_signal(symbol)
     
-    # ✅ PatchTST (NEW)
+    # PatchTST
     patch_tst_sig = get_patch_tst_signal(symbol)
     
-    # ✅ Sector (NEW)
+    # Sector
     sector_sig = get_sector_score(symbol)
     
     # Elliott Wave ডিটেইলস
@@ -757,18 +738,12 @@ for i, symbol in enumerate(target_symbols):
         patch_tst_sig['available']
     )
     
-    # ফাইনাল কম্বাইন্ড স্কোর (7 sources)
+    # ফাইনাল কম্বাইন্ড স্কোর
     final_score = calculate_final_combined_score(llm_sig, xgb_sig, ppo_sig, agentic_sig, patch_tst_sig, sector_sig)
     final_signal = get_final_signal_label(final_score)
     
-    # ========== স্টপ লস, টার্গেট, রিস্ক-রিওয়ার্ড বাদ দেওয়া হয়েছে ==========
-    # শুধু entry_price রাখা হয়েছে (LLM থেকে বা close price)
+    # এন্ট্রি প্রাইস (S/R বাদ)
     entry_price = llm_sig['entry'] if llm_sig['entry'] > 0 else market_row.get('close', 0)
-    
-    # স্ট্রেন্থ
-    if final_score >= 70: strength = 'STRONG'
-    elif final_score >= 55: strength = 'MEDIUM'
-    else: strength = 'WEAK'
     
     results.append({
         # বেসিক
@@ -792,29 +767,29 @@ for i, symbol in enumerate(target_symbols):
         'xgb_auc': round(xgb_sig['auc'], 3),
         'xgb_available': symbol in good_xgb_symbols,
         
-        # ✅ PPO (ACTUAL)
+        # PPO
         'ppo_signal': ppo_sig['signal'],
         'ppo_confidence': round(ppo_sig['confidence'], 1),
         'ppo_available': ppo_sig['available'],
         'ppo_weight': ppo_sig['weight'],
         
-        # ✅ Agentic Loop (LIVE)
+        # Agentic Loop
         'agentic_signal': agentic_sig['bias'],
         'agentic_score': round(agentic_sig['score'], 1),
         'agentic_confidence': round(agentic_sig.get('confidence', 0), 3),
         'agentic_available': agentic_sig['available'],
         
-        # ✅ PatchTST (NEW)
+        # PatchTST
         'patch_tst_direction': patch_tst_sig['direction'],
         'patch_tst_confidence': round(patch_tst_sig['confidence'], 3),
         'patch_tst_up_prob': round(patch_tst_sig['up_prob'], 3),
         'patch_tst_available': patch_tst_sig['available'],
         
-        # ✅ Sector (NEW)
+        # Sector
         'sector_score': sector_sig['score'],
         'is_top_sector': sector_sig['is_top'],
         
-        # Elliott Wave - ✅ None-safe
+        # Elliott Wave
         'elliott_accuracy': elliott_data.get('accuracy', 50),
         'elliott_total_predictions': elliott_data.get('total_predictions', 0),
         'elliott_wave_count': elliott_details['wave_count'] if elliott_details else 'No Data',
@@ -824,12 +799,11 @@ for i, symbol in enumerate(target_symbols):
         'elliott_is_bullish': elliott_details['is_bullish'] if elliott_details else False,
         'elliott_wave_position': elliott_details['wave_position'] if elliott_details else 'Unknown',
         
-        # ফাইনাল (স্টপ লস, টার্গেট, রিস্ক-রিওয়ার্ড বাদ)
+        # ফাইনাল
         'model_availability': model_avail,
         'final_combined_score': round(final_score, 1),
         'final_signal': final_signal,
         'entry_price': round(entry_price, 2),
-        # stop_loss, target_price, risk_reward_ratio বাদ দেওয়া হয়েছে
     })
 
 print("\n")
@@ -851,7 +825,7 @@ output_df.to_csv(FINAL_OUTPUT_PATH, index=False)
 # ১৬. রিপোর্ট প্রিন্ট
 # =========================================================
 print("="*70)
-print("📊 FINAL AI TRADING SIGNALS REPORT (FULL)")
+print("📊 FINAL AI TRADING SIGNALS REPORT (NO S/R)")
 print("="*70)
 print(f"📅 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print(f"📊 Total Signals: {len(output_df)}")
