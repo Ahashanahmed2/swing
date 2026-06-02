@@ -18,9 +18,12 @@ Path(output_dir).mkdir(parents=True, exist_ok=True)
 
 latest_date_data = []
 file_latest_dates = {}
-file_dataframes = {}  # ✅ DataFrame cache
+file_dataframes = {}
 
 date_columns = ['date', 'Date', 'DATE', 'timestamp', 'Timestamp', 'TIMESTAMP']
+
+# Columns to exclude (will not be saved)
+exclude_columns = ['buy', 'dl', 'dd', 'date', 'no', 'sl']
 
 # Step 1: Find latest dates AND cache DataFrames
 for file_key, file_path in files_info.items():
@@ -32,7 +35,6 @@ for file_key, file_path in files_info.items():
         if df.empty:
             continue
 
-        # ✅ fail_short এবং bullish_strong ফাইল আলাদাভাবে হ্যান্ডেল
         if file_key in ["fail_short", "bullish_strong"]:
             file_dataframes[file_key] = df
             continue
@@ -52,7 +54,7 @@ for file_key, file_path in files_info.items():
         if not df.empty:
             latest_date = df[date_column].max()
             file_latest_dates[file_key] = latest_date
-            file_dataframes[file_key] = df  # ✅ Cache
+            file_dataframes[file_key] = df
     except:
         continue
 
@@ -60,9 +62,8 @@ for file_key, file_path in files_info.items():
 if file_latest_dates:
     overall_latest_date = max(file_latest_dates.values())
     
-    for file_key, df in file_dataframes.items():  # ✅ ক্যাশ থেকে নেওয়া
+    for file_key, df in file_dataframes.items():
         try:
-            # ✅ fail_short এবং bullish_strong ফাইলের ডাটা সরাসরি যোগ
             if file_key in ["fail_short", "bullish_strong"]:
                 symbol_col = None
                 for col in ['SYMBOL', 'symbol', 'Symbol']:
@@ -75,9 +76,8 @@ if file_latest_dates:
                         symbol = str(row[symbol_col]).strip()
                         if symbol:
                             row_data = {'symbol': symbol, 'file': file_key}
-                            # অন্য কলামগুলোও যোগ
                             for col in df.columns:
-                                if col != symbol_col:
+                                if col != symbol_col and col.lower() not in [x.lower() for x in exclude_columns]:
                                     row_data[col] = row[col]
                             latest_date_data.append(row_data)
                 continue
@@ -101,7 +101,10 @@ if file_latest_dates:
                     symbol = str(row['symbol'])
                     
                     if symbol:
-                        row_data = row.to_dict()
+                        row_data = {}
+                        for col in df.columns:
+                            if col.lower() not in [x.lower() for x in exclude_columns]:
+                                row_data[col] = row[col]
                         row_data['symbol'] = symbol
                         row_data['file'] = file_key
                         latest_date_data.append(row_data)
@@ -111,28 +114,38 @@ if file_latest_dates:
     if latest_date_data:
         result_df = pd.DataFrame(latest_date_data)
         
-        # close -> buy conversion
+        # Remove any remaining excluded columns (case-insensitive)
+        cols_to_remove = []
+        for col in result_df.columns:
+            if col.lower() in [x.lower() for x in exclude_columns]:
+                cols_to_remove.append(col)
+        
+        if cols_to_remove:
+            result_df = result_df.drop(columns=cols_to_remove)
+        
+        # close -> buy conversion (but buy will be removed later)
         close_columns = [col for col in result_df.columns if col.lower() == 'close']
         for close_col in close_columns:
             if 'buy' not in result_df.columns:
                 result_df['buy'] = result_df[close_col]
             result_df = result_df.drop(columns=[close_col])
         
-        # ✅ একই symbol-এর file কলাম মার্জ, শুধু symbol, file, buy কলাম রেখে
+        # Remove buy column if exists
+        if 'buy' in result_df.columns:
+            result_df = result_df.drop(columns=['buy'])
+        
+        # Group by symbol
         agg_dict = {'file': lambda x: ','.join(sorted(set(x)))}
         
-        # অন্য যে কলামগুলো থাকবে, সেগুলোও যোগ
-        other_cols = [col for col in result_df.columns if col not in ['symbol', 'file', 'buy']]
+        other_cols = [col for col in result_df.columns if col not in ['symbol', 'file']]
         for col in other_cols:
             agg_dict[col] = 'first'
-        agg_dict['buy'] = 'first'
         
-        # ✅ এক symbol = এক row
         result_df = result_df.groupby('symbol', as_index=False).agg(agg_dict)
         
         # Column ordering
         ordered_columns = []
-        for col in ['symbol', 'file', 'buy']:
+        for col in ['symbol', 'file']:
             if col in result_df.columns:
                 ordered_columns.append(col)
         
@@ -156,13 +169,22 @@ if file_latest_dates:
                 high_map = dict(zip(latest['symbol'], latest['high']))
                 result_df['high'] = result_df['symbol'].map(high_map)
         
+        # Final check: remove excluded columns one more time before saving
+        final_cols_to_remove = []
+        for col in result_df.columns:
+            if col.lower() in [x.lower() for x in exclude_columns]:
+                final_cols_to_remove.append(col)
+        
+        if final_cols_to_remove:
+            result_df = result_df.drop(columns=final_cols_to_remove)
+        
         result_df.to_csv(output_file, index=False)
         print(f"✅ Saved {len(result_df)} symbols to {output_file}")
         
-        # Print summary
         print(f"\n📊 Summary:")
         print(f"   Total unique symbols: {len(result_df)}")
-        print(f"   Columns: {list(result_df.columns)}")
+        print(f"   Columns saved: {list(result_df.columns)}")
+        print(f"   Excluded columns: {exclude_columns}")
         
 else:
     print("❌ No valid data found")
