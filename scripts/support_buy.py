@@ -17,6 +17,11 @@ os.makedirs('./output/ai_signal', exist_ok=True)
 # Load CSV
 # -----------------------------
 sr_df = pd.read_csv(sr_df_path)
+
+# ✅ ফিল্টার: শুধু SUPPORT নিবে (এক লাইন যোগ করা হয়েছে)
+sr_df = sr_df[sr_df['type'] == 'support']
+sr_df = sr_df.reset_index(drop=True)
+
 mongo_df = pd.read_csv(mongo_df_path)
 
 # -----------------------------
@@ -74,7 +79,7 @@ strength_weight = {
 # -----------------------------
 # MAIN LOGIC
 # -----------------------------
-print("\n🎯 Generating signals...")
+print("\n🎯 Generating signals (SUPPORT only)...")
 results = []
 skipped = 0
 counter = 1
@@ -115,14 +120,10 @@ for _, row in sr_df.iterrows():
     
     latest_row = future_rows.iloc[0]
     
-    # Check condition
+    # Check condition (শুধু support)
     condition_met = False
-    if sr_type == 'support':
-        if latest_row['low'] > current_low:
-            condition_met = True
-    else:  # resistance
-        if latest_row['high'] > level_price:
-            condition_met = True
+    if latest_row['low'] > current_low:
+        condition_met = True
     
     if not condition_met:
         skipped += 1
@@ -184,7 +185,7 @@ for _, row in sr_df.iterrows():
     
     counter += 1
 
-print(f"\n✅ Generated: {len(results)} signals")
+print(f"\n✅ Generated: {len(results)} signals (Support only)")
 print(f"⚠️ Skipped: {skipped}")
 
 # -----------------------------
@@ -203,7 +204,7 @@ if not output_df.empty:
     output_df.to_csv(output_path, index=False)
     
     print(f"\n{'='*50}")
-    print("📊 SIGNAL SUMMARY")
+    print("📊 SIGNAL SUMMARY (SUPPORT ONLY)")
     print(f"{'='*50}")
     print(output_df['signal'].value_counts().to_string())
     
