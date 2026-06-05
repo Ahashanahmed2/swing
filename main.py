@@ -56,6 +56,7 @@ scripts = [
     "scripts/daily_buy.py",
     "scripts/generate_final_ai_signals.py",
     "scripts/save_to_mongodb.py",
+    "scripts/output_file_clean.py",
     "scripts/generate_pdf.py",
     "scripts/upload_csv.py",
     "scripts/dayliMassage.py",
