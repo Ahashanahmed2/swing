@@ -6,7 +6,6 @@ gape_file = "./csv/gape.csv"
 mongodb_file = "./csv/mongodb.csv"
 output_file2 = "./csv/gape_buy.csv"
 
-
 os.makedirs(os.path.dirname(output_file2), exist_ok=True)
 
 # Load existing data if file exists
@@ -74,7 +73,6 @@ for _, r in gape_df.iterrows():
     SL_price = low_candle['low']
     buy_price = last_row_close
 
-    # ✅ শুধু বেসিক তথ্য সংরক্ষণ (tp_price বাদ)
     results.append({
         'symbol': symbol,
         'date': date.date(),
@@ -96,7 +94,7 @@ if results:
         new_df = new_df.sort_values(['date'], ascending=[False]).reset_index(drop=True)
         new_df.insert(0, 'No', range(1, len(new_df) + 1))
 
-        # ✅ ফাইনাল কলাম (শুধু buy_price ও SL_price)
+        # Final columns
         new_df = new_df[[
             'No', 'symbol', 'date', 'buy', 'SL'
         ]]
@@ -121,8 +119,11 @@ if not existing_df.empty and not new_df.empty:
         new_symbols_df = new_df[~new_df['symbol'].isin(existing_symbols)]
         
         if not new_symbols_df.empty:
-            # Adjust 'No' column for new symbols
+            # Adjust 'No' column for new symbols - FIXED SECTION
             new_symbols_df = new_symbols_df.reset_index(drop=True)
+            # Remove existing 'No' column if present, then insert fresh
+            if 'No' in new_symbols_df.columns:
+                new_symbols_df = new_symbols_df.drop(columns=['No'])
             new_symbols_df.insert(0, 'No', range(1, len(new_symbols_df) + 1))
             
             # Combine existing and new data
