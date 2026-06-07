@@ -87,6 +87,9 @@ def process_bullish_strong(input_file='./csv/rsi_diver.csv', output_dir='./outpu
         print(f"  Bearish Moderate  : {bearish_moderate_count}টি")
         print("=" * 60)
         
+        # নতুন কলাম strong তৈরি করা (Bullish Strong : Bearish Strong)
+        strong_text = f"{bullish_strong_count}:{bearish_strong_count}"
+        
         # Bullish Strong ফিল্টার (STRENGTH = Strong এবং LAST_HIGH >= 10)
         bullish_strong = df_filtered[
             (df_filtered['DIVERGENCE_TYPE_CLEAN'] == 'Bullish') & 
@@ -100,9 +103,10 @@ def process_bullish_strong(input_file='./csv/rsi_diver.csv', output_dir='./outpu
         # কলামের নাম ছোট হাতের করা
         bullish_strong.rename(columns={'SYMBOL': 'symbol', 'LAST_HIGH': 'high', 'GAPE': 'gape'}, inplace=True)
         
-        # rt এবং bbr কলাম যোগ করা
+        # rt, bbr এবং strong কলাম যোগ করা
         bullish_strong['rt'] = ratio_text
         bullish_strong['bbr'] = bull_bear_ratio
+        bullish_strong['strong'] = strong_text  # নতুন কলাম যোগ করা হয়েছে
         
         # সিরিয়াল নং বাদ
         bullish_strong.reset_index(drop=True, inplace=True)
@@ -137,6 +141,6 @@ if __name__ == "__main__":
     
     print("\n" + "=" * 60)
     print("আউটপুট ফাইল: ./output/ai_signal/bullish_strong.csv")
-    print("কলাম: symbol, high, gape, rt, bbr")
+    print("কলাম: symbol, high, gape, rt, bbr, strong")
     print(f"মোট Row: {len(result)}টি")
     print("=" * 60)
