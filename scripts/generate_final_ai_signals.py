@@ -7,6 +7,7 @@ scripts/generate_final_ai_signals.py
 ✅ Sector: Dynamic from SectorFeatureEngine
 ✅ Agentic Loop: Live consensus (not just state file)
 ✅ PatchTST: Added prediction
+✅ Bullish Strong: Added from rsi_diver (rt, bbr, strong columns)
 ✅ Original Structure 100% Preserved
 ✅ No Code Deleted
 ✅ S/R সম্পূর্ণ বাদ - শুধু AI মডেল থেকে সিগনাল
@@ -41,6 +42,8 @@ PREDICTION_LOG_PATH = "./csv/prediction_log.csv"
 XGB_CONFIDENCE_PATH = "./csv/xgb_confidence.csv"
 AGENTIC_LOOP_STATE = "./csv/agentic_loop_state.json"
 ELLIOTT_BACKTEST_PATH = "./csv/elliott_backtest.json"
+RSI_DIVER_PATH = "./csv/rsi_diver.csv"
+BULLISH_STRONG_PATH = "./output/ai_signal/bullish_strong.csv"
 
 FINAL_OUTPUT_PATH = "./output/ai_signal/FINAL_AI_SIGNALS.csv"
 os.makedirs("./output/ai_signal", exist_ok=True)
@@ -108,6 +111,35 @@ if PATCHTST_AVAILABLE:
         print("✅ PatchTST initialized")
     except Exception as e:
         print(f"⚠️ PatchTST failed: {e}")
+
+# =========================================================
+# ✅ BULLISH STRONG SIGNALS LOAD (NEW)
+# =========================================================
+print("\n📂 Loading Bullish Strong signals...")
+bullish_strong_dict = {}
+bullish_strong_df = None
+
+try:
+    if os.path.exists(BULLISH_STRONG_PATH):
+        bullish_strong_df = pd.read_csv(BULLISH_STRONG_PATH)
+        
+        # সিম্বল অনুযায়ী ডাটা সংরক্ষণ
+        for _, row in bullish_strong_df.iterrows():
+            symbol = row['symbol']
+            bullish_strong_dict[symbol] = {
+                'has_signal': True,
+                'high': row.get('high', 0),
+                'gape': row.get('gape', 0),
+                'rt': row.get('rt', '0:0'),
+                'bbr': row.get('bbr', 1.0),
+                'strong': row.get('strong', '0:0')
+            }
+        
+        print(f"   ✅ Loaded {len(bullish_strong_dict)} Bullish Strong signals")
+    else:
+        print(f"   ⚠️ Bullish Strong file not found: {BULLISH_STRONG_PATH}")
+except Exception as e:
+    print(f"   ⚠️ Failed to load Bullish Strong: {e}")
 
 # =========================================================
 # এআই মডেল ওজন (Weight)
@@ -585,6 +617,47 @@ def get_sector_score(symbol):
         return get_sector_from_mongodb(symbol)
 
 # =========================================================
+# ১০.৮ Bullish Strong Boost (NEW)
+# =========================================================
+def get_bullish_strong_boost(symbol):
+    """Bullish Strong সিগন্যাল পেলে confidence boost"""
+    if symbol in bullish_strong_dict:
+        data = bullish_strong_dict[symbol]
+        
+        # bbr (Bull-Bear Ratio) এর ভিত্তিতে boost
+        bbr = data['bbr']
+        if bbr >= 3.0:
+            boost = 15  # খুব শক্তিশালী
+        elif bbr >= 2.0:
+            boost = 12
+        elif bbr >= 1.5:
+            boost = 8
+        else:
+            boost = 5
+        
+        # strong ratio (Bullish Strong:Bearish Strong)
+        strong_ratio = data['strong']
+        if ':' in strong_ratio:
+            try:
+                bull_strong, bear_strong = map(int, strong_ratio.split(':'))
+                if bull_strong > bear_strong * 2:
+                    boost += 5
+            except:
+                pass
+        
+        return {
+            'has_signal': True,
+            'boost': boost,
+            'bbr': bbr,
+            'rt': data['rt'],
+            'strong': data['strong'],
+            'gape': data['gape'],
+            'high': data['high']
+        }
+    
+    return {'has_signal': False, 'boost': 0, 'bbr': 0, 'rt': '0:0', 'strong': '0:0', 'gape': 0, 'high': 0}
+
+# =========================================================
 # ১১. Agentic Loop এগ্রিগেটেড স্কোর
 # =========================================================
 def get_agentic_score_global():
@@ -611,10 +684,10 @@ def get_agentic_score_global():
     return score, bias
 
 # =========================================================
-# ১২. কম্বাইন্ড ফাইনাল স্কোর ক্যালকুলেশন
+# ১২. কম্বাইন্ড ফাইনাল স্কোর ক্যালকুলেশন (UPDATED with Bullish Strong)
 # =========================================================
-def calculate_final_combined_score(llm_sig, xgb_sig, ppo_sig, agentic_sig, patch_tst_sig, sector_sig):
-    """সব AI-এর কম্বাইন্ড ফাইনাল স্কোর (6 sources)"""
+def calculate_final_combined_score(llm_sig, xgb_sig, ppo_sig, agentic_sig, patch_tst_sig, sector_sig, bullish_boost):
+    """সব AI-এর কম্বাইন্ড ফাইনাল স্কোর (6 sources + Bullish Strong Boost)"""
     final_score = 0
     
     # LLM (৩০%)
@@ -664,7 +737,11 @@ def calculate_final_combined_score(llm_sig, xgb_sig, ppo_sig, agentic_sig, patch
     # Sector (৫%)
     final_score += sector_sig['score'] * AI_WEIGHTS['sector']
     
-    return final_score
+    # ✅ BULLISH STRONG BOOST (অতিরিক্ত ৫-২০%)
+    if bullish_boost['has_signal']:
+        final_score += bullish_boost['boost']
+    
+    return min(100, final_score)  # 100 এর বেশি না হয়
 
 # =========================================================
 # ১৩. ফাইনাল সিগন্যাল লেবেল
@@ -726,6 +803,9 @@ for i, symbol in enumerate(target_symbols):
     # Sector
     sector_sig = get_sector_score(symbol)
     
+    # ✅ Bullish Strong Boost (NEW)
+    bullish_boost = get_bullish_strong_boost(symbol)
+    
     # Elliott Wave ডিটেইলস
     elliott_details = get_elliott_wave_details(symbol)
     
@@ -738,8 +818,11 @@ for i, symbol in enumerate(target_symbols):
         patch_tst_sig['available']
     )
     
-    # ফাইনাল কম্বাইন্ড স্কোর
-    final_score = calculate_final_combined_score(llm_sig, xgb_sig, ppo_sig, agentic_sig, patch_tst_sig, sector_sig)
+    # ফাইনাল কম্বাইন্ড স্কোর (with Bullish Strong Boost)
+    final_score = calculate_final_combined_score(
+        llm_sig, xgb_sig, ppo_sig, agentic_sig, 
+        patch_tst_sig, sector_sig, bullish_boost
+    )
     final_signal = get_final_signal_label(final_score)
     
     # এন্ট্রি প্রাইস (S/R বাদ)
@@ -789,6 +872,15 @@ for i, symbol in enumerate(target_symbols):
         'sector_score': sector_sig['score'],
         'is_top_sector': sector_sig['is_top'],
         
+        # ✅ Bullish Strong (NEW)
+        'bullish_strong_signal': bullish_boost['has_signal'],
+        'bullish_strong_bbr': round(bullish_boost['bbr'], 2) if bullish_boost['bbr'] else 0,
+        'bullish_strong_rt': bullish_boost['rt'],
+        'bullish_strong_ratio': bullish_boost['strong'],
+        'bullish_boost_amount': bullish_boost['boost'],
+        'bullish_strong_gape': bullish_boost['gape'],
+        'bullish_strong_high': round(bullish_boost['high'], 2) if bullish_boost['high'] else 0,
+        
         # Elliott Wave
         'elliott_accuracy': elliott_data.get('accuracy', 50),
         'elliott_total_predictions': elliott_data.get('total_predictions', 0),
@@ -837,6 +929,7 @@ print(f"   Agentic Loop: {'✅' if agentic_available else '❌'} Available")
 print(f"   PatchTST: {'✅' if PATCHTST_AVAILABLE else '❌'} Available")
 print(f"   Sector Engine: {'✅' if SECTOR_AVAILABLE else '❌'} Available")
 print(f"   Elliott Wave: {elliott_data.get('accuracy', 50):.1f}% accuracy")
+print(f"   Bullish Strong: {'✅' if len(bullish_strong_dict) > 0 else '❌'} Available ({len(bullish_strong_dict)} signals)")
 
 print(f"\n📈 SIGNAL DISTRIBUTION:")
 print(output_df['final_signal'].value_counts().to_string())
@@ -848,7 +941,7 @@ print(f"\n🔥 TOP 10 BUY SIGNALS:")
 buy_signals = output_df[output_df['final_signal'].str.contains('BUY', na=False)].head(10)
 if len(buy_signals) > 0:
     print(buy_signals[['symbol', 'final_signal', 'final_combined_score', 
-                        'entry_price',
+                        'entry_price', 'bullish_strong_signal', 'bullish_strong_bbr',
                         'elliott_current_wave', 'elliott_wave_count']].to_string())
 else:
     print("   (No BUY signals yet)")
@@ -856,7 +949,7 @@ else:
 print(f"\n💀 TOP 5 SELL SIGNALS:")
 sell_signals = output_df[output_df['final_signal'].str.contains('SELL', na=False)].head(5)
 if len(sell_signals) > 0:
-    print(sell_signals[['symbol', 'final_signal', 'final_combined_score']].to_string())
+    print(sell_signals[['symbol', 'final_signal', 'final_combined_score', 'bullish_strong_signal']].to_string())
 else:
     print("   (No SELL signals)")
 
@@ -864,6 +957,14 @@ print(f"\n🌊 ELLIOTT WAVE SUMMARY:")
 if len(output_df) > 0:
     wave_counts = output_df['elliott_current_wave'].value_counts()
     print(wave_counts.to_string())
+
+print(f"\n🐂 BULLISH STRONG SIGNALS IN OUTPUT:")
+bullish_strong_in_output = output_df[output_df['bullish_strong_signal'] == True]
+if len(bullish_strong_in_output) > 0:
+    print(f"   Total: {len(bullish_strong_in_output)} symbols with Bullish Strong")
+    print(bullish_strong_in_output[['symbol', 'final_signal', 'bullish_strong_bbr', 'bullish_boost_amount', 'final_combined_score']].head(10).to_string())
+else:
+    print("   (No Bullish Strong signals in final output)")
 
 print(f"\n" + "="*70)
 print(f"✅ FINAL OUTPUT SAVED TO: {FINAL_OUTPUT_PATH}")
