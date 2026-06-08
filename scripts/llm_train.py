@@ -6,6 +6,7 @@
 # ✅ ALL LOCAL PATHS UPDATED TO ./csv/
 # ✅ TELEGRAM NOTIFICATIONS ADDED
 # ✅ WEEKLY & MONTHLY RETRAINING FIXED
+# ✅ MODE EXPLANATION ADDED FOR BOT OUTPUT
 
 import os
 import torch
@@ -181,6 +182,24 @@ GRAD_ACCUM_CONFIG = {
     "mistake_learning": 24,
 }
 
+# =========================================================
+# MODE EXPLANATION DICTIONARY (FOR BOT OUTPUT)
+# =========================================================
+MODE_EXPLANATION = {
+    "first_train": "🎯 FIRST TIME TRAINING (40 symbols - Base Model)",
+    "incremental": "⚙️ INCREMENTAL TRAINING (New symbols added - Regular batch training)",
+    "weekly_finetune": "🔄 WEEKLY FINE-TUNE (Every 7 days - Retraining on existing symbols)",
+    "consolidate": "📈 MONTHLY RE-TUNE (Every 30 days - Full consolidation training)",
+    "mistake_learning": "🎯 MISTAKE LEARNING (Retraining from past errors)"
+}
+
+MODE_SHORT_EXPLANATION = {
+    "first_train": "First Time",
+    "incremental": "New Symbols",
+    "weekly_finetune": "Weekly Fine-Tune",
+    "consolidate": "Monthly Re-Tune",
+    "mistake_learning": "Mistake Learning"
+}
 
 # =========================================================
 # HF UPLOADER (CHECKPOINT + FINAL MODEL)
@@ -995,11 +1014,36 @@ class AutoLLMTrainer:
         print(f"   XGBoost Models Loaded: {len(self.xgb_ppo.xgb_models)}")
         print(f"   PPO Models Found: {len(self.xgb_ppo.ppo_models)}")
 
+    def save_training_status_file(self, mode, symbols_batch):
+        """ট্রেনিং স্ট্যাটাস JSON ফাইল তৈরি করে (বট যেন পড়তে পারে)"""
+        status_file = "./csv/current_training_status.json"
+        try:
+            with open(status_file, 'w') as f:
+                json.dump({
+                    'mode': mode,
+                    'mode_description': MODE_EXPLANATION.get(mode, mode.upper()),
+                    'mode_short': MODE_SHORT_EXPLANATION.get(mode, mode.upper()),
+                    'start_time': datetime.now().isoformat(),
+                    'symbols_count': len(symbols_batch) if symbols_batch else 0,
+                    'epochs': EPOCHS_CONFIG.get(mode, 10),
+                    'learning_rate': LR_CONFIG.get(mode, 1e-5)
+                }, f, indent=2)
+            print(f"   📄 Training status saved to {status_file}")
+        except Exception as e:
+            print(f"   ⚠️ Could not save status file: {e}")
+
     def train(self, mode="incremental", symbols_batch=None):
+        # স্ট্যাটাস ফাইল সেভ করা
+        self.save_training_status_file(mode, symbols_batch)
+        
+        # মোডের ব্যাখ্যা তৈরি করা
+        mode_explanation = MODE_EXPLANATION.get(mode, f"Mode: {mode.upper()}")
+        mode_short = MODE_SHORT_EXPLANATION.get(mode, mode.upper())
+        
         start_msg = f"""
 🚀 <b>LLM Training Started</b>
 📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
-🎯 Mode: {mode.upper()}
+🎯 Mode: {mode.upper()} - {mode_explanation}
 📚 Symbols: {len(symbols_batch) if symbols_batch else 'ALL'}
 ⚙️ Epochs: {EPOCHS_CONFIG.get(mode, 10)}
 """
@@ -1007,6 +1051,8 @@ class AutoLLMTrainer:
 
         print(f"\n{'='*60}")
         print(f"🎯 TRAINING MODE: {mode.upper()}")
+        print(f"🔍 MODE EXPLANATION: {mode_explanation}")
+        print(f"📝 SHORT NAME: {mode_short}")
         if symbols_batch:
             print(f"📚 Symbols in this batch: {len(symbols_batch)}")
         print(f"{'='*60}")
@@ -1082,6 +1128,7 @@ class AutoLLMTrainer:
 🔄 <b>Resuming from Checkpoint</b>
 📂 {last_checkpoint}
 📊 Progress: {last_checkpoint.split('-')[-1]} steps completed
+🎯 Mode: {mode.upper()} - {mode_short}
 """
                 send_telegram_message(resume_msg, self.telegram_token, self.telegram_chat_id)
         else:
@@ -1158,7 +1205,7 @@ class AutoLLMTrainer:
             error_msg = f"""
 ⚠️ <b>LLM Training Error</b>
 📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
-🎯 Mode: {mode.upper()}
+🎯 Mode: {mode.upper()} - {mode_short}
 ❌ Error: {str(e)[:200]}
 """
             send_telegram_message(error_msg, self.telegram_token, self.telegram_chat_id)
@@ -1176,15 +1223,31 @@ class AutoLLMTrainer:
 
         self.upload_final_model_to_hf(mode)
         
+        # মোডের ব্যাখ্যা শেষের জন্যও
+        mode_explanation_end = MODE_EXPLANATION.get(mode, f"Mode: {mode.upper()}")
+        
         complete_msg = f"""
 ✅ <b>LLM Training Completed</b>
 📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
-🎯 Mode: {mode.upper()}
+🎯 {mode_explanation_end}
 📚 Symbols trained: {len(symbols_batch) if symbols_batch else 'ALL'}
 💾 Model saved: {LLM_MODEL_DIR}
 📤 Uploaded to: {HF_DATASET_REPO}/final_model/{mode}/
 """
         send_telegram_message(complete_msg, self.telegram_token, self.telegram_chat_id)
+        
+        # ট্রেনিং শেষে স্ট্যাটাস ফাইল ক্লিয়ার করা
+        status_file = "./csv/current_training_status.json"
+        if os.path.exists(status_file):
+            try:
+                with open(status_file, 'r') as f:
+                    current_status = json.load(f)
+                current_status['completed_at'] = datetime.now().isoformat()
+                current_status['status'] = 'completed'
+                with open(status_file, 'w') as f:
+                    json.dump(current_status, f, indent=2)
+            except:
+                pass
         
         return True
 
@@ -1230,6 +1293,13 @@ class AutoLLMTrainer:
         print(f"📤 ALL SAVED TO: {HF_DATASET_REPO}")
         print(f"💾 Local Model Dir: {LLM_MODEL_DIR}")
         print("="*60)
+        print("\n📌 Mode Legend:")
+        print("   • first_train     → 🎯 First Time Training (40 symbols)")
+        print("   • incremental     → ⚙️ New Symbols Added (Regular batch)")
+        print("   • weekly_finetune → 🔄 WEEKLY FINE-TUNE (Every 7 days)")
+        print("   • consolidate     → 📈 MONTHLY RE-TUNE (Every 30 days)")
+        print("   • mistake_learning→ 🎯 Learning from Past Mistakes")
+        print("="*60)
 
         confidence_stats = self.mistake_collector.get_confidence_stats()
         print(f"\n📊 Confidence Statistics:")
@@ -1274,10 +1344,12 @@ class AutoLLMTrainer:
 📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
 📚 Batch: {weekly_batch_num}
 📚 Symbols: {len(weekly_symbols)}
+🔄 This is a WEEKLY FINE-TUNE (Every 7 days)
 """
             send_telegram_message(weekly_start, self.telegram_token, self.telegram_chat_id)
             
             print(f"\n🔄 Weekly fine-tuning on Batch {weekly_batch_num} ({len(weekly_symbols)} symbols)")
+            print("   🔍 MODE: weekly_finetune - This is a scheduled weekly retraining")
             if self.generate_training_data_for_symbols(weekly_symbols):
                 if self.train(mode="weekly_finetune", symbols_batch=weekly_symbols):
                     self.batch_manager.mark_weekly_done(weekly_batch_num)
@@ -1293,10 +1365,12 @@ class AutoLLMTrainer:
 📈 <b>Monthly Consolidation Started</b>
 📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
 📚 All symbols: {len(all_trained_symbols)}
+📈 This is a MONTHLY RE-TUNE (Every 30 days)
 """
                 send_telegram_message(monthly_start, self.telegram_token, self.telegram_chat_id)
                 
                 print(f"\n🔄 Monthly consolidation - Training all symbols together")
+                print("   🔍 MODE: consolidate - This is a scheduled monthly retraining")
                 if self.generate_training_data_for_symbols(all_trained_symbols):
                     if self.train(mode="consolidate", symbols_batch=all_trained_symbols):
                         self.batch_manager.mark_consolidated()
@@ -1332,6 +1406,7 @@ Confidence: {min(95, max(65, int(ex.get('confidence', 0.7) * 100 + 10)))}
 """)
             original_path = TRAINING_DATA_PATH
             TRAINING_DATA_PATH = temp_file
+            print("   🔍 MODE: mistake_learning - Retraining from past errors")
             self.train(mode="mistake_learning")
             TRAINING_DATA_PATH = original_path
             if os.path.exists(temp_file):
