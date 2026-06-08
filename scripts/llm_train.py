@@ -5,6 +5,7 @@
 # ✅ NO DOWNLOAD FROM HF - ALL LOCAL DATA FROM ./csv/
 # ✅ ALL LOCAL PATHS UPDATED TO ./csv/
 # ✅ TELEGRAM NOTIFICATIONS ADDED
+# ✅ WEEKLY & MONTHLY RETRAINING FIXED
 
 import os
 import torch
@@ -112,7 +113,7 @@ FINE_TUNE_INTERVAL = 7
 CONSOLIDATE_INTERVAL = 30
 
 # Learning parameters - 70+ HOURS OPTIMIZED
-MAX_OLD_EXAMPLES = 10000 #10000
+MAX_OLD_EXAMPLES = 10000
 HARD_EXAMPLE_THRESHOLD = 0.25
 HIGH_PRIORITY_THRESHOLD = 0.35
 WEIGHTED_LOSS_ENABLED = True
@@ -149,17 +150,17 @@ AGENTIC_LOOP_LOG_DIR = "./csv/agentic_loop_logs"
 # 70+ HOURS EPOCH CONFIGURATION
 # =========================================================
 EPOCHS_CONFIG = {
-    "first_train": 12 ,#12
-    "incremental": 8, #8
+    "first_train": 12,
+    "incremental": 8,
     "weekly_finetune": 6,
     "consolidate": 20,
     "mistake_learning": 10,
 }
 
 LR_CONFIG = {
-    "first_train": 8e-6,#8e
-    "incremental": 5e-6, #5e
-    "weekly_finetune":2e-6,
+    "first_train": 8e-6,
+    "incremental": 5e-6,
+    "weekly_finetune": 2e-6,
     "consolidate": 5e-6,
     "mistake_learning": 5e-6,
 }
@@ -173,8 +174,8 @@ BATCH_SIZE_CONFIG = {
 }
 
 GRAD_ACCUM_CONFIG = {
-    "first_train": 32,#32
-    "incremental": 24, #24
+    "first_train": 32,
+    "incremental": 24,
     "weekly_finetune": 16,
     "consolidate": 32,
     "mistake_learning": 24,
@@ -255,7 +256,6 @@ class HFUploader:
             return
         
         try:
-            # trained_symbols.json
             if os.path.exists(TRACKING_FILE):
                 self.api.upload_file(
                     path_or_fileobj=TRACKING_FILE,
@@ -266,7 +266,6 @@ class HFUploader:
                 )
                 print(f"   📤 trained_symbols.json uploaded to {self.repo_id}")
             
-            # batch_tracking.json
             if os.path.exists(BATCH_TRACKING_FILE):
                 self.api.upload_file(
                     path_or_fileobj=BATCH_TRACKING_FILE,
@@ -282,7 +281,7 @@ class HFUploader:
 
 
 # =========================================================
-# BATCH MANAGER
+# BATCH MANAGER - FIXED VERSION
 # =========================================================
 
 class BatchManager:
@@ -290,9 +289,29 @@ class BatchManager:
 
     def __init__(self):
         self.batch_tracking = self.load_batch_tracking()
+        self._ensure_required_fields()
         self.current_batch_index = self.batch_tracking.get('current_batch', 0)
         self.completed_batches = self.batch_tracking.get('completed_batches', [])
         self.batch_symbols = self.batch_tracking.get('batch_symbols', {})
+
+    def _ensure_required_fields(self):
+        """Ensure all required fields exist in tracking file"""
+        required_fields = {
+            'weekly_trained_batches': [],
+            'last_weekly_finetune': None,
+            'last_consolidate': None,
+            'monthly_consolidation_done': False
+        }
+        
+        updated = False
+        for field, default_value in required_fields.items():
+            if field not in self.batch_tracking:
+                self.batch_tracking[field] = default_value
+                updated = True
+        
+        if updated:
+            self.save_batch_tracking()
+            print("   ✅ Tracking file updated with new fields")
 
     def load_batch_tracking(self):
         if os.path.exists(BATCH_TRACKING_FILE):
@@ -306,11 +325,14 @@ class BatchManager:
             'completed_batches': [],
             'batch_symbols': {},
             'total_symbols_trained': 0,
-            'last_batch_date': None
+            'last_batch_date': None,
+            'weekly_trained_batches': [],
+            'last_weekly_finetune': None,
+            'last_consolidate': None,
+            'monthly_consolidation_done': False
         }
 
     def save_batch_tracking(self):
-        # Ensure directory exists
         os.makedirs(os.path.dirname(BATCH_TRACKING_FILE), exist_ok=True)
         with open(BATCH_TRACKING_FILE, 'w') as f:
             json.dump(self.batch_tracking, f, indent=2)
@@ -318,7 +340,7 @@ class BatchManager:
     def get_next_batch_symbols(self, all_symbols, trained_symbols, batch_size=BATCH_SIZE):
         untrained = [s for s in all_symbols if s not in trained_symbols]
         if not untrained:
-            return []
+            return [], None
         next_batch = untrained[:batch_size]
         batch_num = self.current_batch_index + 1
         self.batch_symbols[str(batch_num)] = next_batch
@@ -336,32 +358,88 @@ class BatchManager:
             self.save_batch_tracking()
 
     def get_batch_for_weekly_finetune(self):
+        """Returns a batch that hasn't been weekly fine-tuned in the last 7 days"""
         if not self.completed_batches:
             return None, []
-        last_date_str = self.batch_tracking.get('last_batch_date', '2024-01-01T00:00:00.000000')
-        try:
-            last_date = datetime.fromisoformat(last_date_str)
-        except:
-            last_date = datetime(2024, 1, 1)
-        week_num = (datetime.now() - last_date).days // 7
-        batch_index = week_num % len(self.completed_batches)
-        batch_num = self.completed_batches[batch_index]
-        return batch_num, self.batch_symbols.get(str(batch_num), [])
+        
+        # Check when last weekly fine-tune happened
+        last_weekly = self.batch_tracking.get('last_weekly_finetune')
+        if last_weekly:
+            try:
+                last_date = datetime.fromisoformat(last_weekly)
+                days_passed = (datetime.now() - last_date).days
+                print(f"   📅 Days since last weekly fine-tune: {days_passed}")
+                if days_passed < 7:
+                    print(f"   ⏳ Waiting {7 - days_passed} more days for weekly fine-tune")
+                    return None, []
+            except:
+                pass
+        
+        # Find batches that haven't been weekly trained yet
+        trained_batches = set(self.batch_tracking.get('weekly_trained_batches', []))
+        available_batches = [b for b in self.completed_batches if b not in trained_batches]
+        
+        if available_batches:
+            batch_num = available_batches[0]
+            symbols = self.batch_symbols.get(str(batch_num), [])
+            print(f"   ✅ Selected batch {batch_num} for weekly fine-tune with {len(symbols)} symbols")
+            return batch_num, symbols
+        
+        # If all batches trained, reset for next cycle
+        if len(trained_batches) >= len(self.completed_batches) and self.completed_batches:
+            print("   🔄 All batches trained, resetting for next weekly cycle")
+            self.batch_tracking['weekly_trained_batches'] = []
+            self.save_batch_tracking()
+            # Return first batch for new cycle
+            batch_num = self.completed_batches[0]
+            symbols = self.batch_symbols.get(str(batch_num), [])
+            return batch_num, symbols
+        
+        return None, []
+
+    def mark_weekly_done(self, batch_num):
+        """Mark a batch as weekly fine-tuned"""
+        weekly_trained = self.batch_tracking.get('weekly_trained_batches', [])
+        if batch_num not in weekly_trained:
+            weekly_trained.append(batch_num)
+            self.batch_tracking['weekly_trained_batches'] = weekly_trained
+            self.batch_tracking['last_weekly_finetune'] = datetime.now().isoformat()
+            self.save_batch_tracking()
+            print(f"   ✅ Batch {batch_num} marked as weekly trained")
+            return True
+        return False
 
     def should_consolidate(self):
-        last_consolidate = self.batch_tracking.get('last_consolidate', None)
+        """Check if monthly consolidation is needed (every 30 days)"""
+        last_consolidate = self.batch_tracking.get('last_consolidate')
         if not last_consolidate:
+            print("   📅 First consolidation needed")
             return True
+        
         try:
             last_date = datetime.fromisoformat(last_consolidate)
+            days_since = (datetime.now() - last_date).days
+            print(f"   📅 Days since last consolidation: {days_since}")
+            
+            if days_since >= CONSOLIDATE_INTERVAL:
+                print(f"   🔄 Consolidation needed after {days_since} days")
+                return True
+            else:
+                days_left = CONSOLIDATE_INTERVAL - days_since
+                print(f"   ⏳ {days_left} days until next consolidation")
+                return False
         except:
             return True
-        days_since = (datetime.now() - last_date).days
-        return days_since >= CONSOLIDATE_INTERVAL
 
     def mark_consolidated(self):
+        """Mark consolidation as completed"""
         self.batch_tracking['last_consolidate'] = datetime.now().isoformat()
+        self.batch_tracking['monthly_consolidation_done'] = True
+        # Reset weekly tracking after consolidation
+        self.batch_tracking['weekly_trained_batches'] = []
+        self.batch_tracking['last_weekly_finetune'] = None
         self.save_batch_tracking()
+        print(f"   ✅ Consolidation marked on {datetime.now().strftime('%Y-%m-%d')}")
 
     def get_all_batch_symbols(self):
         all_symbols = []
@@ -414,7 +492,6 @@ class XGBoostPPOIntegrator:
         try:
             model = self.xgb_models[symbol]
             if features_dict:
-                import numpy as np
                 feature_order = ['close', 'volume', 'return_5d', 'return_10d', 
                                 'volatility', 'volatility_5d', 'volume_ratio',
                                 'rsi_oversold', 'rsi_overbought', 'dist_from_sr', 
@@ -578,9 +655,9 @@ class MistakeCollector:
 
     def _generate_explanation(self, pattern, actual, market_regime):
         explanations = {
-            1: f"This pattern indicates upward price movement. Entry at breakout, stop loss below support.",
-            0: f"This pattern indicates downward price movement. Entry at breakdown, stop loss above resistance.",
-            2: f"This pattern indicates consolidation. Wait for breakout confirmation."
+            1: "This pattern indicates upward price movement. Entry at breakout, stop loss below support.",
+            0: "This pattern indicates downward price movement. Entry at breakdown, stop loss above resistance.",
+            2: "This pattern indicates consolidation. Wait for breakout confirmation."
         }
         return explanations.get(actual, f"The correct signal is {actual}")
 
@@ -662,7 +739,7 @@ class AutoLLMTrainer:
         self.mistake_collector = MistakeCollector(self.xgb_ppo)
         self.batch_manager = BatchManager()
         self.old_training_texts = []
-        self.hf_uploader = HFUploader()  # ✅ HF আপলোডার (চেকপয়েন্ট + ফাইনাল মডেল)
+        self.hf_uploader = HFUploader()
         
         # ========== AGENTIC LOOP INIT ==========
         self.agentic_loop = None
@@ -670,7 +747,7 @@ class AutoLLMTrainer:
             self._init_agentic_loop()
         # =======================================
 
-        # ✅ টেলিগ্রাম কনফিগ
+        # Telegram config
         self.telegram_token = os.getenv("TELEGRAM_TOKEN")
         self.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
         
@@ -872,19 +949,6 @@ class AutoLLMTrainer:
         print("\n🏗️ Loading model...")
         token = os.getenv("hf_token")
 
-        # ✅ HF Dataset Repo থেকে ফাইনাল মডেল লোড করার চেষ্টা
-        if token:
-            try:
-                print(f"   Attempting to load from HF Dataset: {HF_DATASET_REPO}/final_model/")
-                from huggingface_hub import list_repo_files
-                files = list_repo_files(repo_id=HF_DATASET_REPO, repo_type="dataset", token=token)
-                
-                final_model_folders = [f for f in files if f.startswith("final_model/")]
-                if final_model_folders:
-                    print(f"   ✅ Found final model in HF Dataset repo")
-            except Exception as e:
-                print(f"   No final model in HF Dataset: {e}")
-
         if os.path.exists(LLM_MODEL_DIR):
             try:
                 print(f"   Loading local model from {LLM_MODEL_DIR}...")
@@ -932,7 +996,6 @@ class AutoLLMTrainer:
         print(f"   PPO Models Found: {len(self.xgb_ppo.ppo_models)}")
 
     def train(self, mode="incremental", symbols_batch=None):
-        # ✅ ট্রেনিং শুরু মেসেজ
         start_msg = f"""
 🚀 <b>LLM Training Started</b>
 📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
@@ -984,20 +1047,18 @@ class AutoLLMTrainer:
         print(f"   Learning Rate: {learning_rate}")
         print(f"   Batch Size: {batch_size} (effective: {batch_size * grad_accum})")
         print(f"   Gradient Accumulation: {grad_accum}")
-        print(f"   LoRA: {'Enabled (r=32)' if LORA_AVAILABLE else 'Disabled'}")
+        print(f"   LoRA: {'Enabled (r=128)' if LORA_AVAILABLE else 'Disabled'}")
         print(f"   Max Length: 512 (full context)")
         print(f"   XGBoost Integration: Enabled ({len(self.xgb_ppo.xgb_models)} models)")
         print(f"   📤 HF Repo: {HF_DATASET_REPO}")
         import glob
     
-        # ✅ চেকপয়েন্ট চেক করুন - একাধিক জায়গায়
         last_checkpoint = None
     
-        # সম্ভাব্য চেকপয়েন্ট লোকেশন
         checkpoint_locations = [
-            os.path.join(LLM_MODEL_DIR, "checkpoint-*"),           # ./csv/llm_model/checkpoint-*
-            "./csv/checkpoints/checkpoint-*",                      # ./csv/checkpoints/checkpoint-*
-            os.path.join(LLM_MODEL_DIR, "checkpoints/checkpoint-*") # ./csv/llm_model/checkpoints/checkpoint-*
+            os.path.join(LLM_MODEL_DIR, "checkpoint-*"),
+            "./csv/checkpoints/checkpoint-*",
+            os.path.join(LLM_MODEL_DIR, "checkpoints/checkpoint-*")
         ]
     
         all_checkpoints = []
@@ -1008,22 +1069,19 @@ class AutoLLMTrainer:
                 all_checkpoints.extend(found)
     
         if all_checkpoints:
-            # স্টেপ নাম্বার বের করার ফাংশন
             def get_step_num(path):
                 import re
                 match = re.search(r'checkpoint-(\d+)', path)
                 return int(match.group(1)) if match else 0
         
-            # সর্বশেষ চেকপয়েন্ট নিন
             last_checkpoint = sorted(all_checkpoints, key=get_step_num)[-1]
             print(f"   📂 Resuming from checkpoint: {last_checkpoint}")
 
-            # ✅ রিজিউম মেসেজ
             if last_checkpoint:
                 resume_msg = f"""
 🔄 <b>Resuming from Checkpoint</b>
 📂 {last_checkpoint}
-📊 Progress: {int(last_checkpoint.split('-')[-1])} steps completed
+📊 Progress: {last_checkpoint.split('-')[-1]} steps completed
 """
                 send_telegram_message(resume_msg, self.telegram_token, self.telegram_chat_id)
         else:
@@ -1032,31 +1090,25 @@ class AutoLLMTrainer:
         training_args = TrainingArguments(
             output_dir=LLM_MODEL_DIR,
             overwrite_output_dir=False,
-
             num_train_epochs=num_epochs,
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size,
             gradient_accumulation_steps=grad_accum,
-
             learning_rate=learning_rate,
             warmup_steps=1000,
             weight_decay=0.025,
             lr_scheduler_type="cosine_with_restarts",
-
             save_steps=80,
             save_total_limit=3,
             logging_steps=10,
             save_strategy="steps",
-
             evaluation_strategy="no",
             load_best_model_at_end=False,
-
             fp16=False,
             dataloader_num_workers=0,
             dataloader_pin_memory=False,
             report_to="none",
             max_grad_norm=MAX_GRAD_NORM,
-
             optim="adamw_torch",
             adam_beta1=0.9,
             adam_beta2=0.98,
@@ -1076,7 +1128,6 @@ class AutoLLMTrainer:
             data_collator=data_collator,
         )
         
-        # ✅ ফিক্সড HF চেকপয়েন্ট কাস্টম আপলোডার
         class CustomHFCallback:
             def __init__(self, hf_uploader):
                 self.hf_uploader = hf_uploader
@@ -1090,7 +1141,6 @@ class AutoLLMTrainer:
                         self.hf_uploader.upload_tracking_files()
                 return control         
         
-            # সব missing methods handle করার জন্য
             def __getattr__(self, name):
                 if name.startswith('on_'):
                     return lambda *args, **kwargs: args[2] if len(args) > 2 else None
@@ -1116,20 +1166,16 @@ class AutoLLMTrainer:
         
         print("\n✅ Training completed!")
 
-        # ========== AGENTIC LOOP UPDATE ==========
         if symbols_batch and hasattr(self, 'agentic_loop') and self.agentic_loop is not None:
             batch_num = self.batch_manager.current_batch_index if self.batch_manager.current_batch_index > 0 else 1
             self._update_agentic_loop_after_batch(batch_num, symbols_batch, eval_loss=0.5)
-        # =========================================
 
         self.model.save_pretrained(LLM_MODEL_DIR)
         self.tokenizer.save_pretrained(LLM_MODEL_DIR)
         print(f"💾 Model saved locally to {LLM_MODEL_DIR}")
 
-        # ✅ ফাইনাল মডেল HF Dataset Repo-তে আপলোড
         self.upload_final_model_to_hf(mode)
         
-        # ✅ ট্রেনিং শেষ মেসেজ
         complete_msg = f"""
 ✅ <b>LLM Training Completed</b>
 📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
@@ -1143,7 +1189,6 @@ class AutoLLMTrainer:
         return True
 
     def upload_final_model_to_hf(self, mode):
-        """Upload final model to HF Dataset Repo"""
         token = os.getenv("hf_token")
         if not token:
             print("ℹ️ No HF_TOKEN, skipping final model upload")
@@ -1178,7 +1223,7 @@ class AutoLLMTrainer:
         print(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"📚 Batch size: {BATCH_SIZE}")
         print(f"🔄 Fine-tune interval: {FINE_TUNE_INTERVAL} days")
-        print(f"🔧 LoRA: r=32, alpha=64 (Enhanced)")
+        print(f"🔧 LoRA: r=128, alpha=256 (Enhanced)")
         print(f"📊 XGBoost Models: {len(self.xgb_ppo.xgb_models)}")
         print(f"📁 PPO Models: {len(self.xgb_ppo.ppo_models)}")
         print(f"⏰ 70+ Hours Training Mode: ENABLED")
@@ -1220,11 +1265,10 @@ class AutoLLMTrainer:
         else:
             print("\n✅ No new symbols found!")
 
-        # STEP 2: Weekly fine-tune
+        # STEP 2: Weekly fine-tune (FIXED)
         weekly_batch_num, weekly_symbols = self.batch_manager.get_batch_for_weekly_finetune()
 
-        if weekly_symbols and len(weekly_symbols) > 0:
-            # ✅ Weekly fine-tune start message
+        if weekly_batch_num and weekly_symbols:
             weekly_start = f"""
 📊 <b>Weekly Fine-tune Started</b>
 📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
@@ -1235,18 +1279,16 @@ class AutoLLMTrainer:
             
             print(f"\n🔄 Weekly fine-tuning on Batch {weekly_batch_num} ({len(weekly_symbols)} symbols)")
             if self.generate_training_data_for_symbols(weekly_symbols):
-                self.train(mode="weekly_finetune", symbols_batch=weekly_symbols)
-                print("✅ Weekly fine-tune complete!")
-                
-                # ✅ Weekly fine-tune complete message
-                send_telegram_message("✅ Weekly fine-tune completed!", self.telegram_token, self.telegram_chat_id)
+                if self.train(mode="weekly_finetune", symbols_batch=weekly_symbols):
+                    self.batch_manager.mark_weekly_done(weekly_batch_num)
+                    print("✅ Weekly fine-tune complete!")
+                    send_telegram_message("✅ Weekly fine-tune completed!", self.telegram_token, self.telegram_chat_id)
 
-        # STEP 3: Monthly consolidation
+        # STEP 3: Monthly consolidation (FIXED)
         if self.batch_manager.should_consolidate():
             all_trained_symbols = self.batch_manager.get_all_batch_symbols()
             
             if all_trained_symbols:
-                # ✅ Monthly consolidation start message
                 monthly_start = f"""
 📈 <b>Monthly Consolidation Started</b>
 📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
@@ -1256,12 +1298,10 @@ class AutoLLMTrainer:
                 
                 print(f"\n🔄 Monthly consolidation - Training all symbols together")
                 if self.generate_training_data_for_symbols(all_trained_symbols):
-                    self.train(mode="consolidate", symbols_batch=all_trained_symbols)
-                    self.batch_manager.mark_consolidated()
-                    print("✅ Monthly consolidation complete!")
-                    
-                    # ✅ Monthly consolidation complete message
-                    send_telegram_message("✅ Monthly consolidation completed!", self.telegram_token, self.telegram_chat_id)
+                    if self.train(mode="consolidate", symbols_batch=all_trained_symbols):
+                        self.batch_manager.mark_consolidated()
+                        print("✅ Monthly consolidation complete!")
+                        send_telegram_message("✅ Monthly consolidation completed!", self.telegram_token, self.telegram_chat_id)
 
         # STEP 4: Hard example retraining
         high_priority_examples = self.mistake_collector.get_hard_examples(limit=200, priority_only=True)
@@ -1290,7 +1330,6 @@ Signal: {signal_map.get(ex.get('actual', 2), 'HOLD')}
 Confidence: {min(95, max(65, int(ex.get('confidence', 0.7) * 100 + 10)))}
 ================================================================================
 """)
-            # Temporarily replace training data
             original_path = TRAINING_DATA_PATH
             TRAINING_DATA_PATH = temp_file
             self.train(mode="mistake_learning")
@@ -1303,15 +1342,16 @@ Confidence: {min(95, max(65, int(ex.get('confidence', 0.7) * 100 + 10)))}
         print("="*60)
         print(f"   Total trained symbols: {len(self.trained_symbols)}")
         print(f"   Completed batches: {len(self.batch_manager.completed_batches)}")
+        print(f"   Weekly trained batches: {self.batch_manager.batch_tracking.get('weekly_trained_batches', [])}")
+        print(f"   Last weekly fine-tune: {self.batch_manager.batch_tracking.get('last_weekly_finetune', 'Never')}")
+        print(f"   Last consolidation: {self.batch_manager.batch_tracking.get('last_consolidate', 'Never')}")
         print(f"   XGBoost Models Available: {len(self.xgb_ppo.xgb_models)}")
         print(f"   PPO Models Available: {len(self.xgb_ppo.ppo_models)}")
         print(f"   Local Model Dir: {LLM_MODEL_DIR}")
         print(f"   HF Dataset Repo (ALL): {HF_DATASET_REPO}")
         print("="*60)
 
-        # ========== AGENTIC LOOP FINALIZE ==========
         self._finalize_agentic_loop()
-        # ===========================================
 
 
 if __name__ == "__main__":
