@@ -9,7 +9,8 @@ files_info = {
     "swing": "./csv/swing_buy.csv",
     "uptrend": "./output/ai_signal/uptrand_buy.csv",
     "fail_short": "./output/ai_signal/fail_short_buy_pass.csv",
-    "bullish_strong": "./output/ai_signal/bullish_strong.csv"
+    "bullish_strong": "./output/ai_signal/bullish_strong.csv",
+    "macd": "./output/ai_signal/macd.csv"  # ✅ নতুন যোগ করা
 }
 
 output_dir = "./output/ai_signal/"
@@ -35,7 +36,7 @@ for file_key, file_path in files_info.items():
         if df.empty:
             continue
 
-        if file_key in ["fail_short", "bullish_strong"]:
+        if file_key in ["fail_short", "bullish_strong", "macd"]:  # ✅ macd যোগ করা
             file_dataframes[file_key] = df
             continue
 
@@ -64,7 +65,7 @@ if file_latest_dates:
     
     for file_key, df in file_dataframes.items():
         try:
-            if file_key in ["fail_short", "bullish_strong"]:
+            if file_key in ["fail_short", "bullish_strong", "macd"]:  # ✅ macd যোগ করা
                 symbol_col = None
                 for col in ['SYMBOL', 'symbol', 'Symbol']:
                     if col in df.columns:
