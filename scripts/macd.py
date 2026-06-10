@@ -59,10 +59,7 @@ for symbol, group in valid_symbols.groupby('symbol'):
             results.append({
                 'symbol': symbol,
                 'close': round(float(last_row['close']), 2) if pd.notna(last_row['close']) else 0,
-                'high': round(float(last_row['high']), 2) if pd.notna(last_row['high']) else 0,  # ✅ NEW
-                'prm': round(float(previous_row['macd']), 2) if pd.notna(previous_row['macd']) else 0,
-                'lrm': round(float(last_row['macd']), 2) if pd.notna(last_row['macd']) else 0,
-                'rsi': round(float(last_row['rsi']), 2) if pd.notna(last_row['rsi']) else 0
+                'high': round(float(last_row['high']), 2) if pd.notna(last_row['high']) else 0
             })
     except Exception as e:
         print(f"Error processing {symbol}: {e}")
@@ -75,18 +72,18 @@ if results:
     # Add serial number
     result_df.insert(0, 'No', range(1, len(result_df) + 1))
     
-    # Reorder columns
-    result_df = result_df[['No', 'symbol', 'close', 'high','prm', 'lrm', 'rsi']]
+    # Reorder columns (prm, lrm, rsi removed)
+    result_df = result_df[['No', 'symbol', 'close', 'high']]
     
     print(f"Process completed. Found {len(result_df)} symbols meeting the criteria.")
     print("\nFirst few results:")
     print(result_df.head())
 else:
     print("No symbols found meeting all conditions.")
-    # Create empty DataFrame with headers
-    result_df = pd.DataFrame(columns=['No', 'symbol', 'close', 'high','prm', 'lrm', 'rsi'])
+    # Create empty DataFrame with headers (only 4 columns now)
+    result_df = pd.DataFrame(columns=['No', 'symbol', 'close', 'high'])
     print("Empty DataFrame created with headers.")
 
-# Save to CSV (এই লাইনটি if-else ব্লকের বাইরে)
+# Save to CSV
 result_df.to_csv('./output/ai_signal/macd.csv', index=False)
 print(f"Results saved to: ./output/ai_signal/macd.csv")
