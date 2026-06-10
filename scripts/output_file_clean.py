@@ -11,7 +11,8 @@ files = [
     "bullish_strong.csv",
     "fail_short_buy_pass.csv",
     "rsi_diver.csv",
-    "uptrand_buy.csv"
+    "uptrand_buy.csv",
+    "macd.csv"
 ]
 
 # Check if directory exists
