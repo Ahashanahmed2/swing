@@ -12,7 +12,9 @@ files = [
     "fail_short_buy_pass.csv",
     "rsi_diver.csv",
     "uptrand_buy.csv",
-    "macd.csv"
+    "macd.csv",
+    "daily_buy.csv",
+    "ema_21.csv"
 ]
 
 # Check if directory exists
