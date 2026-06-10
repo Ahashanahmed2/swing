@@ -46,7 +46,7 @@ scripts = [
     "scripts/g_swing_buy.py",
     "scripts/g_30_buy.py",
     "scripts/macd.py",
-    "scripts/macd_daily.py",
+    #"scripts/macd_daily.py",
     "scripts/down_macd.py",
     #"scripts/ai_trade.py",
     "scripts/xgboost_retrain.py",
