@@ -1,6 +1,6 @@
 """
 scripts/save_to_mongodb.py
-FINAL_AI_SIGNALS.csv + Support/Resistance + MACD + EMA + Daily Buy + SWRSI সব MongoDB-তে সেইভ করে
+FINAL_AI_SIGNALS.csv + Support/Resistance + EMA + Daily Buy + SWRSI সব MongoDB-তে সেইভ করে
 """
 
 import os
@@ -16,7 +16,7 @@ from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 MONGODB_URI = os.environ.get("MONGODBEMAIL_URI", "")
 DATABASE_NAME = "swing_trading_db"
 
-# সব ফাইল কনফিগ
+# সব ফাইল কনফিগ (macd.csv ও macd_daily.csv বাদ)
 FILES_TO_SAVE = [
     {
         "path": "./output/ai_signal/FINAL_AI_SIGNALS.csv",
@@ -38,18 +38,19 @@ FILES_TO_SAVE = [
         "date_column": "date",
         "description": "Daily Buy Signals"
     },
-    {
-        "path": "./output/ai_signal/macd.csv",
-        "collection": "macd_signals",
-        "has_date": False,
-        "description": "MACD Signals"
-    },
-    {
-        "path": "./output/ai_signal/macd_daily.csv",
-        "collection": "macd_daily_signals",
-        "has_date": False,
-        "description": "MACD Daily Signals"
-    },
+    # MACD files removed
+    # {
+    #     "path": "./output/ai_signal/macd.csv",
+    #     "collection": "macd_signals",
+    #     "has_date": False,
+    #     "description": "MACD Signals"
+    # },
+    # {
+    #     "path": "./output/ai_signal/macd_daily.csv",
+    #     "collection": "macd_daily_signals",
+    #     "has_date": False,
+    #     "description": "MACD Daily Signals"
+    # },
     {
         "path": "./output/ai_signal/ema_21.csv",
         "collection": "ema_21_signals",
