@@ -1,0 +1,183 @@
+import csv
+import os
+import shutil
+from datetime import datetime
+
+# Input and output file paths
+input_file = "./output/ai_signal/daily_buy.csv"
+primary_output = "./csv/strong_ratio.csv"  # Primary: daily data stored here
+final_output = "./output/ai_signal/strong_ratio.csv"  # Final: copy will be saved here
+
+# Create output directories if they don't exist
+os.makedirs(os.path.dirname(primary_output), exist_ok=True)
+os.makedirs(os.path.dirname(final_output), exist_ok=True)
+
+# Today's date (d-m-y format)
+today_date = datetime.now().strftime("%d-%m-%y")
+
+def calculate_strong_ratio(strong_str):
+    """Parse strong column and calculate bullish strong divergence ratio"""
+    try:
+        parts = strong_str.split(':')
+        if len(parts) == 2:
+            bullish = float(parts[0].strip())
+            bearish = float(parts[1].strip())
+            if bearish != 0:
+                return bullish / bearish
+            else:
+                return None
+        else:
+            return None
+    except (ValueError, AttributeError):
+        return None
+
+def get_previous_data():
+    """Read previous day's bbr and strong_ratio data from primary file"""
+    previous_data = {}
+    if os.path.exists(primary_output):
+        with open(primary_output, 'r', newline='', encoding='utf-8') as infile:
+            reader = csv.DictReader(infile)
+            for row in reader:
+                try:
+                    previous_data[row['no']] = {
+                        'bbr': float(row['bbr']),
+                        'strong_ratio': float(row['strong_ratio']) if row['strong_ratio'] else None
+                    }
+                except (ValueError, KeyError):
+                    pass
+    return previous_data
+
+def calculate_bearish_prediction(bbr_current, bbr_previous, strong_current, strong_previous):
+    """Calculate bearish probability"""
+    
+    bearish_prob = 50  # Base probability
+    
+    # If BBR decreased
+    if bbr_current < bbr_previous:
+        bearish_prob += 15
+    
+    # If Strong Ratio decreased
+    if strong_current < strong_previous:
+        bearish_prob += 20
+    
+    # Both decreased (synergy bonus)
+    if bbr_current < bbr_previous and strong_current < strong_previous:
+        bearish_prob += 15
+    
+    # Check rapid drop rate (more than 10%)
+    if bbr_previous > 0:
+        bbr_drop_rate = (bbr_previous - bbr_current) / bbr_previous
+        if bbr_drop_rate > 0.1:
+            bearish_prob += 10
+    
+    if strong_previous > 0:
+        strong_drop_rate = (strong_previous - strong_current) / strong_previous
+        if strong_drop_rate > 0.1:
+            bearish_prob += 10
+    
+    # Bound limits
+    bearish_prob = max(0, min(100, bearish_prob))
+    
+    return bearish_prob
+
+# Read previous data from primary file
+previous_data = get_previous_data()
+
+# Read and process data
+rows = []
+
+with open(input_file, 'r', newline='', encoding='utf-8') as infile:
+    reader = csv.DictReader(infile)
+    
+    # Check if required columns exist
+    if not all(col in reader.fieldnames for col in ['rt', 'bbr', 'strong']):
+        raise ValueError("Input file must have rt, bbr, strong columns")
+    
+    for idx, row in enumerate(reader, start=1):
+        strong_value = row['strong']
+        strong_ratio = calculate_strong_ratio(strong_value)
+        bbr_value = float(row['bbr']) if row['bbr'] else None
+        
+        # Default bearish probability
+        bearish_probability = 50
+        
+        # If previous data exists, calculate prediction
+        if bbr_value is not None and strong_ratio is not None and str(idx) in previous_data:
+            prev_bbr = previous_data[str(idx)]['bbr']
+            prev_strong = previous_data[str(idx)]['strong_ratio']
+            
+            if prev_strong is not None:
+                # Calculate bearish prediction
+                bearish_probability = calculate_bearish_prediction(
+                    bbr_value, prev_bbr, 
+                    strong_ratio, prev_strong
+                )
+        
+        # Create new row (only numeric values)
+        new_row = {
+            'no': idx,
+            'date': today_date,
+            'rt': row['rt'],
+            'bbr': f"{bbr_value:.2f}" if bbr_value is not None else '',
+            'strong': strong_value,
+            'strong_ratio': f"{strong_ratio:.2f}" if strong_ratio is not None else '',
+            'bearish_probability': f"{bearish_probability}%"
+        }
+        rows.append(new_row)
+
+# Write to primary CSV file (./csv/strong_ratio.csv)
+with open(primary_output, 'w', newline='', encoding='utf-8') as outfile:
+    fieldnames = ['no', 'date', 'rt', 'bbr', 'strong', 'strong_ratio', 'bearish_probability']
+    writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+    
+    writer.writeheader()
+    writer.writerows(rows)
+
+# Copy the primary file to final location (./output/ai_signal/strong_ratio.csv)
+shutil.copy2(primary_output, final_output)
+
+# Console report
+print(f"\n{'='*60}")
+print(f"Bearish Probability Report - {today_date}")
+print(f"{'='*60}")
+
+for row in rows:
+    print(f"Row {row['no']}: BBR={row['bbr']}, Strong Ratio={row['strong_ratio']}, Bearish Probability={row['bearish_probability']}")
+
+# Overall market outlook
+print(f"\n{'='*60}")
+print("Overall Market Outlook:")
+print(f"{'='*60}")
+
+# Calculate bearish ratio from probabilities
+bearish_probs = []
+for row in rows:
+    prob_str = row['bearish_probability'].replace('%', '')
+    if prob_str:
+        bearish_probs.append(float(prob_str))
+
+if bearish_probs:
+    avg_bearish = sum(bearish_probs) / len(bearish_probs)
+    high_bearish = sum(1 for p in bearish_probs if p >= 60)
+    moderate_bearish = sum(1 for p in bearish_probs if 45 <= p < 60)
+    low_bearish = sum(1 for p in bearish_probs if p < 45)
+    
+    print(f"Average Bearish Probability: {avg_bearish:.1f}%")
+    print(f"High Bearish (60%+): {high_bearish} rows")
+    print(f"Moderate Bearish (45-60%): {moderate_bearish} rows")
+    print(f"Low Bearish (45%-): {low_bearish} rows")
+    
+    if avg_bearish >= 60:
+        print(f"\nConclusion: BEARISH trend expected tomorrow (Avg: {avg_bearish:.1f}%)")
+    elif avg_bearish >= 45:
+        print(f"\nConclusion: NEUTRAL to SLIGHTLY BEARISH (Avg: {avg_bearish:.1f}%)")
+    else:
+        print(f"\nConclusion: BULLISH trend expected tomorrow (Avg: {100-avg_bearish:.1f}%)")
+else:
+    print("No valid probability data available")
+
+print(f"\n{'='*60}")
+print(f"Primary file (daily data): {primary_output}")
+print(f"Copied to: {final_output}")
+print(f"Total rows processed: {len(rows)}")
+print(f"{'='*60}")
