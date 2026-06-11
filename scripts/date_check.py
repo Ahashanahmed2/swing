@@ -3,12 +3,32 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import re
 import sys
+import ssl
+import urllib3
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+
+# ✅ স্থায়ী SSL সমাধান (Git Action-এর জন্য)
+urllib3.disable_warnings(InsecureRequestWarning)
+
+# ✅ SSL ভেরিফিকেশন বন্ধ করার কনফিগারেশন
+ssl._create_default_https_context = ssl._create_unverified_context
+
+# ✅ কাস্টম সেশন তৈরি
+session = requests.Session()
+session.verify = False
+session.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Connection': 'keep-alive',
+})
 
 def check_date_and_continue():
     url = "https://dsebd.org/dseX_share.php"
     
     try:
-        response = requests.get(url)
+        # ✅ SSL এরর সমাধান সহ request
+        response = session.get(url, timeout=30, verify=False)
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
         print(f"❌ ওয়েবসাইট থেকে ডেটা আনতে সমস্যা হয়েছে: {e}")
