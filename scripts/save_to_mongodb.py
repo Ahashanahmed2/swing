@@ -1,6 +1,6 @@
 """
 scripts/save_to_mongodb.py
-FINAL_AI_SIGNALS.csv + Support/Resistance + EMA + Daily Buy + SWRSI সব MongoDB-তে সেইভ করে
+FINAL_AI_SIGNALS.csv + Support/Resistance + EMA + Daily Buy + SWRSI + Strong Ratio সব MongoDB-তে সেইভ করে
 """
 
 import os
@@ -63,6 +63,13 @@ FILES_TO_SAVE = [
         "has_date": True,
         "date_column": "signal_date",
         "description": "SWRSI - Sector Weekly + Daily RSI Divergence Signals"
+    },
+    {
+        "path": "./output/ai_signal/strong_ratio.csv",
+        "collection": "strong_ratio_signals",
+        "has_date": True,
+        "date_column": "date",
+        "description": "Strong Ratio - RT, BBR, Strong Divergence and Date Data"
     },
 ]
 
@@ -157,7 +164,30 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
             symbol = record.get('symbol')
             analysis_date = record.get('analysis_date', today)
             
-            if symbol and analysis_date:
+            # strong_ratio_signals এর জন্য symbol কলাম নেই, rt ব্যবহার করা হবে
+            if collection_name == "strong_ratio_signals":
+                rt_value = record.get('rt')
+                date_value = record.get('date')
+                
+                if rt_value and date_value:
+                    filter_query = {
+                        'rt': rt_value,
+                        'date': date_value
+                    }
+                    result = collection.update_one(
+                        filter_query,
+                        {'$set': record},
+                        upsert=True
+                    )
+                    if result.upserted_id:
+                        inserted_count += 1
+                    else:
+                        updated_count += 1
+                else:
+                    collection.insert_one(record)
+                    inserted_count += 1
+            
+            elif symbol and analysis_date:
                 # সিম্বল এবং তারিখ ভিত্তিতে upsert
                 filter_query = {
                     'symbol': symbol,
@@ -194,13 +224,20 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
         print(f"   📚 All historical data preserved (no deletion)")
 
         # ইনডেক্স তৈরি
-        if 'symbol' in df.columns:
-            collection.create_index([('symbol', 1)])
-        if 'analysis_date' in df.columns or is_ai_signals or is_swrsi:
+        if 'symbol' in df.columns or collection_name == "strong_ratio_signals":
+            if collection_name == "strong_ratio_signals":
+                collection.create_index([('rt', 1)])
+                collection.create_index([('date', -1)])
+            else:
+                collection.create_index([('symbol', 1)])
+        
+        if 'analysis_date' in df.columns or is_ai_signals or is_swrsi or has_date:
             collection.create_index([('analysis_date', -1)])
+        
         if is_ai_signals:
             collection.create_index([('final_combined_score', -1)])
             collection.create_index([('final_signal', 1)])
+        
         if is_swrsi:
             collection.create_index([('composite_score', -1)])
             collection.create_index([('sector', 1)])
@@ -209,6 +246,9 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
         # ইউনিক কম্পাউন্ড ইনডেক্স (ডুপ্লিকেট প্রতিরোধের জন্য)
         if 'symbol' in df.columns:
             collection.create_index([('symbol', 1), ('analysis_date', 1)], unique=True, sparse=True)
+        
+        if collection_name == "strong_ratio_signals":
+            collection.create_index([('rt', 1), ('date', 1)], unique=True, sparse=True)
         
         print(f"   ✅ Indexes created")
 
@@ -240,7 +280,7 @@ def check_all_collections(client):
 # =========================================================
 def main():
     print("=" * 70)
-    print("💾 MONGODB SAVE SCRIPT - ALL TRADING DATA + SWRSI")
+    print("💾 MONGODB SAVE SCRIPT - ALL TRADING DATA + SWRSI + STRONG RATIO")
     print("=" * 70)
     print(f"📅 Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"📂 Files to save: {len(FILES_TO_SAVE)}")
@@ -321,7 +361,27 @@ def main():
         sectors = swrsi_col.distinct('sector')
         print(f"   Sectors: {len(sectors)} ({', '.join(sectors[:5])}{'...' if len(sectors) > 5 else ''})")
 
-    # ৫. ক্লোজ
+    # ৫. Strong Ratio Summary (extra)
+    strong_ratio_col = db["strong_ratio_signals"]
+    if strong_ratio_col.count_documents({}) > 0:
+        print(f"\n📊 STRONG RATIO SIGNALS SUMMARY:")
+        print("-" * 40)
+        
+        total = strong_ratio_col.count_documents({})
+        print(f"   Total Records: {total}")
+        
+        # Date range
+        dates = strong_ratio_col.distinct('date')
+        if dates:
+            print(f"   Dates: {', '.join(sorted(dates)[:5])}{'...' if len(dates) > 5 else ''}")
+        
+        # Sample records
+        sample = strong_ratio_col.find().limit(3)
+        print(f"   Sample Data (first 3 records):")
+        for doc in sample:
+            print(f"     - Date: {doc.get('date', 'N/A')}, RT: {doc.get('rt', 'N/A')}, BBR: {doc.get('bbr', 'N/A')}")
+
+    # ৬. ক্লোজ
     client.close()
 
     print("\n" + "=" * 70)
