@@ -1,6 +1,5 @@
 import csv
 import os
-from datetime import datetime
 
 # Input and output file paths
 input_file = "./output/ai_signal/daily_buy.csv"
@@ -10,41 +9,62 @@ final_output = "./output/ai_signal/strong_ratio.csv"
 os.makedirs(os.path.dirname(final_output), exist_ok=True)
 
 # Read and process data
-rows = []
+rt_value = None
+bbr_value = None
+strong_value = None
 
 with open(input_file, 'r', newline='', encoding='utf-8') as infile:
     reader = csv.DictReader(infile)
-    
+
     # Check if required columns exist
     if not all(col in reader.fieldnames for col in ['rt', 'bbr', 'strong']):
         raise ValueError("Input file must have rt, bbr, strong columns")
-    
-    for row in reader:
-        # Create new row with only rt, bbr, strong
-        new_row = {
-            'rt': row['rt'],
-            'bbr': row['bbr'],
-            'strong': row['strong']
-        }
-        rows.append(new_row)
 
-# Write to final CSV file
+    for row in reader:
+        # Take only the first non-empty value for each column
+        if rt_value is None and row.get('rt') and row['rt'].strip():
+            rt_value = row['rt'].strip()
+        
+        if bbr_value is None and row.get('bbr') and row['bbr'].strip():
+            bbr_value = row['bbr'].strip()
+        
+        if strong_value is None and row.get('strong') and row['strong'].strip():
+            strong_value = row['strong'].strip()
+        
+        # Stop if we have found all three values
+        if rt_value is not None and bbr_value is not None and strong_value is not None:
+            break
+
+# Use empty string if no value found
+rt_value = rt_value if rt_value else ''
+bbr_value = bbr_value if bbr_value else ''
+strong_value = strong_value if strong_value else ''
+
+# Create single row
+new_row = {
+    'rt': rt_value,
+    'bbr': bbr_value,
+    'strong': strong_value
+}
+
+# Write to final CSV file (only 1 row)
 with open(final_output, 'w', newline='', encoding='utf-8') as outfile:
     fieldnames = ['rt', 'bbr', 'strong']
     writer = csv.DictWriter(outfile, fieldnames=fieldnames)
-    
+
     writer.writeheader()
-    writer.writerows(rows)
+    writer.writerow(new_row)
 
 # Console report
 print(f"\n{'='*50}")
-print(f"Data saved")
+print(f"Data saved - Single value per column")
 print(f"{'='*50}")
-
-for idx, row in enumerate(rows, start=1):
-    print(f"Row {idx}: {row['rt']} | BBR={row['bbr']} | Strong={row['strong']}")
+print(f"📊 Output (single row):")
+print(f"   RT: {rt_value}")
+print(f"   BBR: {bbr_value}")
+print(f"   STRONG: {strong_value}")
 
 print(f"\n{'='*50}")
 print(f"File saved: {final_output}")
-print(f"Total rows processed: {len(rows)}")
+print(f"Total output rows: 1")
 print(f"{'='*50}")
