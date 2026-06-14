@@ -8,7 +8,7 @@ import sys
 import pandas as pd
 from datetime import datetime
 from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError, DuplicateKeyError
 
 # =========================================================
 # কনফিগারেশন
@@ -38,19 +38,6 @@ FILES_TO_SAVE = [
         "date_column": "date",
         "description": "Daily Buy Signals"
     },
-    # MACD files removed
-    # {
-    #     "path": "./output/ai_signal/macd.csv",
-    #     "collection": "macd_signals",
-    #     "has_date": False,
-    #     "description": "MACD Signals"
-    # },
-    # {
-    #     "path": "./output/ai_signal/macd_daily.csv",
-    #     "collection": "macd_daily_signals",
-    #     "has_date": False,
-    #     "description": "MACD Daily Signals"
-    # },
     {
         "path": "./output/ai_signal/ema_21.csv",
         "collection": "ema_21_signals",
@@ -102,6 +89,9 @@ def load_csv_data(filepath):
 
     try:
         df = pd.read_csv(filepath)
+        if df.empty:
+            print(f"   ⚠️ File is empty: {filepath}")
+            return None
         print(f"   ✅ Loaded {len(df)} rows, {len(df.columns)} columns")
         return df
     except Exception as e:
@@ -115,6 +105,10 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
     """DataFrame MongoDB-তে সেইভ করে - ডুপ্লিকেট ছাড়া, কোন ডাটা ডিলিট হয় না"""
     if df is None or client is None:
         return False
+    
+    if df.empty:
+        print(f"   ⚠️ DataFrame is empty for {collection_name}")
+        return True
 
     try:
         db = client[DATABASE_NAME]
@@ -125,55 +119,158 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
 
         # DataFrame থেকে ডিকশনারিতে কনভার্ট
         records = df.to_dict('records')
+        
+        if not records:
+            print(f"   ⚠️ No records to process for {collection_name}")
+            return True
 
         # প্রতিটি রেকর্ডে তারিখ ও টাইমস্ট্যাম্প যোগ করুন
-        for record in records:
-            record['saved_at'] = datetime.now().isoformat()
+        processed_records = []
+        
+        for idx, record in enumerate(records):
+            try:
+                # Skip if no symbol for collections that need it
+                if collection_name not in ["strong_ratio_signals"]:
+                    if 'symbol' not in record or pd.isna(record.get('symbol')):
+                        print(f"   ⚠️ Skipping record {idx}: missing symbol")
+                        continue
+                
+                record['saved_at'] = datetime.now().isoformat()
+                record['saved_timestamp'] = datetime.now()
 
-            # Date কলাম থেকে analysis_date বের করুন
-            if has_date and date_column and date_column in df.columns:
-                try:
-                    date_val = pd.to_datetime(record.get(date_column), format='mixed', errors='coerce')
-                    if not pd.isna(date_val):
-                        record['analysis_date'] = date_val.strftime('%Y-%m-%d')
-                except:
-                    pass
+                # Date কলাম থেকে analysis_date বের করুন
+                if has_date and date_column and date_column in df.columns:
+                    try:
+                        date_val = record.get(date_column)
+                        if date_val and not pd.isna(date_val):
+                            # Parse date properly
+                            if isinstance(date_val, str):
+                                # Try different date formats
+                                for fmt in ['%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%d-%m-%Y', '%m/%d/%Y']:
+                                    try:
+                                        parsed_date = datetime.strptime(date_val, fmt)
+                                        record['analysis_date'] = parsed_date.strftime('%Y-%m-%d')
+                                        break
+                                    except:
+                                        continue
+                                else:
+                                    # If no format matches, use today
+                                    record['analysis_date'] = today
+                            else:
+                                # Already a datetime object
+                                record['analysis_date'] = pd.to_datetime(date_val).strftime('%Y-%m-%d')
+                        else:
+                            record['analysis_date'] = today
+                    except Exception as e:
+                        print(f"   ⚠️ Date conversion error for record {idx}: {e}")
+                        record['analysis_date'] = today
 
-            # AI Signals এর জন্য extra ফিল্ড
-            if is_ai_signals:
-                record['analysis_date'] = today
-                record['analysis_datetime'] = today_datetime
-
-            # SWRSI signals এর জন্য extra ফিল্ড
-            if is_swrsi:
-                if 'signal_date' not in record or pd.isna(record.get('signal_date')):
+                # AI Signals এর জন্য extra ফিল্ড
+                if is_ai_signals:
                     record['analysis_date'] = today
-                record['analysis_datetime'] = today_datetime
+                    record['analysis_datetime'] = today_datetime
+                    # Ensure final signal is properly set
+                    if 'final_signal' not in record or pd.isna(record.get('final_signal')):
+                        record['final_signal'] = 'NEUTRAL'
 
-            # NaN ভ্যালুগুলো None-এ কনভার্ট (MongoDB compatible)
-            for key, value in record.items():
-                if pd.isna(value):
-                    record[key] = None
+                # SWRSI signals এর জন্য extra ফিল্ড
+                if is_swrsi:
+                    if 'signal_date' not in record or pd.isna(record.get('signal_date')):
+                        record['analysis_date'] = today
+                    else:
+                        record['analysis_date'] = record.get('signal_date', today)
+                    record['analysis_datetime'] = today_datetime
+                    
+                    # Ensure required fields for SWRSI
+                    if 'composite_score' not in record or pd.isna(record.get('composite_score')):
+                        record['composite_score'] = 0
+                    if 'weekly_strength_label' not in record or pd.isna(record.get('weekly_strength_label')):
+                        record['weekly_strength_label'] = 'Weak'
+
+                # Strong Ratio signals এর জন্য extra ফিল্ড
+                if collection_name == "strong_ratio_signals":
+                    if 'date' not in record or pd.isna(record.get('date')):
+                        print(f"   ⚠️ Skipping record {idx}: missing date")
+                        continue
+                    if 'rt' not in record or pd.isna(record.get('rt')):
+                        print(f"   ⚠️ Skipping record {idx}: missing rt")
+                        continue
+                    record['analysis_date'] = record.get('date', today)
+
+                # NaN ভ্যালুগুলো None-এ কনভার্ট (MongoDB compatible)
+                for key, value in record.items():
+                    if pd.isna(value):
+                        record[key] = None
+                
+                processed_records.append(record)
+                
+            except Exception as e:
+                print(f"   ⚠️ Error processing record {idx}: {e}")
+                continue
+        
+        if not processed_records:
+            print(f"   ⚠️ No valid records to save for {collection_name}")
+            return True
 
         # কোন ডাটা ডিলিট করা হচ্ছে না - শুধু upsert
         inserted_count = 0
         updated_count = 0
+        error_count = 0
 
-        for record in records:
-            # ইউনিক আইডেন্টিফায়ার তৈরি করুন (সিম্বল + তারিখ)
-            symbol = record.get('symbol')
-            analysis_date = record.get('analysis_date', today)
-            
-            # strong_ratio_signals এর জন্য symbol কলাম নেই, rt ব্যবহার করা হবে
-            if collection_name == "strong_ratio_signals":
-                rt_value = record.get('rt')
-                date_value = record.get('date')
+        for record in processed_records:
+            try:
+                # strong_ratio_signals এর জন্য symbol কলাম নেই, rt ব্যবহার করা হবে
+                if collection_name == "strong_ratio_signals":
+                    rt_value = record.get('rt')
+                    date_value = record.get('date')
+                    
+                    if rt_value and date_value:
+                        filter_query = {
+                            'rt': rt_value,
+                            'date': date_value
+                        }
+                        # Remove _id if exists to avoid conflicts
+                        if '_id' in record:
+                            del record['_id']
+                        
+                        result = collection.update_one(
+                            filter_query,
+                            {'$set': record},
+                            upsert=True
+                        )
+                        if result.upserted_id:
+                            inserted_count += 1
+                        else:
+                            updated_count += 1
+                    else:
+                        collection.insert_one(record)
+                        inserted_count += 1
                 
-                if rt_value and date_value:
+                elif record.get('symbol') and record.get('analysis_date'):
+                    # সিম্বল এবং তারিখ ভিত্তিতে upsert
                     filter_query = {
-                        'rt': rt_value,
-                        'date': date_value
+                        'symbol': record['symbol'],
+                        'analysis_date': record['analysis_date']
                     }
+                    # Remove _id if exists to avoid conflicts
+                    if '_id' in record:
+                        del record['_id']
+                    
+                    result = collection.update_one(
+                        filter_query,
+                        {'$set': record},
+                        upsert=True
+                    )
+                    if result.upserted_id:
+                        inserted_count += 1
+                    else:
+                        updated_count += 1
+                elif record.get('symbol'):
+                    # শুধু সিম্বল ভিত্তিতে upsert (যেসব ফাইলে তারিখ নেই)
+                    filter_query = {'symbol': record['symbol']}
+                    if '_id' in record:
+                        del record['_id']
+                    
                     result = collection.update_one(
                         filter_query,
                         {'$set': record},
@@ -184,77 +281,70 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
                     else:
                         updated_count += 1
                 else:
+                    # কোন ইউনিক কী না থাকলে সরাসরি ইনসার্ট
                     collection.insert_one(record)
                     inserted_count += 1
-            
-            elif symbol and analysis_date:
-                # সিম্বল এবং তারিখ ভিত্তিতে upsert
-                filter_query = {
-                    'symbol': symbol,
-                    'analysis_date': analysis_date
-                }
-                result = collection.update_one(
-                    filter_query,
-                    {'$set': record},
-                    upsert=True
-                )
-                if result.upserted_id:
-                    inserted_count += 1
-                else:
-                    updated_count += 1
-            elif symbol:
-                # শুধু সিম্বল ভিত্তিতে upsert (যেসব ফাইলে তারিখ নেই)
-                filter_query = {'symbol': symbol}
-                result = collection.update_one(
-                    filter_query,
-                    {'$set': record},
-                    upsert=True
-                )
-                if result.upserted_id:
-                    inserted_count += 1
-                else:
-                    updated_count += 1
-            else:
-                # কোন ইউনিক কী না থাকলে সরাসরি ইনসার্ট
-                collection.insert_one(record)
-                inserted_count += 1
+                    
+            except DuplicateKeyError:
+                # Skip duplicates gracefully
+                updated_count += 1
+            except Exception as e:
+                print(f"   ⚠️ Error upserting record: {e}")
+                error_count += 1
+                continue
 
         print(f"   ✅ Inserted: {inserted_count} new records")
         print(f"   🔄 Updated: {updated_count} existing records")
+        if error_count > 0:
+            print(f"   ⚠️ Errors: {error_count} records failed")
         print(f"   📚 All historical data preserved (no deletion)")
 
-        # ইনডেক্স তৈরি
-        if 'symbol' in df.columns or collection_name == "strong_ratio_signals":
+        # ইনডেক্স তৈরি (with error handling)
+        try:
+            if 'symbol' in df.columns or collection_name == "strong_ratio_signals":
+                if collection_name == "strong_ratio_signals":
+                    collection.create_index([('rt', 1)], background=True)
+                    collection.create_index([('date', -1)], background=True)
+                else:
+                    collection.create_index([('symbol', 1)], background=True)
+            
+            if 'analysis_date' in df.columns or is_ai_signals or is_swrsi or has_date:
+                collection.create_index([('analysis_date', -1)], background=True)
+            
+            if is_ai_signals:
+                collection.create_index([('final_combined_score', -1)], background=True)
+                collection.create_index([('final_signal', 1)], background=True)
+            
+            if is_swrsi:
+                collection.create_index([('composite_score', -1)], background=True)
+                collection.create_index([('sector', 1)], background=True)
+                collection.create_index([('weekly_strength_label', 1)], background=True)
+            
+            # ইউনিক কম্পাউন্ড ইনডেক্স (ডুপ্লিকেট প্রতিরোধের জন্য)
+            if 'symbol' in df.columns and not is_ai_signals:
+                try:
+                    collection.create_index([('symbol', 1), ('analysis_date', 1)], unique=True, sparse=True, background=True)
+                except Exception as e:
+                    # Index might already exist
+                    pass
+            
             if collection_name == "strong_ratio_signals":
-                collection.create_index([('rt', 1)])
-                collection.create_index([('date', -1)])
-            else:
-                collection.create_index([('symbol', 1)])
-        
-        if 'analysis_date' in df.columns or is_ai_signals or is_swrsi or has_date:
-            collection.create_index([('analysis_date', -1)])
-        
-        if is_ai_signals:
-            collection.create_index([('final_combined_score', -1)])
-            collection.create_index([('final_signal', 1)])
-        
-        if is_swrsi:
-            collection.create_index([('composite_score', -1)])
-            collection.create_index([('sector', 1)])
-            collection.create_index([('weekly_strength_label', 1)])
-        
-        # ইউনিক কম্পাউন্ড ইনডেক্স (ডুপ্লিকেট প্রতিরোধের জন্য)
-        if 'symbol' in df.columns:
-            collection.create_index([('symbol', 1), ('analysis_date', 1)], unique=True, sparse=True)
-        
-        if collection_name == "strong_ratio_signals":
-            collection.create_index([('rt', 1), ('date', 1)], unique=True, sparse=True)
-        
-        print(f"   ✅ Indexes created")
+                try:
+                    collection.create_index([('rt', 1), ('date', 1)], unique=True, sparse=True, background=True)
+                except Exception as e:
+                    # Index might already exist
+                    pass
+            
+            print(f"   ✅ Indexes verified")
+        except Exception as e:
+            print(f"   ⚠️ Index creation note: {e}")
 
         return True
+        
     except Exception as e:
         print(f"   ❌ MongoDB Save Error: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 # =========================================================
@@ -269,9 +359,12 @@ def check_all_collections(client):
 
     for file_config in FILES_TO_SAVE:
         collection_name = file_config["collection"]
-        collection = db[collection_name]
-        count = collection.count_documents({})
-        print(f"   📂 {collection_name}: {count} documents")
+        try:
+            collection = db[collection_name]
+            count = collection.count_documents({})
+            print(f"   📂 {collection_name}: {count} documents")
+        except Exception as e:
+            print(f"   ❌ {collection_name}: Error - {e}")
 
     print("=" * 50)
 
@@ -296,6 +389,7 @@ def main():
 
     total_saved = 0
     total_skipped = 0
+    total_failed = 0
 
     # ২. প্রতিটি ফাইল প্রসেস
     for file_config in FILES_TO_SAVE:
@@ -317,69 +411,86 @@ def main():
         df = load_csv_data(filepath)
 
         if df is None:
+            print(f"   ⚠️ Skipped: File not found or empty")
             total_skipped += 1
             continue
 
         # MongoDB-তে সেইভ
-        success = save_to_mongodb(
-            df, client, collection_name, 
-            has_date=has_date, 
-            date_column=date_column,
-            is_ai_signals=is_ai_signals,
-            is_swrsi=is_swrsi
-        )
+        try:
+            success = save_to_mongodb(
+                df, client, collection_name, 
+                has_date=has_date, 
+                date_column=date_column,
+                is_ai_signals=is_ai_signals,
+                is_swrsi=is_swrsi
+            )
 
-        if success:
-            total_saved += 1
-        else:
-            total_skipped += 1
+            if success:
+                total_saved += 1
+                print(f"   ✅ Successfully saved to MongoDB")
+            else:
+                total_failed += 1
+                print(f"   ❌ Failed to save to MongoDB")
+        except Exception as e:
+            total_failed += 1
+            print(f"   ❌ Exception: {e}")
 
     # ৩. স্ট্যাটাস চেক
-    check_all_collections(client)
+    try:
+        check_all_collections(client)
+    except Exception as e:
+        print(f"⚠️ Could not check collections: {e}")
 
     # ৪. SWRSI Summary (extra)
-    db = client[DATABASE_NAME]
-    swrsi_col = db["swrsi_signals"]
-    if swrsi_col.count_documents({}) > 0:
-        print(f"\n📊 SWRSI SIGNALS SUMMARY:")
-        print("-" * 40)
+    try:
+        db = client[DATABASE_NAME]
+        swrsi_col = db["swrsi_signals"]
+        if swrsi_col.count_documents({}) > 0:
+            print(f"\n📊 SWRSI SIGNALS SUMMARY:")
+            print("-" * 40)
 
-        # Total signals
-        total = swrsi_col.count_documents({})
-        print(f"   Total Signals: {total}")
+            # Total signals
+            total = swrsi_col.count_documents({})
+            print(f"   Total Signals: {total}")
 
-        # By strength
-        for strength in ['Strong', 'Moderate', 'Weak']:
-            count = swrsi_col.count_documents({'weekly_strength_label': strength})
-            print(f"   {strength}: {count}")
+            # By strength
+            for strength in ['Strong', 'Moderate', 'Weak']:
+                count = swrsi_col.count_documents({'weekly_strength_label': strength})
+                print(f"   {strength}: {count}")
 
-        # High score signals
-        high_score = swrsi_col.count_documents({'composite_score': {'$gte': 70}})
-        print(f"   High Score (≥70): {high_score}")
+            # High score signals
+            high_score = swrsi_col.count_documents({'composite_score': {'$gte': 70}})
+            print(f"   High Score (≥70): {high_score}")
 
-        # By sector
-        sectors = swrsi_col.distinct('sector')
-        print(f"   Sectors: {len(sectors)} ({', '.join(sectors[:5])}{'...' if len(sectors) > 5 else ''})")
+            # By sector
+            sectors = swrsi_col.distinct('sector')
+            print(f"   Sectors: {len(sectors)} ({', '.join(sectors[:5])}{'...' if len(sectors) > 5 else ''})")
+    except Exception as e:
+        print(f"⚠️ Could not generate SWRSI summary: {e}")
 
     # ৫. Strong Ratio Summary (extra)
-    strong_ratio_col = db["strong_ratio_signals"]
-    if strong_ratio_col.count_documents({}) > 0:
-        print(f"\n📊 STRONG RATIO SIGNALS SUMMARY:")
-        print("-" * 40)
-        
-        total = strong_ratio_col.count_documents({})
-        print(f"   Total Records: {total}")
-        
-        # Date range
-        dates = strong_ratio_col.distinct('date')
-        if dates:
-            print(f"   Dates: {', '.join(sorted(dates)[:5])}{'...' if len(dates) > 5 else ''}")
-        
-        # Sample records
-        sample = strong_ratio_col.find().limit(3)
-        print(f"   Sample Data (first 3 records):")
-        for doc in sample:
-            print(f"     - Date: {doc.get('date', 'N/A')}, RT: {doc.get('rt', 'N/A')}, BBR: {doc.get('bbr', 'N/A')}")
+    try:
+        strong_ratio_col = db["strong_ratio_signals"]
+        if strong_ratio_col.count_documents({}) > 0:
+            print(f"\n📊 STRONG RATIO SIGNALS SUMMARY:")
+            print("-" * 40)
+            
+            total = strong_ratio_col.count_documents({})
+            print(f"   Total Records: {total}")
+            
+            # Date range
+            dates = strong_ratio_col.distinct('date')
+            if dates:
+                sorted_dates = sorted(dates)[:5]
+                print(f"   Dates: {', '.join(sorted_dates)}{'...' if len(dates) > 5 else ''}")
+            
+            # Sample records
+            sample = strong_ratio_col.find().limit(3)
+            print(f"   Sample Data (first 3 records):")
+            for doc in sample:
+                print(f"     - Date: {doc.get('date', 'N/A')}, RT: {doc.get('rt', 'N/A')}, BBR: {doc.get('bbr', 'N/A')}")
+    except Exception as e:
+        print(f"⚠️ Could not generate Strong Ratio summary: {e}")
 
     # ৬. ক্লোজ
     client.close()
@@ -388,7 +499,14 @@ def main():
     print(f"✅ SCRIPT COMPLETED")
     print(f"   📂 Saved: {total_saved} files")
     print(f"   ⚠️ Skipped: {total_skipped} files")
+    print(f"   ❌ Failed: {total_failed} files")
     print("=" * 70)
+    
+    # Exit with appropriate code
+    if total_failed > 0:
+        sys.exit(1)
+    else:
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()
