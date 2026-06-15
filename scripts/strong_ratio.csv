@@ -1,613 +1,70 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from pymongo import MongoClient
-from datetime import datetime
+import csv
 import os
-import json
-from dotenv import load_dotenv
-import threading
-import time
-import requests
-from contextlib import asynccontextmanager
 
-load_dotenv()
+# Input and output file paths
+input_file = "./output/ai_signal/daily_buy.csv"
+final_output = "./output/ai_signal/strong_ratio.csv"
 
-# =========================================================
-# CONFIGURATION
-# =========================================================
-MONGODB_URI = os.environ.get("MONGODBEMAIL_URI", "")
-DATABASE_NAME = "swing_trading_db"
-COLLECTION_NAME = "strong_ratio_signals"
+# Create output directory if it doesn't exist
+os.makedirs(os.path.dirname(final_output), exist_ok=True)
 
-# Create static directory
-os.makedirs("static", exist_ok=True)
+# Read and process data
+rt_value = None
+bbr_value = None
+strong_value = None
 
-# =========================================================
-# DEFINE STATIC FILES CONTENT
-# =========================================================
+with open(input_file, 'r', newline='', encoding='utf-8') as infile:
+    reader = csv.DictReader(infile)
 
-# 1. manifest.json
-MANIFEST_JSON = {
-    "name": "Strong Ratio Signals Dashboard",
-    "short_name": "Strong Ratio",
-    "description": "Real-time MongoDB dashboard for strong ratio signals",
-    "start_url": "/",
-    "display": "standalone",
-    "theme_color": "#667eea",
-    "background_color": "#ffffff",
-    "orientation": "portrait-primary",
-    "scope": "/",
-    "lang": "en",
-    "icons": [
-        {
-            "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='192' height='192' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' fill='%23667eea'/%3E%3Ccircle cx='96' cy='96' r='76.8' fill='%23764ba2'/%3E%3Ctext x='96' y='120' font-size='64' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold'%3ESR%3C/text%3E%3C/svg%3E",
-            "sizes": "192x192",
-            "type": "image/svg+xml",
-            "purpose": "any maskable"
-        },
-        {
-            "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='512' height='512' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' fill='%23667eea'/%3E%3Ccircle cx='256' cy='256' r='204.8' fill='%23764ba2'/%3E%3Ctext x='256' y='320' font-size='170' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold'%3ESR%3C/text%3E%3C/svg%3E",
-            "sizes": "512x512",
-            "type": "image/svg+xml",
-            "purpose": "any maskable"
-        }
-    ]
+    # Check if required columns exist
+    if not all(col in reader.fieldnames for col in ['rt', 'bbr', 'strong']):
+        raise ValueError("Input file must have rt, bbr, strong columns")
+
+    for row in reader:
+        # Take only the first non-empty value for each column
+        if rt_value is None and row.get('rt') and row['rt'].strip():
+            rt_value = row['rt'].strip()
+        
+        if bbr_value is None and row.get('bbr') and row['bbr'].strip():
+            bbr_value = row['bbr'].strip()
+        
+        if strong_value is None and row.get('strong') and row['strong'].strip():
+            strong_value = row['strong'].strip()
+        
+        # Stop if we have found all three values
+        if rt_value is not None and bbr_value is not None and strong_value is not None:
+            break
+
+# Use empty string if no value found
+rt_value = rt_value if rt_value else ''
+bbr_value = bbr_value if bbr_value else ''
+strong_value = strong_value if strong_value else ''
+
+# Create single row
+new_row = {
+    'rt': rt_value,
+    'bbr': bbr_value,
+    'strong': strong_value
 }
 
-# 2. Service Worker (sw.js)
-SERVICE_WORKER_JS = '''// Strong Ratio Dashboard Service Worker
-const CACHE_NAME = 'strong-ratio-v1.0.0';
+# Write to final CSV file (only 1 row)
+with open(final_output, 'w', newline='', encoding='utf-8') as outfile:
+    fieldnames = ['rt', 'bbr', 'strong']
+    writer = csv.DictWriter(outfile, fieldnames=fieldnames)
 
-self.addEventListener('install', event => {
-    console.log('[SW] Installing...');
-    event.waitUntil(self.skipWaiting());
-});
+    writer.writeheader()
+    writer.writerow(new_row)
 
-self.addEventListener('activate', event => {
-    console.log('[SW] Activating...');
-    event.waitUntil(self.clients.claim());
-});
+# Console report
+print(f"\n{'='*50}")
+print(f"Data saved - Single value per column")
+print(f"{'='*50}")
+print(f"📊 Output (single row):")
+print(f"   RT: {rt_value}")
+print(f"   BBR: {bbr_value}")
+print(f"   STRONG: {strong_value}")
 
-self.addEventListener('fetch', event => {
-    if (event.request.method !== 'GET') {
-        event.respondWith(fetch(event.request));
-        return;
-    }
-    
-    if (event.request.url.includes('/api/')) {
-        event.respondWith(fetch(event.request));
-        return;
-    }
-    
-    event.respondWith(
-        caches.match(event.request).then(cached => {
-            return cached || fetch(event.request);
-        })
-    );
-});
-'''
-
-# 3. Offline HTML
-OFFLINE_HTML = '''<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Offline - Strong Ratio Dashboard</title>
-    <style>
-        body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            font-family: Arial, sans-serif;
-        }
-        .container {
-            background: white;
-            border-radius: 20px;
-            padding: 40px;
-            text-align: center;
-            max-width: 500px;
-        }
-        button {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 10px 30px;
-            border-radius: 25px;
-            cursor: pointer;
-            margin-top: 20px;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>📡 You're Offline</h1>
-        <p>Please check your internet connection</p>
-        <button onclick="location.reload()">Retry</button>
-    </div>
-</body>
-</html>'''
-
-def create_static_files():
-    """Create all static files"""
-    with open("static/manifest.json", "w") as f:
-        json.dump(MANIFEST_JSON, f, indent=2)
-    print("✅ Created static/manifest.json")
-    
-    with open("static/sw.js", "w") as f:
-        f.write(SERVICE_WORKER_JS)
-    print("✅ Created static/sw.js")
-    
-    with open("static/offline.html", "w") as f:
-        f.write(OFFLINE_HTML)
-    print("✅ Created static/offline.html")
-
-# Create static files
-create_static_files()
-
-# =========================================================
-# MONGODB CONNECTION
-# =========================================================
-def get_db():
-    """Get MongoDB database connection"""
-    if not MONGODB_URI:
-        print("❌ MONGODBEMAIL_URI not set!")
-        return None
-    
-    try:
-        client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=10000)
-        client.admin.command('ping')
-        print("✅ MongoDB Connected")
-        return client[DATABASE_NAME]
-    except Exception as e:
-        print(f"❌ MongoDB Error: {e}")
-        return None
-
-# =========================================================
-# HELPER FUNCTIONS
-# =========================================================
-def calculate_bullish_probability(bbr):
-    """Calculate bullish probability based on BBR value"""
-    if bbr is None:
-        return "N/A"
-    try:
-        bbr_val = float(bbr)
-        if bbr_val > 3.0:
-            return "70%"
-        elif bbr_val > 2.5:
-            return "60%"
-        elif bbr_val > 2.0:
-            return "50%"
-        elif bbr_val > 1.5:
-            return "40%"
-        else:
-            return "30%"
-    except:
-        return "N/A"
-
-def parse_strong_ratio(strong_str):
-    """Parse strong field (format: '19:3' -> ratio 6.33)"""
-    if not strong_str or strong_str == '-':
-        return None
-    try:
-        if ':' in str(strong_str):
-            parts = str(strong_str).split(':')
-            if len(parts) == 2:
-                numerator = float(parts[0])
-                denominator = float(parts[1])
-                if denominator > 0:
-                    return numerator / denominator
-        return None
-    except:
-        return None
-
-# =========================================================
-# FASTAPI APP
-# =========================================================
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    print("=" * 60)
-    print("🚀 Strong Ratio Dashboard Starting...")
-    print("=" * 60)
-    db = get_db()
-    if db:
-        collection = db[COLLECTION_NAME]
-        count = collection.count_documents({})
-        print(f"📊 Found {count} records in database")
-    yield
-    print("🛑 Shutting down...")
-
-app = FastAPI(title="Strong Ratio Dashboard", version="1.0.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
-# Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# =========================================================
-# HTML TEMPLATE
-# =========================================================
-HTML_TEMPLATE = '''<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Strong Ratio Signals Dashboard</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.datatables.net/1.13.4/css/dataTables.bootstrap5.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
-    <style>
-        body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-        .container-main {
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.1);
-            padding: 30px;
-        }
-        .header {
-            text-align: center;
-            margin-bottom: 30px;
-            padding-bottom: 20px;
-            border-bottom: 3px solid #667eea;
-        }
-        .stats-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border-radius: 15px;
-            padding: 20px;
-            text-align: center;
-            transition: transform 0.3s;
-        }
-        .stats-card:hover { transform: translateY(-5px); }
-        .stats-card h3 { font-size: 32px; font-weight: bold; margin: 0; }
-        .stats-card p { margin: 10px 0 0; opacity: 0.9; }
-        .btn-refresh {
-            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-            color: white;
-            border: none;
-            padding: 10px 30px;
-            border-radius: 25px;
-            font-weight: bold;
-            transition: all 0.3s;
-        }
-        .btn-refresh:hover { transform: translateY(-2px); }
-        .btn-delete {
-            background: #dc3545;
-            color: white;
-            border: none;
-            padding: 5px 12px;
-            border-radius: 5px;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-        .btn-delete:hover { background: #c82333; transform: scale(1.05); }
-        .badge-bullish { background: #28a745; color: white; padding: 5px 10px; border-radius: 5px; }
-        .badge-bearish { background: #dc3545; color: white; padding: 5px 10px; border-radius: 5px; }
-        .badge-neutral { background: #ffc107; color: #333; padding: 5px 10px; border-radius: 5px; }
-        .table-container { overflow-x: auto; margin-top: 30px; }
-        #dataTable { font-size: 14px; }
-        #dataTable th { background: #667eea; color: white; text-align: center; }
-        #dataTable td { text-align: center; vertical-align: middle; }
-        @media (max-width: 768px) {
-            .container-main { padding: 15px; }
-            #dataTable { font-size: 11px; }
-            .stats-card h3 { font-size: 24px; }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="container-main">
-            <div class="header">
-                <h1>📊 Strong Ratio Signals Dashboard</h1>
-                <p>Real-time Data | MongoDB | Auto-refresh</p>
-            </div>
-            
-            <div class="row mb-4">
-                <div class="col-md-4 col-sm-6 mb-3">
-                    <div class="stats-card">
-                        <p>📈 Total Records</p>
-                        <h3 id="totalRecords">0</h3>
-                    </div>
-                </div>
-                <div class="col-md-4 col-sm-6 mb-3">
-                    <div class="stats-card">
-                        <p>⭐ Avg Strong Ratio</p>
-                        <h3 id="avgStrongRatio">0.00</h3>
-                    </div>
-                </div>
-                <div class="col-md-4 col-sm-6 mb-3">
-                    <div class="stats-card">
-                        <p>🕐 Last Update</p>
-                        <h3 id="lastUpdate">-</h3>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="text-center mb-3">
-                <button class="btn-refresh" onclick="refreshData()">🔄 Refresh Data</button>
-            </div>
-            
-            <div class="table-container">
-                <table id="dataTable" class="table table-bordered table-hover">
-                    <thead>
-                        <tr>
-                            <th>#</th>
-                            <th>RT</th>
-                            <th>BBR</th>
-                            <th>Strong</th>
-                            <th>Strong Ratio</th>
-                            <th>Bullish Prob</th>
-                            <th>Saved At</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td colspan="8" class="text-center">
-                                <div class="spinner-border text-primary"></div><br>Loading...
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-            
-            <div class="footer text-center mt-4 pt-3 border-top">
-                <p>🚀 FastAPI + MongoDB | Auto-refresh every 3 minutes</p>
-            </div>
-        </div>
-    </div>
-    
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
-    <script src="https://cdn.datatables.net/1.13.4/js/dataTables.bootstrap5.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    
-    <script>
-        let dataTable;
-        
-        function refreshData() { loadData(); }
-        
-        function loadData() {
-            $.ajax({
-                url: '/api/data',
-                method: 'GET',
-                timeout: 30000,
-                success: function(data) {
-                    if (data.error) { 
-                        showError(data.error); 
-                        return; 
-                    }
-                    updateStats(data);
-                    renderTable(data);
-                },
-                error: function(xhr, status, error) {
-                    showError('Failed to load data: ' + error);
-                }
-            });
-        }
-        
-        function updateStats(data) {
-            document.getElementById('totalRecords').innerText = data.length;
-            
-            let totalRatio = 0, ratioCount = 0;
-            data.forEach(d => {
-                if (d.strong_ratio && !isNaN(d.strong_ratio)) {
-                    totalRatio += parseFloat(d.strong_ratio);
-                    ratioCount++;
-                }
-            });
-            let avgRatio = ratioCount > 0 ? (totalRatio / ratioCount).toFixed(2) : '0.00';
-            document.getElementById('avgStrongRatio').innerHTML = avgRatio;
-            
-            if (data.length > 0 && data[0].saved_at) {
-                let lastDate = new Date(data[0].saved_at).toLocaleString();
-                document.getElementById('lastUpdate').innerHTML = lastDate;
-            }
-        }
-        
-        function renderTable(data) {
-            const tbody = $('#dataTable tbody');
-            tbody.empty();
-            
-            if (data.length === 0) {
-                tbody.html('<tr><td colspan="8" class="text-center">No data available</td></tr>');
-                if (dataTable) dataTable.destroy();
-                return;
-            }
-            
-            data.sort((a,b) => new Date(b.saved_at) - new Date(a.saved_at));
-            
-            data.forEach((item, idx) => {
-                let strongRatioDisplay = item.strong_ratio ? parseFloat(item.strong_ratio).toFixed(2) : '-';
-                let bullishClass = 'badge-neutral';
-                let bullishText = item.bullish_probability || 'N/A';
-                
-                if (bullishText !== 'N/A') {
-                    let num = parseFloat(bullishText);
-                    if (num >= 60) bullishClass = 'badge-bearish';
-                    else if (num >= 45) bullishClass = 'badge-neutral';
-                    else bullishClass = 'badge-bullish';
-                }
-                
-                let savedDate = item.saved_at ? new Date(item.saved_at).toLocaleString() : '-';
-                
-                let row = `
-                    <tr>
-                        <td><strong>${idx + 1}</strong></td>
-                        <td><code>${item.rt || '-'}</code></td>
-                        <td>${item.bbr ? item.bbr.toFixed(2) : '-'}</td>
-                        <td>${item.strong || '-'}</td>
-                        <td><strong>${strongRatioDisplay}</strong></td>
-                        <td><span class="${bullishClass}">${bullishText}</span></td>
-                        <td><small>${savedDate}</small></td>
-                        <td><button class="btn-delete" onclick="deleteRecord('${item.rt}')">🗑️ Delete</button></td>
-                    </tr>
-                `;
-                tbody.append(row);
-            });
-            
-            if (dataTable) dataTable.destroy();
-            dataTable = $('#dataTable').DataTable({
-                pageLength: 25,
-                responsive: true,
-                order: [[6, 'desc']],
-                columnDefs: [{ orderable: false, targets: [7] }]
-            });
-        }
-        
-        function deleteRecord(rt) {
-            Swal.fire({
-                title: 'Confirm Delete',
-                html: `Delete record for <strong>${rt}</strong>?`,
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonColor: '#dc3545',
-                confirmButtonText: 'Delete'
-            }).then(result => {
-                if (result.isConfirmed) {
-                    $.ajax({
-                        url: `/api/delete/${encodeURIComponent(rt)}`,
-                        method: 'DELETE',
-                        success: res => { 
-                            Swal.fire('Deleted!', res.message, 'success'); 
-                            loadData(); 
-                        },
-                        error: () => Swal.fire('Error!', 'Delete failed', 'error')
-                    });
-                }
-            });
-        }
-        
-        function showError(msg) { 
-            Swal.fire('Error', msg, 'error');
-        }
-        
-        $(document).ready(() => { 
-            loadData(); 
-            setInterval(loadData, 180000);
-        });
-    </script>
-</body>
-</html>'''
-
-# =========================================================
-# API ROUTES
-# =========================================================
-@app.get("/", response_class=HTMLResponse)
-async def index():
-    return HTML_TEMPLATE
-
-@app.get("/api/data")
-async def get_data():
-    """Fetch data from MongoDB and transform to match UI requirements"""
-    db = get_db()
-    if not db:
-        raise HTTPException(500, "Database connection failed")
-    
-    try:
-        collection = db[COLLECTION_NAME]
-        documents = list(collection.find({}, {'_id': 0}))
-        
-        transformed_data = []
-        for doc in documents:
-            strong_ratio = parse_strong_ratio(doc.get('strong'))
-            bullish_prob = calculate_bullish_probability(doc.get('bbr'))
-            
-            transformed_data.append({
-                'rt': doc.get('rt', '-'),
-                'bbr': doc.get('bbr', 0),
-                'strong': doc.get('strong', '-'),
-                'strong_ratio': strong_ratio,
-                'bullish_probability': bullish_prob,
-                'saved_at': doc.get('saved_at', datetime.now().isoformat())
-            })
-        
-        print(f"✅ Retrieved {len(transformed_data)} records")
-        return transformed_data
-        
-    except Exception as e:
-        print(f"❌ Error fetching data: {e}")
-        raise HTTPException(500, str(e))
-
-@app.delete("/api/delete/{rt}")
-async def delete_by_rt(rt: str):
-    """Delete a record by RT value"""
-    db = get_db()
-    if not db:
-        raise HTTPException(500, "Database connection failed")
-    
-    result = db[COLLECTION_NAME].delete_one({'rt': rt})
-    if result.deleted_count > 0:
-        return {'success': True, 'message': f'Deleted record for {rt}'}
-    raise HTTPException(404, f'Record not found for RT: {rt}')
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    db = get_db()
-    if not db:
-        return {'status': 'unhealthy', 'mongodb': 'disconnected'}
-    
-    try:
-        count = db[COLLECTION_NAME].count_documents({})
-        return {
-            'status': 'healthy',
-            'mongodb': 'connected',
-            'records': count,
-            'timestamp': datetime.now().isoformat()
-        }
-    except Exception as e:
-        return {'status': 'unhealthy', 'error': str(e)}
-
-@app.get("/api/stats")
-async def get_stats():
-    """Get statistics about the data"""
-    db = get_db()
-    if not db:
-        raise HTTPException(500, "Database connection failed")
-    
-    collection = db[COLLECTION_NAME]
-    total = collection.count_documents({})
-    
-    all_docs = list(collection.find({}, {'strong': 1}))
-    ratios = []
-    for doc in all_docs:
-        ratio = parse_strong_ratio(doc.get('strong'))
-        if ratio:
-            ratios.append(ratio)
-    
-    avg_ratio = sum(ratios) / len(ratios) if ratios else 0
-    
-    return {
-        'total_records': total,
-        'avg_strong_ratio': round(avg_ratio, 2),
-        'timestamp': datetime.now().isoformat()
-    }
-
-# =========================================================
-# MAIN
-# =========================================================
-if __name__ == "__main__":
-    import uvicorn
-    
-    port = int(os.environ.get('PORT', 8000))
-    
-    print("=" * 60)
-    print("📊 STRONG RATIO SIGNALS DASHBOARD")
-    print("=" * 60)
-    print(f"🌐 Server: http://0.0.0.0:{port}")
-    print(f"❤️ Health: http://0.0.0.0:{port}/health")
-    print(f"📈 Stats: http://0.0.0.0:{port}/api/stats")
-    print(f"📚 API Docs: http://0.0.0.0:{port}/docs")
-    print("=" * 60)
-    
-    uvicorn.run(app, host='0.0.0.0', port=port)
+print(f"\n{'='*50}")
+print(f"File saved: {final_output}")
+print(f"Total output rows: 1")
+print(f"{'='*50}")
