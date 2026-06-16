@@ -21,7 +21,8 @@ FILES_TO_SAVE = [
     {
         "path": "./output/ai_signal/FINAL_AI_SIGNALS.csv",
         "collection": "daily_ai_signals",
-        "has_date": False,
+        "has_date": True,
+        "date_column": "date",
         "description": "AI Trading Signals (LLM + XGBoost + PPO + Elliott Wave)"
     },
     {
@@ -99,6 +100,35 @@ def load_csv_data(filepath):
         return None
 
 # =========================================================
+# হেল্পার ফাংশন: তারিখ পার্স করা
+# =========================================================
+def parse_date_to_string(date_val):
+    """বিভিন্ন ফরম্যাটের তারিখকে YYYY-MM-DD স্ট্রিং-এ কনভার্ট করে"""
+    if date_val is None or pd.isna(date_val):
+        return None
+    
+    try:
+        if isinstance(date_val, datetime):
+            return date_val.strftime('%Y-%m-%d')
+        elif isinstance(date_val, str):
+            # বিভিন্ন ফরম্যাট চেক করা
+            for fmt in ['%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%d-%m-%Y', '%m/%d/%Y', '%Y%m%d']:
+                try:
+                    parsed_date = datetime.strptime(date_val.strip(), fmt)
+                    return parsed_date.strftime('%Y-%m-%d')
+                except:
+                    continue
+            # যদি কোনো ফরম্যাট ম্যাচ না করে, তাহলে pandas দিয়ে চেষ্টা
+            try:
+                return pd.to_datetime(date_val).strftime('%Y-%m-%d')
+            except:
+                return None
+        else:
+            return pd.to_datetime(date_val).strftime('%Y-%m-%d')
+    except Exception:
+        return None
+
+# =========================================================
 # MongoDB-তে সেইভ (Upsert - কোন ডাটা ডিলিট হবে না)
 # =========================================================
 def save_to_mongodb(df, client, collection_name, has_date=False, date_column=None, is_ai_signals=False, is_swrsi=False):
@@ -138,36 +168,48 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
                 record['saved_at'] = datetime.now().isoformat()
                 record['saved_timestamp'] = datetime.now()
 
-                # Date কলাম থেকে analysis_date বের করুন
-                if has_date and date_column and date_column in df.columns:
-                    try:
-                        date_val = record.get(date_column)
-                        if date_val and not pd.isna(date_val):
-                            # Parse date properly
-                            if isinstance(date_val, str):
-                                # Try different date formats
-                                for fmt in ['%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%d-%m-%Y', '%m/%d/%Y']:
-                                    try:
-                                        parsed_date = datetime.strptime(date_val, fmt)
-                                        record['analysis_date'] = parsed_date.strftime('%Y-%m-%d')
-                                        break
-                                    except:
-                                        continue
-                                else:
-                                    # If no format matches, use today
-                                    record['analysis_date'] = today
-                            else:
-                                # Already a datetime object
-                                record['analysis_date'] = pd.to_datetime(date_val).strftime('%Y-%m-%d')
-                        else:
-                            record['analysis_date'] = today
-                    except Exception as e:
-                        print(f"   ⚠️ Date conversion error for record {idx}: {e}")
-                        record['analysis_date'] = today
+                # =============================================
+                # analysis_date নির্ধারণ (সবার জন্য ইউনিফাইড লজিক)
+                # =============================================
+                analysis_date = None
+                
+                # ১ম প্রাধান্য: কনফিগার করা date_column থেকে
+                if has_date and date_column:
+                    date_val = record.get(date_column)
+                    if date_val and not pd.isna(date_val):
+                        analysis_date = parse_date_to_string(date_val)
+                
+                # ২য় প্রাধান্য: CSV-তে থাকা অন্যান্য সম্ভাব্য date কলাম
+                if not analysis_date:
+                    possible_date_cols = ['date', 'Date', 'signal_date', 'current_date', 'analysis_date', 'trade_date']
+                    for col in possible_date_cols:
+                        if col in record and record.get(col) and not pd.isna(record.get(col)):
+                            analysis_date = parse_date_to_string(record.get(col))
+                            if analysis_date:
+                                break
+                
+                # ৩য় প্রাধান্য: AI Signals এর জন্য বিশেষ হ্যান্ডলিং
+                if not analysis_date and is_ai_signals:
+                    # CSV-তে 'date' কলাম থাকলে সেটা ব্যবহার করো
+                    if 'date' in record and record.get('date') and not pd.isna(record.get('date')):
+                        analysis_date = parse_date_to_string(record.get('date'))
+                    elif 'Date' in record and record.get('Date') and not pd.isna(record.get('Date')):
+                        analysis_date = parse_date_to_string(record.get('Date'))
+                
+                # ৪র্থ প্রাধান্য: SWRSI এর জন্য signal_date ব্যবহার
+                if not analysis_date and is_swrsi:
+                    if 'signal_date' in record and record.get('signal_date') and not pd.isna(record.get('signal_date')):
+                        analysis_date = parse_date_to_string(record.get('signal_date'))
+                
+                # ৫ম প্রাধান্য: সব ব্যর্থ হলে আজকের তারিখ
+                if not analysis_date:
+                    analysis_date = today
+                    print(f"   ⚠️ Record {idx}: No date found, using today ({today})")
+                
+                record['analysis_date'] = analysis_date
 
                 # AI Signals এর জন্য extra ফিল্ড
                 if is_ai_signals:
-                    record['analysis_date'] = today
                     record['analysis_datetime'] = today_datetime
                     # Ensure final signal is properly set
                     if 'final_signal' not in record or pd.isna(record.get('final_signal')):
@@ -175,12 +217,7 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
 
                 # SWRSI signals এর জন্য extra ফিল্ড
                 if is_swrsi:
-                    if 'signal_date' not in record or pd.isna(record.get('signal_date')):
-                        record['analysis_date'] = today
-                    else:
-                        record['analysis_date'] = record.get('signal_date', today)
                     record['analysis_datetime'] = today_datetime
-                    
                     # Ensure required fields for SWRSI
                     if 'composite_score' not in record or pd.isna(record.get('composite_score')):
                         record['composite_score'] = 0
@@ -195,7 +232,6 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
                     if 'rt' not in record or pd.isna(record.get('rt')):
                         print(f"   ⚠️ Skipping record {idx}: missing rt")
                         continue
-                    record['analysis_date'] = record.get('date', today)
 
                 # NaN ভ্যালুগুলো None-এ কনভার্ট (MongoDB compatible)
                 for key, value in record.items():
@@ -247,7 +283,7 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
                         inserted_count += 1
                 
                 elif record.get('symbol') and record.get('analysis_date'):
-                    # সিম্বল এবং তারিখ ভিত্তিতে upsert
+                    # সিম্বল এবং analysis_date ভিত্তিতে upsert
                     filter_query = {
                         'symbol': record['symbol'],
                         'analysis_date': record['analysis_date']
@@ -266,7 +302,7 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
                     else:
                         updated_count += 1
                 elif record.get('symbol'):
-                    # শুধু সিম্বল ভিত্তিতে upsert (যেসব ফাইলে তারিখ নেই)
+                    # শুধু সিম্বল ভিত্তিতে upsert (যেসব ফাইলে analysis_date নেই)
                     filter_query = {'symbol': record['symbol']}
                     if '_id' in record:
                         del record['_id']
@@ -308,8 +344,8 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
                 else:
                     collection.create_index([('symbol', 1)], background=True)
             
-            if 'analysis_date' in df.columns or is_ai_signals or is_swrsi or has_date:
-                collection.create_index([('analysis_date', -1)], background=True)
+            # analysis_date ইনডেক্স সব collection-এর জন্য
+            collection.create_index([('analysis_date', -1)], background=True)
             
             if is_ai_signals:
                 collection.create_index([('final_combined_score', -1)], background=True)
