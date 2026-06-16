@@ -19,6 +19,38 @@ print("="*60)
 csv_path = './csv/mongodb.csv'
 os.makedirs('./csv', exist_ok=True)
 
+from datetime import datetime
+
+# STEP 1 এর পর এই লজিক যোগ করুন:
+
+# =========================
+# CHECK IF TODAY'S DATA EXISTS
+# =========================
+print("\n" + "="*60)
+print("STEP 1.5: Checking if today's data already exists...")
+print("="*60)
+
+if os.path.exists(csv_path):
+    df_existing = pd.read_csv(csv_path, encoding='utf-8-sig')
+    df_existing['date'] = pd.to_datetime(df_existing['date'])
+    
+    today = datetime.now().date()
+    latest_date = df_existing['date'].max().date()
+    
+    if latest_date == today:
+        print(f"✅ Today's data ({today}) already exists in CSV!")
+        print(f"   Latest date: {latest_date}")
+        print(f"   Total rows: {len(df_existing):,}")
+        print("   No update needed. Exiting...")
+        sys.exit(0)
+    else:
+        print(f"⚠️ Latest data is from {latest_date}")
+        print(f"   Today is {today}")
+        print("   Need to fetch new data...")
+else:
+    print("⚠️ No existing CSV found. Will create new...")
+
+# বাকি কোড চালাতে থাকবে...
 # Load existing CSV if it exists
 if os.path.exists(csv_path):
     df_existing = pd.read_csv(csv_path, encoding='utf-8-sig')
