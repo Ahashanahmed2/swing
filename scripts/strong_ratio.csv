@@ -44,7 +44,8 @@ strong_value = strong_value if strong_value else ''
 new_row = {
     'rt': rt_value,
     'bbr': bbr_value,
-    'strong': strong_value
+    'strong': strong_value,
+    'date': datetime.now().strftime('%Y-%m-%d')'
 }
 
 # Write to final CSV file (only 1 row)
