@@ -1,5 +1,6 @@
 import csv
 import os
+from datetime import datetime  # ← এই লাইন যোগ করুন
 
 # Input and output file paths
 input_file = "./output/ai_signal/daily_buy.csv"
@@ -40,17 +41,17 @@ rt_value = rt_value if rt_value else ''
 bbr_value = bbr_value if bbr_value else ''
 strong_value = strong_value if strong_value else ''
 
-# Create single row
+# Create single row with date
 new_row = {
     'rt': rt_value,
     'bbr': bbr_value,
     'strong': strong_value,
-    'date': datetime.now().strftime('%Y-%m-%d')'
+    'date': datetime.now().strftime('%Y-%m-%d')  # ← ভুল কোশ্চেন মার্ক ডিলিট করে দিয়েছি
 }
 
 # Write to final CSV file (only 1 row)
 with open(final_output, 'w', newline='', encoding='utf-8') as outfile:
-    fieldnames = ['rt', 'bbr', 'strong']
+    fieldnames = ['rt', 'bbr', 'strong', 'date']  # ← fieldnames এ date যোগ করুন
     writer = csv.DictWriter(outfile, fieldnames=fieldnames)
 
     writer.writeheader()
@@ -64,6 +65,7 @@ print(f"📊 Output (single row):")
 print(f"   RT: {rt_value}")
 print(f"   BBR: {bbr_value}")
 print(f"   STRONG: {strong_value}")
+print(f"   Date: {new_row['date']}")  # ← তারিখ দেখানোর জন্য যোগ করুন
 
 print(f"\n{'='*50}")
 print(f"File saved: {final_output}")
