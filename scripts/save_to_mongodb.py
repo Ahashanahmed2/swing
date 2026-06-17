@@ -100,12 +100,13 @@ def load_csv_data(filepath):
         return None
 
 # =========================================================
-# Sector Mapping লোড করা
+# Sector Mapping লোড করা - উন্নত ভার্সন
 # =========================================================
 def load_sector_mapping(csv_path="./csv/mongodb.csv"):
     """
     mongodb.csv ফাইল থেকে sector ডেটা লোড করে
     symbol -> sector ম্যাপিং তৈরি করে
+    উন্নত: কেস ইন্সেনসিটিভ, স্পেস ট্রিম, ডুপ্লিকেট হ্যান্ডলিং
     """
     if not os.path.exists(csv_path):
         print(f"⚠️ Sector file not found: {csv_path}")
@@ -117,33 +118,58 @@ def load_sector_mapping(csv_path="./csv/mongodb.csv"):
             print(f"⚠️ Sector file is empty: {csv_path}")
             return {}
 
+        print(f"   📄 Sector file columns: {df.columns.tolist()}")
+        print(f"   📄 Sector file rows: {len(df)}")
+
         # symbol এবং sector কলাম চেক করুন
         if 'symbol' not in df.columns or 'sector' not in df.columns:
             print(f"⚠️ Sector file missing required columns (symbol, sector)")
             print(f"   Available columns: {df.columns.tolist()}")
             return {}
 
-        # ডুপ্লিকেট সিম্বল থাকলে লেটেস্ট টা নিন
-        sector_df = df.dropna(subset=['symbol', 'sector'])
+        # ডেটা ক্লিনিং
+        df['symbol'] = df['symbol'].astype(str).str.strip().str.upper()
+        df['sector'] = df['sector'].astype(str).str.strip()
         
-        # date কলাম থাকলে সাজান
-        if 'date' in sector_df.columns:
-            sector_df = sector_df.sort_values('date', ascending=False)
+        # খালি sector বাদ দিন
+        df = df[df['sector'].notna() & (df['sector'] != '') & (df['sector'] != 'nan') & (df['sector'] != 'None')]
+        df = df[df['symbol'].notna() & (df['symbol'] != '') & (df['symbol'] != 'nan')]
+
+        # date কলাম থাকলে লেটেস্ট টা নিন
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'], errors='coerce')
+            df = df.sort_values('date', ascending=False)
+        
+        # ডুপ্লিকেট সিম্বল বাদ দিন (শুধু প্রথমটা রাখুন)
+        df = df.drop_duplicates(subset=['symbol'], keep='first')
         
         # symbol -> sector ম্যাপিং
         sector_map = {}
-        for _, row in sector_df.iterrows():
-            symbol = str(row['symbol']).strip().upper()
-            sector = str(row['sector']).strip()
-            if symbol and sector and sector != 'nan' and sector != 'None':
+        for _, row in df.iterrows():
+            symbol = row['symbol']
+            sector = row['sector']
+            if symbol and sector:
                 sector_map[symbol] = sector
 
         print(f"✅ Loaded {len(sector_map)} sector mappings from mongodb.csv")
         
-        # Show sample sectors
+        # Sample sectors দেখান
         if sector_map:
-            sample = list(sector_map.items())[:5]
-            print(f"   Sample: {sample}")
+            sample_items = list(sector_map.items())[:10]
+            print(f"   Sample sectors (first 10):")
+            for sym, sec in sample_items:
+                print(f"     {sym} -> {sec}")
+            
+            # কিছু specific symbol চেক করুন
+            test_symbols = ['BATBC', 'GP', 'BEXIMCO', 'SQUARE', 'BRACBANK']
+            print(f"\n   🔍 Testing specific symbols:")
+            for sym in test_symbols:
+                if sym in sector_map:
+                    print(f"     ✅ {sym} -> {sector_map[sym]}")
+                else:
+                    print(f"     ❌ {sym} not found in sector map")
+        else:
+            print("   ⚠️ No sectors loaded! Check your CSV file.")
         
         return sector_map
 
@@ -209,10 +235,21 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
             print(f"   ⚠️ No records to process for {collection_name}")
             return True
 
+        # AI signals এর symbol গুলো দেখুন
+        if is_ai_signals and records:
+            symbols_in_ai = []
+            for r in records[:10]:
+                if 'symbol' in r and not pd.isna(r.get('symbol')):
+                    symbols_in_ai.append(str(r['symbol']).strip().upper())
+            if symbols_in_ai:
+                print(f"   🔍 AI signals symbols sample: {symbols_in_ai}")
+
         # প্রতিটি রেকর্ডে তারিখ ও টাইমস্ট্যাম্প যোগ করুন
         processed_records = []
         sector_added = 0
         sector_missing = 0
+        sector_not_found = []
+        sector_found_list = []
 
         for idx, record in enumerate(records):
             try:
@@ -231,16 +268,21 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
                 if is_ai_signals and sector_map:
                     symbol = record.get('symbol')
                     if symbol:
-                        # symbol কে uppercase করুন এবং clean করুন
+                        # symbol কে clean করুন
                         clean_symbol = str(symbol).strip().upper()
+                        record['symbol_clean'] = clean_symbol  # for debugging
+                        
                         # sector_map থেকে sector খুঁজুন
                         if clean_symbol in sector_map:
                             record['sector'] = sector_map[clean_symbol]
                             sector_added += 1
+                            sector_found_list.append(clean_symbol)
                         else:
                             # sector না পেলে 'Other' দিন
                             record['sector'] = 'Other'
                             sector_missing += 1
+                            if len(sector_not_found) < 20:  # limit logging
+                                sector_not_found.append(clean_symbol)
                     else:
                         record['sector'] = 'Other'
                         sector_missing += 1
@@ -330,7 +372,13 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
 
         # Sector statistics
         if is_ai_signals and sector_map:
-            print(f"   📊 Sector Stats: {sector_added} found, {sector_missing} set to 'Other'")
+            print(f"   📊 Sector Stats:")
+            print(f"      ✅ Found: {sector_added}")
+            print(f"      ❌ Missing (set to 'Other'): {sector_missing}")
+            if sector_not_found:
+                print(f"      🔍 Missing symbols sample: {sector_not_found[:10]}")
+            if sector_found_list:
+                print(f"      🎯 Found symbols sample: {sector_found_list[:10]}")
 
         # কোন ডাটা ডিলিট করা হচ্ছে না - শুধু upsert
         inserted_count = 0
@@ -507,17 +555,29 @@ def check_ai_sector_stats(client):
             return
         
         # sector আছে কতগুলো ডকুমেন্টে
-        with_sector = ai_col.count_documents({'sector': {'$ne': None, '$ne': ''}})
+        with_sector = ai_col.count_documents({'sector': {'$ne': None, '$ne': '', '$ne': 'Other'}})
+        other_sector = ai_col.count_documents({'sector': 'Other'})
         
         print(f"\n📊 AI SIGNALS SECTOR STATISTICS:")
         print("-" * 40)
         print(f"   Total AI Signals: {total}")
-        print(f"   With Sector: {with_sector} ({with_sector/total*100:.1f}%)")
-        print(f"   Without Sector: {total - with_sector} ({(total-with_sector)/total*100:.1f}%)")
+        print(f"   With Real Sector: {with_sector} ({with_sector/total*100:.1f}%)")
+        print(f"   With 'Other' Sector: {other_sector} ({other_sector/total*100:.1f}%)")
+        print(f"   Without Sector: {total - with_sector - other_sector} ({(total-with_sector-other_sector)/total*100:.1f}%)")
+        
+        # Check some specific symbols
+        test_symbols = ['BATBC', 'GP', 'BEXIMCO', 'SQUARE', 'BRACBANK']
+        print(f"\n   🔍 Testing specific symbols in MongoDB:")
+        for sym in test_symbols:
+            doc = ai_col.find_one({'symbol': sym}, {'symbol': 1, 'sector': 1, '_id': 0})
+            if doc:
+                print(f"     {sym} -> {doc.get('sector', 'NOT FOUND')}")
+            else:
+                print(f"     {sym} -> NOT FOUND")
         
         # Top sectors
         pipeline = [
-            {'$match': {'sector': {'$ne': None, '$ne': ''}}},
+            {'$match': {'sector': {'$ne': None, '$ne': '', '$ne': 'Other'}}},
             {'$group': {'_id': '$sector', 'count': {'$sum': 1}}},
             {'$sort': {'count': -1}},
             {'$limit': 10}
@@ -532,7 +592,7 @@ def check_ai_sector_stats(client):
         latest_date = ai_col.distinct('analysis_date', sort=[('analysis_date', -1)])
         if latest_date:
             latest = latest_date[0]
-            latest_sectors = ai_col.distinct('sector', {'analysis_date': latest, 'sector': {'$ne': None, '$ne': ''}})
+            latest_sectors = ai_col.distinct('sector', {'analysis_date': latest, 'sector': {'$ne': None, '$ne': '', '$ne': 'Other'}})
             print(f"\n   📅 Latest Date ({latest}) Sectors: {len(latest_sectors)}")
             if latest_sectors:
                 print(f"     {', '.join(latest_sectors[:10])}{'...' if len(latest_sectors) > 10 else ''}")
