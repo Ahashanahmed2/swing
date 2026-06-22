@@ -54,7 +54,7 @@ scripts = [
     #"scripts/nightly_trader.py",
     #"scripts/agentic_loop.py",no
     "scripts/daily_buy.py",
-    "scripts/strong_ratio.csv",
+    "scripts/strong_ratio.py",
     "scripts/generate_final_ai_signals.py",
     "scripts/save_to_mongodb.py",
     "scripts/output_file_clean.py",
