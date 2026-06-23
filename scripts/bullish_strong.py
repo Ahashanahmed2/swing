@@ -87,6 +87,9 @@ def process_bullish_strong(input_file='./csv/rsi_diver.csv', output_dir='./outpu
         print(f"  Bearish Moderate  : {bearish_moderate_count}টি")
         print("=" * 60)
         
+        # নতুন কলাম strong তৈরি করা (Bullish Strong : Bearish Strong)
+        strong_text = f"{bullish_strong_count}:{bearish_strong_count}"
+        
         # Bullish Strong ফিল্টার (STRENGTH = Strong এবং LAST_HIGH >= 10)
         bullish_strong = df_filtered[
             (df_filtered['DIVERGENCE_TYPE_CLEAN'] == 'Bullish') & 
@@ -100,40 +103,13 @@ def process_bullish_strong(input_file='./csv/rsi_diver.csv', output_dir='./outpu
         # কলামের নাম ছোট হাতের করা
         bullish_strong.rename(columns={'SYMBOL': 'symbol', 'LAST_HIGH': 'high', 'GAPE': 'gape'}, inplace=True)
         
-        # ============= IMPORTANT FIX =============
-        # rt: Use RSI ratio (LAST_RSI/PREVIOUS_RSI) or default
-        if 'LAST_RSI' in df_filtered.columns and 'PREVIOUS_RSI' in df_filtered.columns:
-            # Merge RSI data back to bullish_strong
-            rsi_data = df_filtered[['SYMBOL', 'LAST_RSI', 'PREVIOUS_RSI']].copy()
-            rsi_data.rename(columns={'SYMBOL': 'symbol'}, inplace=True)
-            bullish_strong = bullish_strong.merge(rsi_data, on='symbol', how='left')
-            
-            # Calculate rt as RSI ratio
-            bullish_strong['rt'] = (bullish_strong['LAST_RSI'] / bullish_strong['PREVIOUS_RSI']).round(2)
-            # Fill NaN with default
-            bullish_strong['rt'] = bullish_strong['rt'].fillna(1.0)
-        else:
-            # Use ratio_text as string for rt
-            bullish_strong['rt'] = bull_bear_ratio  # Numeric value
-            
-        # bbr: Use Bull/Bear ratio (numeric)
+        # rt, bbr এবং strong কলাম যোগ করা
+        bullish_strong['rt'] = ratio_text
         bullish_strong['bbr'] = bull_bear_ratio
-        
-        # strong: Use bullish_strong_count as numeric (not text)
-        # This is the key fix - strong should be a number
-        bullish_strong['strong'] = bullish_strong_count  # Numeric value
-        
-        # Also keep ratio_text as separate column if needed
-        # bullish_strong['strong_ratio'] = ratio_text  # Optional
-        
-        # ============= END FIX =============
+        bullish_strong['strong'] = strong_text  # নতুন কলাম যোগ করা হয়েছে
         
         # সিরিয়াল নং বাদ
         bullish_strong.reset_index(drop=True, inplace=True)
-        
-        # Reorder columns - rt, bbr, strong should be last
-        cols = ['symbol', 'high', 'gape', 'rt', 'bbr', 'strong']
-        bullish_strong = bullish_strong[cols]
         
         # CSV ফাইল সংরক্ষণ
         output_file = os.path.join(output_dir, 'bullish_strong.csv')
@@ -141,16 +117,12 @@ def process_bullish_strong(input_file='./csv/rsi_diver.csv', output_dir='./outpu
         if len(bullish_strong) > 0:
             bullish_strong.to_csv(output_file, index=False)
             print(f"\n✓ Bullish Strong সিগন্যাল পাওয়া গেছে: {len(bullish_strong)}টি")
-            print(f"\nফিল্টারকৃত ডেটা (প্রথম 5টি):")
-            print(bullish_strong.head().to_string(index=False))
+            print(f"\nফিল্টারকৃত ডেটা:")
+            print(bullish_strong.to_string(index=False))
             print(f"\n✓ ফাইল সংরক্ষিত: {output_file}")
-            
-            # Show column info
-            print(f"\n📊 কলাম সমূহ: {bullish_strong.columns.tolist()}")
-            print(f"📊 ডেটা টাইপ: {bullish_strong.dtypes}")
         else:
             # খালি ফাইল তৈরি (শুধু হেডার সহ)
-            pd.DataFrame(columns=['symbol', 'high', 'gape', 'rt', 'bbr', 'strong']).to_csv(output_file, index=False)
+            bullish_strong.to_csv(output_file, index=False)
             print(f"\n✗ কোনো Bullish Strong সিগন্যাল পাওয়া যায়নি")
             print(f"  (শর্ত: STRENGTH='Strong' এবং LAST_HIGH>=10)")
             print(f"✓ খালি ফাইল তৈরি করা হয়েছে: {output_file}")
@@ -171,8 +143,4 @@ if __name__ == "__main__":
     print("আউটপুট ফাইল: ./output/ai_signal/bullish_strong.csv")
     print("কলাম: symbol, high, gape, rt, bbr, strong")
     print(f"মোট Row: {len(result)}টি")
-    
-    if len(result) > 0:
-        print("\nনমুনা ডেটা:")
-        print(result[['symbol', 'rt', 'bbr', 'strong']].head())
     print("=" * 60)
