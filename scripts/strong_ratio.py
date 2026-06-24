@@ -4,7 +4,6 @@ import os
 from datetime import datetime
 import sys
 import pandas as pd
-import re
 
 def main():
     input_file = "./output/ai_signal/daily_buy.csv"
@@ -21,127 +20,72 @@ def main():
         df = pd.read_csv(input_file)
         
         print(f"📊 Input columns: {df.columns.tolist()}")
-        print(f"📊 Input shape: {df.shape}")
+        print(f"📊 Total rows: {len(df)}")
+        print(f"\n📊 First 5 rows (relevant columns):")
         
-        # Check for rt, bbr, strong columns
-        missing = []
+        # Show only rt, bbr, strong columns if they exist
+        show_cols = []
         for col in ['rt', 'bbr', 'strong']:
-            if col not in df.columns:
-                missing.append(col)
-                # Create column with default values
-                if col == 'rt':
-                    df[col] = 0.0
-                elif col == 'bbr':
-                    df[col] = 0.0
-                elif col == 'strong':
-                    df[col] = 0
+            if col in df.columns:
+                show_cols.append(col)
+        if show_cols:
+            print(df[show_cols].head())
+        else:
+            print(df.head())
         
-        if missing:
-            print(f"⚠️ Created missing columns: {missing}")
+        # ============= প্রথম নন-খালি মান খুঁজে বের করা =============
         
-        # Get first row values
-        first_row = df.iloc[0]
-        
-        # ============= উন্নত টেক্সট হ্যান্ডলিং =============
-        
-        def extract_numeric(value, default="0.0"):
-            """যেকোনো টেক্সট থেকে সংখ্যা বের করে"""
-            if pd.isna(value):
+        def get_first_non_empty_value(df, column_name, default="0.0"):
+            """একটি কলাম থেকে প্রথম নন-খালি (non-NaN, non-empty) মান রিটার্ন করে"""
+            if column_name not in df.columns:
+                print(f"⚠️ কলাম '{column_name}' পাওয়া যায়নি")
                 return default
             
-            value_str = str(value).strip()
+            for idx, value in enumerate(df[column_name]):
+                if pd.isna(value):
+                    continue
+                
+                value_str = str(value).strip()
+                if value_str == '' or value_str == 'nan' or value_str == 'None':
+                    continue
+                
+                print(f"✅ {column_name}: প্রথম নন-খালি মান পেয়েছি row {idx+1} → '{value_str}'")
+                return value_str
             
-            # যদি খালি হয়
-            if not value_str:
-                return default
-            
-            # যদি ":" থাকে (যেমন "5:2")
-            if ':' in value_str:
-                parts = value_str.split(':')
-                # প্রথম অংশ নেওয়ার চেষ্টা
-                if parts and parts[0].strip():
-                    value_str = parts[0].strip()
-                else:
-                    return default
-            
-            # সংখ্যা বের করার চেষ্টা (regex)
-            match = re.search(r'[-+]?\d*\.?\d+', value_str)
-            if match:
-                return match.group()
-            
-            # যদি কোনো সংখ্যা না পাওয়া যায়
+            print(f"⚠️ {column_name}: কোনো নন-খালি মান পাওয়া যায়নি")
             return default
         
-        def extract_rt_value(value):
-            """RT ভ্যালু এক্সট্রাক্ট (শতকরা বা অনুপাত)"""
-            if pd.isna(value):
-                return "0.0"
-            
-            value_str = str(value).strip()
-            
-            # যদি "bullish_strong_count:bearish_strong_count" ফরম্যাট হয়
-            if ':' in value_str:
-                parts = value_str.split(':')
-                if len(parts) >= 2:
-                    try:
-                        bullish = float(parts[0].strip())
-                        bearish = float(parts[1].strip())
-                        if bearish > 0:
-                            ratio = bullish / bearish
-                            return f"{ratio:.2f}"
-                        else:
-                            return "0.0"
-                    except:
-                        pass
-            
-            # সাধারণ সংখ্যা বের করা
-            return extract_numeric(value, "0.0")
+        # প্রথমে raw মানগুলো নিই
+        rt_raw = get_first_non_empty_value(df, 'rt', '0.0')
+        bbr_raw = get_first_non_empty_value(df, 'bbr', '0.0')
+        strong_raw = get_first_non_empty_value(df, 'strong', '0')
         
-        def extract_strong_value(value):
-            """Strong ভ্যালু এক্সট্রাক্ট (শুধু সংখ্যা)"""
-            if pd.isna(value):
-                return "0"
-            
-            value_str = str(value).strip()
-            
-            # যদি "5:2" ফরম্যাট হয়
-            if ':' in value_str:
-                parts = value_str.split(':')
-                if parts and parts[0].strip():
-                    try:
-                        # প্রথম অংশকে integer এ কনভার্ট
-                        return str(int(float(parts[0].strip())))
-                    except:
-                        pass
-            
-            # সাধারণ সংখ্যা বের করা
-            num = extract_numeric(value, "0")
-            try:
-                return str(int(float(num)))
-            except:
-                return "0"
+        # ============= ভ্যালু প্রসেস করা =============
+        # অপশন ৩: যেভাবে আছে সেভাবেই রাখা, কোনো পরিবর্তন করা হবে না
         
-        # ভ্যালু এক্সট্রাক্ট করা
-        rt_val = first_row.get('rt', 0)
-        bbr_val = first_row.get('bbr', 0)
-        strong_val = first_row.get('strong', 0)
+        def keep_as_is(value, default="0.0"):
+            """ভ্যালু যেভাবে আছে সেভাবেই রাখা"""
+            if not value or value == '0.0' or value == '0':
+                return default
+            return str(value).strip()
         
-        # প্রক্রিয়াকরণ
-        rt_value = extract_rt_value(rt_val)
-        bbr_value = extract_numeric(bbr_val, "0.0")
-        strong_value = extract_strong_value(strong_val)
+        # প্রসেস করা মান (কোনো পরিবর্তন ছাড়া)
+        rt_value = keep_as_is(rt_raw, "0.0")
+        bbr_value = keep_as_is(bbr_raw, "0.0")
+        strong_value = keep_as_is(strong_raw, "0")
         
         # ============= ডিবাগ ইনফো =============
-        print(f"\n📊 Original values from first row:")
-        print(f"   RT (raw): {rt_val} (type: {type(rt_val)})")
-        print(f"   BBR (raw): {bbr_val} (type: {type(bbr_val)})")
-        print(f"   STRONG (raw): {strong_val} (type: {type(strong_val)})")
-        print(f"\n📊 Extracted values:")
+        print(f"\n📊 Raw values found:")
+        print(f"   RT (raw): {rt_raw}")
+        print(f"   BBR (raw): {bbr_raw}")
+        print(f"   STRONG (raw): {strong_raw}")
+        
+        print(f"\n📊 Final values (kept as-is):")
         print(f"   RT: {rt_value}")
         print(f"   BBR: {bbr_value}")
         print(f"   STRONG: {strong_value}")
         
-        # নতুন row তৈরি
+        # নতুন row তৈরি (শুধু ৪টি কলাম)
         new_row = {
             'rt': rt_value,
             'bbr': bbr_value,
@@ -157,6 +101,7 @@ def main():
             writer.writerow(new_row)
 
         print(f"\n✅ Data saved successfully to: {final_output}")
+        print(f"   Columns: {fieldnames}")
         print(f"   RT: {rt_value}")
         print(f"   BBR: {bbr_value}")
         print(f"   STRONG: {strong_value}")
