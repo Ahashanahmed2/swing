@@ -153,23 +153,38 @@ for _, row in result_df.iterrows():
 final_df = pd.DataFrame(symbol_data.values())
 print(f"📊 Unique symbols after dedup: {len(final_df)}")
 
-# Step 5: Add high from mongodb.csv (if exists)
+# Step 5: Add sector and high from mongodb.csv (if exists)
 mongo_path = './csv/mongodb.csv'
 if os.path.exists(mongo_path):
     try:
         mongo_df = pd.read_csv(mongo_path)
-        if 'date' in mongo_df.columns:
+        
+        # Check if required columns exist
+        if 'date' in mongo_df.columns and 'symbol' in mongo_df.columns:
             mongo_df['date'] = pd.to_datetime(mongo_df['date'])
             
-            # Get latest high for each symbol
-            latest_high = mongo_df.sort_values('date').groupby('symbol').tail(1)[['symbol', 'high']]
-            high_map = dict(zip(latest_high['symbol'], latest_high['high']))
+            # Get latest record for each symbol
+            latest_records = mongo_df.sort_values('date').groupby('symbol').tail(1)
             
-            # Add high to final dataframe
-            final_df['high'] = final_df['symbol'].map(high_map)
-            print(f"   ✅ Added high from MongoDB for {len(high_map)} symbols")
+            # Create mapping dictionaries
+            if 'high' in mongo_df.columns:
+                high_map = dict(zip(latest_records['symbol'], latest_records['high']))
+                final_df['high'] = final_df['symbol'].map(high_map)
+                print(f"   ✅ Added high for {len(high_map)} symbols")
+            
+            if 'sector' in mongo_df.columns:
+                sector_map = dict(zip(latest_records['symbol'], latest_records['sector']))
+                final_df['sector'] = final_df['symbol'].map(sector_map)
+                print(f"   ✅ Added sector for {len(sector_map)} symbols")
+            else:
+                print(f"   ⚠️ 'sector' column not found in mongodb.csv")
+        else:
+            print(f"   ⚠️ Required columns ('symbol', 'date') not found in mongodb.csv")
+            
     except Exception as e:
         print(f"   ⚠️ Error loading mongodb.csv: {e}")
+else:
+    print(f"   ⚠️ mongodb.csv not found at {mongo_path}")
 
 # Step 6: Remove any remaining excluded columns
 cols_to_remove = [col for col in final_df.columns if col.lower() in [x.lower() for x in exclude_columns]]
@@ -178,7 +193,7 @@ if cols_to_remove:
     print(f"   🧹 Removed excluded columns: {cols_to_remove}")
 
 # Step 7: Column ordering
-priority_cols = ['symbol', 'source_file', 'high', 'original_date']
+priority_cols = ['symbol', 'sector', 'source_file', 'high', 'original_date']
 existing_priority = [col for col in priority_cols if col in final_df.columns]
 other_cols = [col for col in final_df.columns if col not in existing_priority]
 final_df = final_df[existing_priority + other_cols]
@@ -213,3 +228,14 @@ if duplicate_check > 0:
     print(duplicates[['symbol', 'source_file']].head(10))
 else:
     print(f"\n✅ No duplicate symbols in final output")
+
+# Step 12: Show sector statistics (if sector column exists)
+if 'sector' in final_df.columns:
+    print(f"\n📊 Sector Statistics:")
+    sector_counts = final_df['sector'].value_counts()
+    for sector, count in sector_counts.head(10).items():
+        print(f"   {sector}: {count} symbols")
+    if len(sector_counts) > 10:
+        print(f"   ... and {len(sector_counts) - 10} more sectors")
+else:
+    print(f"\n⚠️ Sector column not found in final output")
