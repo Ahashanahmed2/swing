@@ -6,7 +6,7 @@
 # 3. Already trained good models retrain with new data
 # 4. Single commit upload to Hugging Face
 # 5. Monthly retry for permanently failed models
-# 6. Advanced features: Support/Resistance, RSI Divergence, EMA 200
+# 6. Advanced features: Support/Resistance, RSI Divergence
 # 7. ✅ Sector momentum, relative strength, peer comparison
 # 8. ✅ Telegram notifications for training status
 # 9. ✅ Sector performance tracking
@@ -86,7 +86,7 @@ SECTOR_PERFORMANCE_FILE = './csv/sector_performance.csv'
 # Advanced features files
 SUPPORT_RESISTANCE_PATH = './csv/support_resistance.csv'
 RSI_DIVERGENCE_PATH = './csv/rsi_diver.csv'
-EMA_200_PATH = './csv/ema_200.csv'
+# EMA_200_PATH REMOVED AS REQUESTED
 
 os.makedirs(MODEL_DIR, exist_ok=True)
 
@@ -421,7 +421,7 @@ def safe_parse_date(date_series):
     return pd.to_datetime(date_series, errors='coerce')
 
 def engineer_features(df):
-    """Add ALL engineered features"""
+    """Add ALL engineered features (EMA_200 PATH REMOVED)"""
     if df.empty:
         return df
 
@@ -530,41 +530,7 @@ def engineer_features(df):
             df[col] = 0
 
     # =========================
-    # 3. EMA 200 FEATURES
-    # =========================
-    try:
-        if os.path.exists(EMA_200_PATH):
-            ema_df = pd.read_csv(EMA_200_PATH, encoding='utf-8-sig')
-            ema_df.columns = ema_df.columns.str.strip()
-
-            if 'close' in ema_df.columns:
-                ema_df = ema_df.rename(columns={'close': 'ema_200'})
-            else:
-                numeric_cols = ema_df.select_dtypes(include=[np.number]).columns
-                if len(numeric_cols) > 0:
-                    ema_df = ema_df.rename(columns={numeric_cols[-1]: 'ema_200'})
-
-            ema_df['date'] = pd.to_datetime(ema_df['date'])
-
-            df = df.merge(ema_df[['symbol', 'date', 'ema_200']], on=['symbol', 'date'], how='left')
-
-            df['dist_from_ema'] = (df['close'] - df['ema_200']) / df['ema_200'] * 100
-            df['dist_from_ema'] = df['dist_from_ema'].clip(-30, 30)
-            df['above_ema'] = (df['close'] > df['ema_200']).astype(int)
-
-            df['ema_200'] = df.groupby('symbol')['close'].transform(lambda x: x.rolling(200).mean())
-            df['dist_from_ema'] = df['dist_from_ema'].fillna(0)
-            df['above_ema'] = df['above_ema'].fillna(0)
-            df['ema_200'] = df['ema_200'].fillna(df['close'])
-        else:
-            df['dist_from_ema'] = 0
-            df['above_ema'] = 0
-    except:
-        df['dist_from_ema'] = 0
-        df['above_ema'] = 0
-
-    # =========================
-    # ✅ 4. INTERACTION FEATURES
+    # ✅ 3. INTERACTION FEATURES
     # =========================
     df['price_volume_interaction'] = df['close'] * df['volume_ratio']
     
@@ -585,10 +551,11 @@ def engineer_features(df):
         df['volume_volatility'] = df['volume_ratio'] * df['volatility_5d']
 
     # =========================
-    # ✅ 5. TARGET ENCODING
+    # ✅ 4. TARGET ENCODING (UPDATED FOR 7% - 10% PROFIT: shift -2 & -4)
     # =========================
-    df['future_return'] = df.groupby('symbol')['close'].transform(lambda x: x.shift(-5) / x - 1)
-    df['target'] = (df['future_return'] > 0.02).astype(int)
+    df['future_return_1'] = df.groupby('symbol')['close'].transform(lambda x: x.shift(-2) / x - 1)
+    df['future_return_2'] = df.groupby('symbol')['close'].transform(lambda x: x.shift(-4) / x - 1)
+    df['target'] = ((df['future_return_1'] > 0.07) | (df['future_return_2'] > 0.10)).astype(int)
     
     df['sector_target_mean'] = df.groupby('sector')['target'].transform('mean')
     df['sector_target_std'] = df.groupby('sector')['target'].transform('std')
@@ -603,9 +570,10 @@ def engineer_features(df):
     return df.dropna(subset=['target'])
 
 def get_features(df):
-    """Get list of ALL available features"""
+    """Get list of ALL available features (close & ema_features REMOVED)"""
     features = [
-        'close', 'volume', 'return_5d', 'return_10d', 
+        # 'close' REMOVED AS REQUESTED
+        'volume', 'return_5d', 'return_10d', 
         'volatility', 'volatility_5d', 'volume_ratio'
     ]
 
@@ -617,9 +585,6 @@ def get_features(df):
 
     div_features = ['is_bullish_div', 'is_bearish_div', 'div_strength']
     features.extend([f for f in div_features if f in df.columns])
-
-    ema_features = ['dist_from_ema', 'above_ema']
-    features.extend([f for f in ema_features if f in df.columns])
     
     sector_features = ['sector_momentum', 'sector_rank', 'sector_trend',
                        'sector_target_mean', 'sector_target_std', 'sector_recent_target']
@@ -947,7 +912,7 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata, sector
             if 'sector_momentum' in group.columns:
                 sector_momentum = group['sector_momentum'].iloc[0]
                 if sector_momentum > 0.02:
-                    group['confidence_score'] = group['confidence_score'] * 1.1
+                    group['confidence_score'] = group['confidence_score'] * 1.2
                 elif sector_momentum < -0.02:
                     group['confidence_score'] = group['confidence_score'] * 0.9
                 group['confidence_score'] = group['confidence_score'].clip(0, 100)
@@ -961,7 +926,9 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata, sector
                     group['confidence_score'] = group['confidence_score'] * 0.95
                 group['confidence_score'] = group['confidence_score'].clip(0, 100)
             
-            group['prediction'] = (group['confidence_score'] > 50).astype(int)
+            # UPDATED: Prediction confidence threshold increased to 75 
+            # (To filter out small trades and aim for big 7-10% moves)
+            group['prediction'] = (group['confidence_score'] > 75).astype(int)
 
             result = group[['symbol', 'date', 'close', 'confidence_score', 'prediction']]
             status = 'GOOD'
@@ -1117,7 +1084,7 @@ def main():
     features = get_features(df)
     
     print(f"\n📊 Features used: {len(features)}")
-    print(f"   Base: close, volume, return_5d, return_10d, volatility, volatility_5d, volume_ratio")
+    print(f"   Base: volume, return_5d, return_10d, volatility, volatility_5d, volume_ratio")
     print(f"   Market Cap: {[f for f in features if 'cap' in f.lower() or 'liquidity' in f.lower()]}")
     print(f"   Sector: {[f for f in features if 'sector' in f.lower()]}")
     print(f"   Interaction: {[f for f in features if 'interaction' in f.lower() or 'signal' in f.lower()]}")
