@@ -61,7 +61,7 @@ scripts = [
     "scripts/generate_pdf.py",
     "scripts/upload_csv.py",
     "scripts/dayliMassage.py",
-    "scripts/email_reports.py",
+    #"scripts/email_reports.py",
     
     
     #"scripts/generate_pattern_training_data_complete.py",no
