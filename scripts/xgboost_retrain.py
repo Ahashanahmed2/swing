@@ -555,7 +555,7 @@ def engineer_features(df):
     # =========================
     df['future_return_1'] = df.groupby('symbol')['close'].transform(lambda x: x.shift(-2) / x - 1)
     df['future_return_2'] = df.groupby('symbol')['close'].transform(lambda x: x.shift(-4) / x - 1)
-    df['target'] = ((df['future_return_1'] > 0.07) | (df['future_return_2'] > 0.10)).astype(int)
+    df['target'] = ((df['future_return_1'] > 0.03) | (df['future_return_2'] > 0.05)).astype(int)
     
     df['sector_target_mean'] = df.groupby('sector')['target'].transform('mean')
     df['sector_target_std'] = df.groupby('sector')['target'].transform('std')
@@ -912,7 +912,7 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata, sector
             if 'sector_momentum' in group.columns:
                 sector_momentum = group['sector_momentum'].iloc[0]
                 if sector_momentum > 0.02:
-                    group['confidence_score'] = group['confidence_score'] * 1.2
+                    group['confidence_score'] = group['confidence_score'] * 1.1
                 elif sector_momentum < -0.02:
                     group['confidence_score'] = group['confidence_score'] * 0.9
                 group['confidence_score'] = group['confidence_score'].clip(0, 100)
@@ -928,7 +928,7 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata, sector
             
             # UPDATED: Prediction confidence threshold increased to 75 
             # (To filter out small trades and aim for big 7-10% moves)
-            group['prediction'] = (group['confidence_score'] > 75).astype(int)
+            group['prediction'] = (group['confidence_score'] > 65).astype(int)
 
             result = group[['symbol', 'date', 'close', 'confidence_score', 'prediction']]
             status = 'GOOD'
