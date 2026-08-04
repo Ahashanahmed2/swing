@@ -6,7 +6,7 @@
 # 3. Already trained good models retrain with new data
 # 4. Single commit upload to Hugging Face
 # 5. Monthly retry for permanently failed models
-# 6. Advanced features: Support/Resistance, RSI Divergence, EMA 200
+# 6. Advanced features: Support/Resistance, RSI Divergence
 # 7. ✅ Sector momentum, relative strength, peer comparison
 # 8. ✅ Telegram notifications for training status
 # 9. ✅ Sector performance tracking
@@ -16,6 +16,16 @@
 # 13. ✅ Target Encoding (Sector-wise)
 # 14. ✅ Interaction Features (Price×Vol, RSI×Vol, MCap×Momentum)
 # 15. ✅ Optuna Hyperparameter Tuning (Best Params)
+# 16. ✅ Market Regime Detection (Bull/Bear/Sideways)
+# 17. ✅ Time-Based Cyclical Features
+# 18. ✅ Technical Indicators (BB, MACD, ATR, MFI)
+# 19. ✅ Rolling Statistical Features
+# 20. ✅ Price Pattern Detection
+# 21. ✅ Feature Selection (Correlation-based)
+# 22. ✅ Ensemble Models (Weekly/Monthly)
+# 23. ✅ Dynamic Thresholds by Mode & Regime
+# 24. ✅ Adaptive Parameters by Data Size
+# 25. ✅ Mode-Specific Targets & Horizons
 
 import os
 import pandas as pd
@@ -23,9 +33,11 @@ import numpy as np
 import xgboost as xgb
 from sklearn.metrics import accuracy_score, roc_auc_score
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.feature_selection import SelectKBest, f_classif
 import joblib
 import requests
 import optuna
+import json
 from datetime import datetime, timedelta
 from collections import defaultdict
 import warnings
@@ -86,7 +98,6 @@ SECTOR_PERFORMANCE_FILE = './csv/sector_performance.csv'
 # Advanced features files
 SUPPORT_RESISTANCE_PATH = './csv/support_resistance.csv'
 RSI_DIVERGENCE_PATH = './csv/rsi_diver.csv'
-EMA_200_PATH = './csv/ema_200.csv'
 
 os.makedirs(MODEL_DIR, exist_ok=True)
 
@@ -113,6 +124,70 @@ OPTUNA_TRIALS = 30  # Hyperparameter tuning trials per symbol
 ENABLE_OPTUNA = True  # Set False to skip tuning
 
 # =========================
+# ✅ MODE-SPECIFIC CONFIGURATION
+# =========================
+
+MODE_CONFIG = {
+    'DAILY': {
+        'target_horizon': 1,           # 1 day ahead
+        'target_return': 0.005,         # 0.5% return target
+        'optuna_trials': 20,            # কম ট্রায়াল (দ্রুত)
+        'enable_optuna': True,
+        'wf_splits': 3,                 # কম স্প্লিট
+        'min_samples': 40,
+        'early_stopping': 30,
+        'calibration_min_samples': 30,
+        'lookback_days': 10,            # ছোট লুকব্যাক
+        'feature_selection': True,      # ফিচার সিলেকশন
+        'ensemble_models': False,       # সিঙ্গেল মডেল
+        'market_regime_filter': False,  # মার্কেট ফিল্টার না
+        'train_ratio': 0.7,
+        'val_ratio': 0.85,
+        'auc_threshold': 0.52,          # Lower for daily
+        'confidence_threshold': 45,
+        'overfit_threshold': 0.15,
+    },
+    'WEEKLY': {
+        'target_horizon': 5,            # 5 days ahead
+        'target_return': 0.02,          # 2% return target
+        'optuna_trials': 30,
+        'enable_optuna': True,
+        'wf_splits': 5,
+        'min_samples': 60,
+        'early_stopping': 50,
+        'calibration_min_samples': 50,
+        'lookback_days': 30,
+        'feature_selection': True,
+        'ensemble_models': True,        # এনসেম্বল মডেল
+        'market_regime_filter': True,   # মার্কেট ফিল্টার
+        'train_ratio': 0.65,
+        'val_ratio': 0.85,
+        'auc_threshold': 0.55,
+        'confidence_threshold': 50,
+        'overfit_threshold': 0.12,
+    },
+    'MONTHLY': {
+        'target_horizon': 20,           # 20 days ahead
+        'target_return': 0.05,          # 5% return target
+        'optuna_trials': 50,            # বেশি ট্রায়াল
+        'enable_optuna': True,
+        'wf_splits': 5,
+        'min_samples': 100,
+        'early_stopping': 80,
+        'calibration_min_samples': 100,
+        'lookback_days': 60,            # বড় লুকব্যাক
+        'feature_selection': True,
+        'ensemble_models': True,        # এনসেম্বল
+        'market_regime_filter': True,
+        'train_ratio': 0.6,
+        'val_ratio': 0.85,
+        'auc_threshold': 0.58,          # Higher for monthly
+        'confidence_threshold': 55,
+        'overfit_threshold': 0.10,
+    }
+}
+
+# =========================
 # OPTUNA BEST PARAMS STORAGE
 # =========================
 BEST_PARAMS_FILE = './csv/xgboost_best_params.json'
@@ -132,9 +207,266 @@ def load_best_params():
 def save_best_params(symbol, params):
     """Save best hyperparameters for a symbol"""
     global best_params_cache
-    best_params_cache[symbol] = params
+    # Convert any numpy types to native Python types for JSON serialization
+    params_serializable = {}
+    for key, value in params.items():
+        if isinstance(value, (np.integer,)):
+            params_serializable[key] = int(value)
+        elif isinstance(value, (np.floating,)):
+            params_serializable[key] = float(value)
+        else:
+            params_serializable[key] = value
+    
+    best_params_cache[symbol] = params_serializable
     with open(BEST_PARAMS_FILE, 'w') as f:
         json.dump(best_params_cache, f, indent=2)
+
+# =========================
+# ✅ MARKET REGIME DETECTION
+# =========================
+
+def detect_market_regime(df, symbol=None):
+    """
+    Detect market regime: Bull, Bear, Sideways, High Volatility
+    Returns regime label and confidence
+    """
+    if len(df) < 20:
+        return 'unknown', 0
+    
+    df_sorted = df.sort_values('date')
+    
+    # Calculate market indicators
+    sma_20 = df_sorted['close'].rolling(20).mean()
+    sma_50 = df_sorted['close'].rolling(50).mean() if len(df_sorted) >= 50 else sma_20
+    volatility = df_sorted['close'].pct_change().rolling(20).std()
+    returns_20d = (df_sorted['close'] - df_sorted['close'].shift(20)) / df_sorted['close'].shift(20)
+    
+    current_price = df_sorted['close'].iloc[-1]
+    current_vol = volatility.iloc[-1]
+    current_return = returns_20d.iloc[-1]
+    
+    # Historical volatility percentiles
+    vol_80th = volatility.quantile(0.8)
+    vol_20th = volatility.quantile(0.2)
+    
+    # Determine regime
+    if pd.isna(current_vol) or pd.isna(current_return):
+        return 'unknown', 0
+    
+    if current_vol > vol_80th:
+        regime = 'high_volatility'
+        confidence = 0.8
+    elif current_return > 0.05 and current_price > sma_20.iloc[-1]:
+        regime = 'bull'
+        confidence = 0.9
+    elif current_return < -0.05 and current_price < sma_20.iloc[-1]:
+        regime = 'bear'
+        confidence = 0.9
+    elif current_vol < vol_20th and abs(current_return) < 0.02:
+        regime = 'sideways_low_vol'
+        confidence = 0.7
+    else:
+        regime = 'sideways'
+        confidence = 0.6
+    
+    return regime, confidence
+
+def add_market_regime_features(df):
+    """Add market regime features"""
+    df['market_regime'] = 'unknown'
+    df['regime_confidence'] = 0
+    
+    for symbol in df['symbol'].unique():
+        symbol_data = df[df['symbol'] == symbol].sort_values('date')
+        if len(symbol_data) >= 20:
+            regime, conf = detect_market_regime(symbol_data)
+            
+            mask = df['symbol'] == symbol
+            df.loc[mask, 'market_regime'] = regime
+            df.loc[mask, 'regime_confidence'] = conf
+    
+    # One-hot encode regime
+    for regime in ['bull', 'bear', 'sideways', 'sideways_low_vol', 'high_volatility']:
+        df[f'regime_{regime}'] = (df['market_regime'] == regime).astype(int)
+    
+    return df
+
+# =========================
+# ✅ TIME-BASED FEATURES
+# =========================
+
+def add_temporal_features(df):
+    """Add time-based cyclical features"""
+    df['day_of_week'] = df['date'].dt.dayofweek
+    df['day_of_month'] = df['date'].dt.day
+    df['month'] = df['date'].dt.month
+    df['quarter'] = df['date'].dt.quarter
+    df['is_month_start'] = df['date'].dt.is_month_start.astype(int)
+    df['is_month_end'] = df['date'].dt.is_month_end.astype(int)
+    df['is_quarter_end'] = (df['date'].dt.month % 3 == 0).astype(int)
+    
+    # Cyclical encoding
+    df['day_sin'] = np.sin(2 * np.pi * df['day_of_week'] / 7)
+    df['day_cos'] = np.cos(2 * np.pi * df['day_of_week'] / 7)
+    df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
+    df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
+    
+    return df
+
+# =========================
+# ✅ TECHNICAL INDICATORS
+# =========================
+
+def add_technical_indicators(df):
+    """Add technical indicators: Bollinger Bands, MACD, ATR, MFI"""
+    
+    # Bollinger Bands
+    df['bb_middle'] = df.groupby('symbol')['close'].transform(lambda x: x.rolling(20).mean())
+    bb_std = df.groupby('symbol')['close'].transform(lambda x: x.rolling(20).std())
+    df['bb_upper'] = df['bb_middle'] + (bb_std * 2)
+    df['bb_lower'] = df['bb_middle'] - (bb_std * 2)
+    df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['bb_middle']
+    df['bb_position'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'] + 1e-8)
+    
+    # MACD
+    ema_12 = df.groupby('symbol')['close'].transform(lambda x: x.ewm(span=12, adjust=False).mean())
+    ema_26 = df.groupby('symbol')['close'].transform(lambda x: x.ewm(span=26, adjust=False).mean())
+    df['macd'] = ema_12 - ema_26
+    df['macd_signal'] = df.groupby('symbol')['macd'].transform(lambda x: x.ewm(span=9, adjust=False).mean())
+    df['macd_histogram'] = df['macd'] - df['macd_signal']
+    
+    # ATR (Average True Range)
+    df['high_low'] = df['high'] - df['low']
+    df['high_close'] = (df['high'] - df['close'].shift(1)).abs()
+    df['low_close'] = (df['low'] - df['close'].shift(1)).abs()
+    
+    def calc_atr(group):
+        tr = group[['high_low', 'high_close', 'low_close']].max(axis=1)
+        return tr.rolling(14).mean()
+    
+    df['atr'] = df.groupby('symbol').apply(calc_atr).reset_index(level=0, drop=True)
+    df['atr_pct'] = df['atr'] / df['close'] * 100
+    
+    # MFI (Money Flow Index)
+    typical_price = (df['high'] + df['low'] + df['close']) / 3
+    money_flow = typical_price * df['volume']
+    
+    df['price_change'] = typical_price.diff()
+    df['positive_flow'] = money_flow.where(df['price_change'] > 0, 0)
+    df['negative_flow'] = money_flow.where(df['price_change'] < 0, 0)
+    
+    def calc_mfi(group):
+        pos_sum = group['positive_flow'].rolling(14).sum()
+        neg_sum = group['negative_flow'].rolling(14).sum()
+        return 100 - (100 / (1 + pos_sum / neg_sum.replace(0, 1)))
+    
+    df['mfi'] = df.groupby('symbol').apply(calc_mfi).reset_index(level=0, drop=True)
+    
+    # Drop temporary columns
+    df.drop(['high_low', 'high_close', 'low_close', 'price_change', 
+             'positive_flow', 'negative_flow'], axis=1, errors='ignore', inplace=True)
+    
+    return df
+
+# =========================
+# ✅ ROLLING FEATURE ENGINEERING
+# =========================
+
+def add_rolling_features(df):
+    """Add rolling statistical features"""
+    
+    windows = [5, 10, 20]
+    
+    for window in windows:
+        if len(df) < window:
+            continue
+            
+        # Returns
+        df[f'return_{window}d_mean'] = df.groupby('symbol')['close'].transform(
+            lambda x: x.pct_change().rolling(window, min_periods=1).mean()
+        )
+        df[f'return_{window}d_std'] = df.groupby('symbol')['close'].transform(
+            lambda x: x.pct_change().rolling(window, min_periods=1).std()
+        )
+        
+        # Volume
+        df[f'volume_{window}d_mean'] = df.groupby('symbol')['volume'].transform(
+            lambda x: x.rolling(window, min_periods=1).mean()
+        )
+        df[f'volume_{window}d_ratio'] = df['volume'] / (df[f'volume_{window}d_mean'] + 1e-8)
+    
+    return df
+
+# =========================
+# ✅ PRICE PATTERN DETECTION
+# =========================
+
+def detect_price_patterns(df):
+    """Detect common price patterns"""
+    
+    df['price_pattern'] = 0
+    df['consecutive_up'] = 0
+    df['consecutive_down'] = 0
+    
+    if 'open' not in df.columns:
+        df['open'] = df['close'].shift(1)
+    
+    for symbol in df['symbol'].unique():
+        mask = df['symbol'] == symbol
+        symbol_data = df[mask].sort_values('date')
+        
+        if len(symbol_data) < 5:
+            continue
+        
+        closes = symbol_data['close'].values
+        opens = symbol_data['open'].values
+        highs = symbol_data['high'].values
+        lows = symbol_data['low'].values
+        
+        patterns = np.zeros(len(symbol_data))
+        consec_up = np.zeros(len(symbol_data))
+        consec_down = np.zeros(len(symbol_data))
+        
+        up_count = 0
+        down_count = 0
+        
+        for i in range(1, len(symbol_data)):
+            # Consecutive tracking
+            if closes[i] > closes[i-1]:
+                up_count += 1
+                down_count = 0
+            elif closes[i] < closes[i-1]:
+                down_count += 1
+                up_count = 0
+            
+            consec_up[i] = up_count
+            consec_down[i] = down_count
+            
+            # Pattern detection (i >= 4)
+            if i >= 4:
+                # Bullish Engulfing
+                if (closes[i-1] < opens[i-1] and
+                    closes[i] > opens[i] and
+                    closes[i] > opens[i-1] and
+                    opens[i] < closes[i-1]):
+                    patterns[i] = 1
+                
+                # Bearish Engulfing
+                elif (closes[i-1] > opens[i-1] and
+                      closes[i] < opens[i] and
+                      closes[i] < opens[i-1] and
+                      opens[i] > closes[i-1]):
+                    patterns[i] = -1
+                
+                # Doji
+                elif abs(closes[i] - opens[i]) < (highs[i] - lows[i]) * 0.1:
+                    patterns[i] = 0.5 if closes[i] > closes[i-1] else -0.5
+        
+        df.loc[mask, 'price_pattern'] = patterns
+        df.loc[mask, 'consecutive_up'] = consec_up
+        df.loc[mask, 'consecutive_down'] = consec_down
+    
+    return df
 
 # =========================
 # SECTOR ANALYZER
@@ -432,9 +764,9 @@ def engineer_features(df):
     df['return_5d'] = df.groupby('symbol')['close'].pct_change(5)
     df['return_10d'] = df.groupby('symbol')['close'].pct_change(10)
     df['volatility'] = (df['high'] - df['low']) / df['close']
-    df['volatility_5d'] = df.groupby('symbol')['volatility'].transform(lambda x: x.rolling(5).mean())
-    df['volume_ma'] = df.groupby('symbol')['volume'].transform(lambda x: x.rolling(20).mean())
-    df['volume_ratio'] = df['volume'] / df['volume_ma']
+    df['volatility_5d'] = df.groupby('symbol')['volatility'].transform(lambda x: x.rolling(5, min_periods=1).mean())
+    df['volume_ma'] = df.groupby('symbol')['volume'].transform(lambda x: x.rolling(20, min_periods=1).mean())
+    df['volume_ratio'] = df['volume'] / (df['volume_ma'] + 1e-8)
 
     if 'rsi' in df.columns:
         df['rsi_oversold'] = (df['rsi'] < 30).astype(int)
@@ -530,41 +862,7 @@ def engineer_features(df):
             df[col] = 0
 
     # =========================
-    # 3. EMA 200 FEATURES
-    # =========================
-    try:
-        if os.path.exists(EMA_200_PATH):
-            ema_df = pd.read_csv(EMA_200_PATH, encoding='utf-8-sig')
-            ema_df.columns = ema_df.columns.str.strip()
-
-            if 'close' in ema_df.columns:
-                ema_df = ema_df.rename(columns={'close': 'ema_200'})
-            else:
-                numeric_cols = ema_df.select_dtypes(include=[np.number]).columns
-                if len(numeric_cols) > 0:
-                    ema_df = ema_df.rename(columns={numeric_cols[-1]: 'ema_200'})
-
-            ema_df['date'] = pd.to_datetime(ema_df['date'])
-
-            df = df.merge(ema_df[['symbol', 'date', 'ema_200']], on=['symbol', 'date'], how='left')
-
-            df['dist_from_ema'] = (df['close'] - df['ema_200']) / df['ema_200'] * 100
-            df['dist_from_ema'] = df['dist_from_ema'].clip(-30, 30)
-            df['above_ema'] = (df['close'] > df['ema_200']).astype(int)
-
-            df['ema_200'] = df.groupby('symbol')['close'].transform(lambda x: x.rolling(200).mean())
-            df['dist_from_ema'] = df['dist_from_ema'].fillna(0)
-            df['above_ema'] = df['above_ema'].fillna(0)
-            df['ema_200'] = df['ema_200'].fillna(df['close'])
-        else:
-            df['dist_from_ema'] = 0
-            df['above_ema'] = 0
-    except:
-        df['dist_from_ema'] = 0
-        df['above_ema'] = 0
-
-    # =========================
-    # ✅ 4. INTERACTION FEATURES
+    # 4. INTERACTION FEATURES
     # =========================
     df['price_volume_interaction'] = df['close'] * df['volume_ratio']
     
@@ -584,23 +882,7 @@ def engineer_features(df):
     if 'volume_ratio' in df.columns and 'volatility_5d' in df.columns:
         df['volume_volatility'] = df['volume_ratio'] * df['volatility_5d']
 
-    # =========================
-    # ✅ 5. TARGET ENCODING
-    # =========================
-    df['future_return'] = df.groupby('symbol')['close'].transform(lambda x: x.shift(-5) / x - 1)
-    df['target'] = (df['future_return'] > 0.02).astype(int)
-    
-    df['sector_target_mean'] = df.groupby('sector')['target'].transform('mean')
-    df['sector_target_std'] = df.groupby('sector')['target'].transform('std')
-    df['sector_recent_target'] = df.groupby('sector')['target'].transform(
-        lambda x: x.rolling(20, min_periods=1).mean()
-    )
-    
-    df['symbol_target_mean'] = df.groupby('symbol')['target'].transform(
-        lambda x: x.expanding().mean()
-    )
-
-    return df.dropna(subset=['target'])
+    return df
 
 def get_features(df):
     """Get list of ALL available features"""
@@ -617,12 +899,8 @@ def get_features(df):
 
     div_features = ['is_bullish_div', 'is_bearish_div', 'div_strength']
     features.extend([f for f in div_features if f in df.columns])
-
-    ema_features = ['dist_from_ema', 'above_ema']
-    features.extend([f for f in ema_features if f in df.columns])
     
-    sector_features = ['sector_momentum', 'sector_rank', 'sector_trend',
-                       'sector_target_mean', 'sector_target_std', 'sector_recent_target']
+    sector_features = ['sector_momentum', 'sector_rank', 'sector_trend']
     features.extend([f for f in sector_features if f in df.columns])
     
     mc_features = ['freeFloatMarketCap', 'log_market_cap', 'market_cap_rank', 
@@ -634,9 +912,150 @@ def get_features(df):
                            'volume_volatility']
     features.extend([f for f in interaction_features if f in df.columns])
     
-    features.append('symbol_target_mean')
+    # New features
+    regime_features = ['regime_bull', 'regime_bear', 'regime_sideways', 
+                       'regime_sideways_low_vol', 'regime_high_volatility', 'regime_confidence']
+    features.extend([f for f in regime_features if f in df.columns])
+    
+    temporal_features = ['day_sin', 'day_cos', 'month_sin', 'month_cos',
+                         'is_month_start', 'is_month_end', 'is_quarter_end']
+    features.extend([f for f in temporal_features if f in df.columns])
+    
+    technical_features = ['bb_width', 'bb_position', 'macd', 'macd_histogram',
+                          'atr_pct', 'mfi']
+    features.extend([f for f in technical_features if f in df.columns])
+    
+    rolling_features = ['return_5d_mean', 'return_5d_std', 'return_20d_mean', 'return_20d_std',
+                        'volume_5d_ratio', 'volume_20d_ratio']
+    features.extend([f for f in rolling_features if f in df.columns])
+    
+    pattern_features = ['price_pattern', 'consecutive_up', 'consecutive_down']
+    features.extend([f for f in pattern_features if f in df.columns])
 
     return features
+
+# =========================
+# ✅ FEATURE SELECTION
+# =========================
+
+def select_features_for_mode(df, mode, features):
+    """Select best features based on mode and importance"""
+    
+    if not MODE_CONFIG[mode]['feature_selection']:
+        return features
+    
+    # Remove highly correlated features
+    available_features = [f for f in features if f in df.columns]
+    
+    if len(available_features) < 10:
+        return available_features
+    
+    try:
+        corr_matrix = df[available_features].corr().abs()
+        upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+        to_drop = [column for column in upper.columns if any(upper[column] > 0.95)]
+        
+        reduced_features = [f for f in available_features if f not in to_drop]
+        
+        if len(reduced_features) < len(available_features):
+            print(f"   🔍 Feature Selection: {len(available_features)} → {len(reduced_features)} (removed {len(to_drop)} correlated)")
+        
+        return reduced_features
+    except:
+        return available_features
+
+# =========================
+# ✅ MODE-SPECIFIC TARGET CREATION
+# =========================
+
+def create_mode_specific_targets(df, mode):
+    """Create targets specific to each mode"""
+    
+    config = MODE_CONFIG[mode]
+    horizon = config['target_horizon']
+    return_target = config['target_return']
+    
+    # Forward returns for specific horizon
+    df[f'future_return_{mode.lower()}'] = df.groupby('symbol')['close'].transform(
+        lambda x: x.shift(-horizon) / x - 1
+    )
+    
+    # Target: binary classification
+    df[f'target_{mode.lower()}'] = (df[f'future_return_{mode.lower()}'] > return_target).astype(int)
+    
+    return df
+
+# =========================
+# ✅ DYNAMIC THRESHOLDS
+# =========================
+
+def get_dynamic_thresholds(mode, market_regime=None):
+    """Get dynamic thresholds based on mode and market regime"""
+    
+    base_thresholds = {
+        'DAILY': {
+            'auc_threshold': 0.52,
+            'confidence_threshold': 45,
+            'overfit_threshold': 0.15,
+        },
+        'WEEKLY': {
+            'auc_threshold': 0.55,
+            'confidence_threshold': 50,
+            'overfit_threshold': 0.12,
+        },
+        'MONTHLY': {
+            'auc_threshold': 0.58,
+            'confidence_threshold': 55,
+            'overfit_threshold': 0.10,
+        }
+    }
+    
+    thresholds = base_thresholds.get(mode, base_thresholds['DAILY']).copy()
+    
+    # Adjust for market regime
+    if market_regime == 'bear':
+        thresholds['auc_threshold'] += 0.02
+        thresholds['confidence_threshold'] += 5
+    elif market_regime == 'bull':
+        thresholds['auc_threshold'] -= 0.01
+    
+    return thresholds
+
+# =========================
+# ✅ ADAPTIVE PARAMETERS
+# =========================
+
+def get_adaptive_params(mode, symbol_data_size, class_balance):
+    """Adjust parameters based on data characteristics"""
+    
+    params = MODE_CONFIG[mode].copy()
+    base_params = None
+    
+    if mode == 'DAILY':
+        base_params = DAILY_PARAMS.copy()
+    elif mode == 'WEEKLY':
+        base_params = WEEKLY_PARAMS.copy()
+    else:
+        base_params = MONTHLY_PARAMS.copy()
+    
+    # Adjust for small datasets
+    if symbol_data_size < 200:
+        base_params['n_estimators'] = min(base_params['n_estimators'], 500)
+        base_params['max_depth'] = min(base_params['max_depth'], 4)
+        base_params['learning_rate'] = base_params['learning_rate'] * 1.5
+        base_params['subsample'] = 0.8
+    
+    # Adjust for imbalanced classes
+    if class_balance < 0.2 or class_balance > 0.8:
+        base_params['gamma'] = base_params['gamma'] * 0.5
+        base_params['min_child_weight'] = max(base_params['min_child_weight'] - 3, 1)
+    
+    # Adjust for large datasets
+    if symbol_data_size > 1000:
+        base_params['n_estimators'] = int(base_params['n_estimators'] * 1.2)
+        base_params['subsample'] = max(base_params['subsample'] - 0.1, 0.5)
+    
+    return base_params
 
 # =========================
 # FEEDBACK SYSTEM
@@ -725,14 +1144,17 @@ def save_prediction_log(df):
 # ✅ OPTUNA HYPERPARAMETER TUNING
 # =========================
 
-def optimize_hyperparameters(X_train, y_train, X_val, y_val, symbol):
+def optimize_hyperparameters(X_train, y_train, X_val, y_val, symbol, mode='DAILY'):
     """Bayesian hyperparameter optimization with Optuna"""
     
-    if symbol in best_params_cache:
-        print(f"   📦 Using cached best params for {symbol}")
-        return best_params_cache[symbol]
+    cache_key = f"{symbol}_{mode}"
+    if cache_key in best_params_cache:
+        print(f"   📦 Using cached best params for {cache_key}")
+        return best_params_cache[cache_key]
     
     optuna.logging.set_verbosity(optuna.logging.WARNING)
+    
+    optuna_trials = MODE_CONFIG[mode]['optuna_trials']
     
     def objective(trial):
         params = {
@@ -760,7 +1182,7 @@ def optimize_hyperparameters(X_train, y_train, X_val, y_val, symbol):
         return 0.5
     
     study = optuna.create_study(direction='maximize')
-    study.optimize(objective, n_trials=OPTUNA_TRIALS, show_progress_bar=False)
+    study.optimize(objective, n_trials=optuna_trials, show_progress_bar=False)
     
     best_params = study.best_params
     best_params['random_state'] = 42
@@ -768,9 +1190,9 @@ def optimize_hyperparameters(X_train, y_train, X_val, y_val, symbol):
     best_params['verbosity'] = 0
     best_params['use_label_encoder'] = False
     
-    save_best_params(symbol, best_params)
+    save_best_params(cache_key, best_params)
     
-    print(f"   ✅ Optuna: Best AUC={study.best_value:.3f}")
+    print(f"   ✅ Optuna ({mode}): Best AUC={study.best_value:.3f}")
     
     return best_params
 
@@ -830,26 +1252,102 @@ def calibrate_model(model, X_val, y_val):
     except:
         return model
 
+# =========================
+# ✅ ENSEMBLE MODELS
+# =========================
+
+def train_ensemble(X_train, y_train, X_val, y_val, params, mode):
+    """Train ensemble of models"""
+    
+    if not MODE_CONFIG[mode]['ensemble_models']:
+        return None
+    
+    models = []
+    weights = []
+    
+    # Model 1: Standard XGBoost
+    model1 = xgb.XGBClassifier(**params)
+    model1.fit(X_train, y_train, eval_set=[(X_val, y_val)], 
+               early_stopping_rounds=MODE_CONFIG[mode]['early_stopping'], verbose=False)
+    
+    if len(np.unique(y_val)) > 1:
+        auc1 = roc_auc_score(y_val, model1.predict_proba(X_val)[:, 1])
+    else:
+        auc1 = 0.5
+    
+    models.append(model1)
+    weights.append(max(auc1 - 0.5, 0.1))
+    
+    # Model 2: XGBoost with different max_depth
+    params2 = params.copy()
+    params2['max_depth'] = min(params2['max_depth'] + 2, 12)
+    params2['learning_rate'] = params2['learning_rate'] * 0.8
+    
+    model2 = xgb.XGBClassifier(**params2)
+    model2.fit(X_train, y_train, eval_set=[(X_val, y_val)], 
+               early_stopping_rounds=MODE_CONFIG[mode]['early_stopping'], verbose=False)
+    
+    if len(np.unique(y_val)) > 1:
+        auc2 = roc_auc_score(y_val, model2.predict_proba(X_val)[:, 1])
+    else:
+        auc2 = 0.5
+    
+    models.append(model2)
+    weights.append(max(auc2 - 0.5, 0.1))
+    
+    # Normalize weights
+    total_weight = sum(weights)
+    if total_weight > 0:
+        weights = [w / total_weight for w in weights]
+    else:
+        weights = [0.5, 0.5]
+    
+    return {'models': models, 'weights': weights}
+
+def predict_ensemble(ensemble, X):
+    """Predict using ensemble"""
+    if ensemble is None or len(ensemble['models']) == 0:
+        return None
+    
+    prob = np.zeros(len(X))
+    for model, weight in zip(ensemble['models'], ensemble['weights']):
+        prob += model.predict_proba(X)[:, 1] * weight
+    
+    return prob
+
 
 # =========================
 # TRAINING FUNCTION (FULLY ENHANCED)
 # =========================
 
-def train_symbol(symbol, group, features, params, feedback_log, metadata, sector_analyzer=None):
+def train_symbol(symbol, group, features, params, feedback_log, metadata, sector_analyzer=None, mode='DAILY'):
     """Train model with ALL enhancements"""
     try:
         group = group.sort_values('date')
-        X = group[features]
-        y = group['target']
-
-        if len(X) < MIN_SAMPLES_PER_SYMBOL:
+        
+        # Filter available features
+        available_features = [f for f in features if f in group.columns]
+        
+        X = group[available_features]
+        
+        # Use mode-specific target
+        target_col = f'target_{mode.lower()}'
+        if target_col in group.columns:
+            y = group[target_col]
+        else:
+            y = group['target']
+        
+        config = MODE_CONFIG[mode]
+        
+        if len(X) < config['min_samples']:
             return None, None
-
-        # =========================
-        # Three-way split
-        # =========================
-        train_idx = int(len(X) * 0.7)
-        val_idx = int(len(X) * 0.85)
+        
+        # Mode-specific split ratios
+        train_ratio = config['train_ratio']
+        val_ratio = config['val_ratio']
+        
+        train_idx = int(len(X) * train_ratio)
+        val_idx = int(len(X) * val_ratio)
         
         X_train = X.iloc[:train_idx]
         y_train = y.iloc[:train_idx]
@@ -857,19 +1355,18 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata, sector
         y_val = y.iloc[train_idx:val_idx]
         X_test = X.iloc[val_idx:]
         y_test = y.iloc[val_idx:]
-
+        
         if len(X_train) < 20 or len(X_test) < 5:
             return None, None
-
-        # =========================
-        # ✅ Walk-Forward Validation
-        # =========================
-        wf_mean, wf_std = walk_forward_validation(X_train, y_train, params)
+        
+        # Walk-Forward Validation with mode-specific splits
+        wf_mean, wf_std = walk_forward_validation(
+            X_train, y_train, params, 
+            n_splits=config['wf_splits']
+        )
         print(f"   📊 Walk-Forward AUC: {wf_mean:.3f} ± {wf_std:.3f}")
-
-        # =========================
+        
         # Class weight
-        # =========================
         target_ratio = y_train.mean()
         if target_ratio < 0.3:
             scale_pos = min((1 - target_ratio) / target_ratio, 10)
@@ -877,127 +1374,143 @@ def train_symbol(symbol, group, features, params, feedback_log, metadata, sector
             scale_pos = min(target_ratio / (1 - target_ratio), 10)
         else:
             scale_pos = 1
-
-        # =========================
-        # ✅ Optuna Tuning
-        # =========================
-        if ENABLE_OPTUNA and len(X_train) >= 100:
-            params_optimized = optimize_hyperparameters(X_train, y_train, X_val, y_val, symbol)
+        
+        # ✅ Adaptive Parameters
+        adaptive_params = get_adaptive_params(mode, len(group), target_ratio)
+        
+        # Optuna Tuning with mode-specific trials
+        if config['enable_optuna'] and len(X_train) >= 100:
+            params_optimized = optimize_hyperparameters(X_train, y_train, X_val, y_val, symbol, mode)
             params_copy = params_optimized
             print(f"   🎯 Using Optuna-optimized params")
         else:
-            params_copy = params.copy()
+            params_copy = adaptive_params.copy()
         
         params_copy['scale_pos_weight'] = scale_pos
-
+        
         # Sample weights from feedback
         weights = get_sample_weights(group.iloc[:train_idx], feedback_log)
-
-        # =========================
-        # Train model
-        # =========================
-        model = xgb.XGBClassifier(**params_copy)
         
+        # ✅ Ensemble Training (Weekly/Monthly)
+        ensemble = None
+        if config['ensemble_models']:
+            ensemble = train_ensemble(X_train, y_train, X_val, y_val, params_copy, mode)
+            if ensemble:
+                print(f"   🤖 Ensemble trained with {len(ensemble['models'])} models")
+        
+        # Train main model
+        model = xgb.XGBClassifier(**params_copy)
         model.fit(
             X_train, y_train,
             sample_weight=weights,
             eval_set=[(X_train, y_train), (X_val, y_val)],
-            early_stopping_rounds=50,
+            early_stopping_rounds=config['early_stopping'],
             verbose=False
         )
-
-        # =========================
-        # ✅ Probability Calibration
-        # =========================
-        model = calibrate_model(model, X_val, y_val)
-
-        # =========================
-        # Evaluate on TEST set
-        # =========================
-        prob = model.predict_proba(X_test)[:, 1]
-        preds = model.predict(X_test)
-
+        
+        # Calibration
+        if len(X_val) >= config['calibration_min_samples']:
+            model = calibrate_model(model, X_val, y_val)
+        
+        # Evaluate
+        if ensemble:
+            prob = predict_ensemble(ensemble, X_test)
+            if prob is None:
+                prob = model.predict_proba(X_test)[:, 1]
+            preds = (prob > 0.5).astype(int)
+        else:
+            prob = model.predict_proba(X_test)[:, 1]
+            preds = model.predict(X_test)
+        
         acc = accuracy_score(y_test, preds)
         auc = roc_auc_score(y_test, prob) if len(np.unique(y_test)) > 1 else 0.5
-
-        # Overfitting Check
+        
+        # Overfitting check with mode-specific threshold
         train_acc = accuracy_score(y_train, model.predict(X_train))
-        val_acc = accuracy_score(y_val, model.predict(X_val))
         overfit_gap = train_acc - acc
         
-        if overfit_gap > 0.12:
+        thresholds = get_dynamic_thresholds(mode)
+        
+        if overfit_gap > thresholds['overfit_threshold']:
             print(f"   ⚠️ Overfitting! Train={train_acc:.3f}, Test={acc:.3f}, Gap={overfit_gap:.3f}")
-
-        # Get sector info
-        sector = 'Unknown'
-        if sector_analyzer and symbol in sector_analyzer.symbol_sector_map:
-            sector = sector_analyzer.symbol_sector_map[symbol]
-
-        # =========================
-        # Save or reject model
-        # =========================
-        if auc >= AUC_THRESHOLD:
-            model_path = os.path.join(MODEL_DIR, f'{symbol}.joblib')
+        
+        # Save model based on mode-specific threshold
+        auc_threshold = thresholds['auc_threshold']
+        
+        if auc >= auc_threshold:
+            model_path = os.path.join(MODEL_DIR, f'{symbol}_{mode.lower()}.joblib')
             joblib.dump(model, model_path)
-
+            
+            # Save ensemble if exists
+            if ensemble:
+                ensemble_path = os.path.join(MODEL_DIR, f'{symbol}_{mode.lower()}_ensemble.joblib')
+                joblib.dump(ensemble, ensemble_path)
+            
             # Predict on ALL data
-            group['confidence_score'] = model.predict_proba(X)[:, 1] * 100
+            if ensemble:
+                all_probs = predict_ensemble(ensemble, X)
+                if all_probs is None:
+                    all_probs = model.predict_proba(X)[:, 1]
+            else:
+                all_probs = model.predict_proba(X)[:, 1]
             
-            # Adjust by sector momentum
-            if 'sector_momentum' in group.columns:
-                sector_momentum = group['sector_momentum'].iloc[0]
-                if sector_momentum > 0.02:
-                    group['confidence_score'] = group['confidence_score'] * 1.1
-                elif sector_momentum < -0.02:
-                    group['confidence_score'] = group['confidence_score'] * 0.9
-                group['confidence_score'] = group['confidence_score'].clip(0, 100)
+            group['confidence_score'] = all_probs * 100
             
-            # Adjust by market cap
-            if 'freeFloatMarketCap' in group.columns:
-                mcap = group['freeFloatMarketCap'].iloc[-1]
-                if mcap > 5000:
-                    group['confidence_score'] = group['confidence_score'] * 1.05
-                elif mcap < 50:
-                    group['confidence_score'] = group['confidence_score'] * 0.95
-                group['confidence_score'] = group['confidence_score'].clip(0, 100)
+            # Mode-specific adjustments
+            if mode == 'DAILY':
+                if 'sector_momentum' in group.columns:
+                    group['confidence_score'] *= (1 + group['sector_momentum'] * 0.5)
+            elif mode == 'MONTHLY':
+                if 'sector_momentum' in group.columns:
+                    group['confidence_score'] *= (1 + group['sector_momentum'] * 1.5)
+            else:  # WEEKLY
+                if 'sector_momentum' in group.columns:
+                    group['confidence_score'] *= (1 + group['sector_momentum'] * 1.0)
             
-            group['prediction'] = (group['confidence_score'] > 50).astype(int)
-
+            group['confidence_score'] = group['confidence_score'].clip(0, 100)
+            group['prediction'] = (group['confidence_score'] > thresholds['confidence_threshold']).astype(int)
+            
             result = group[['symbol', 'date', 'close', 'confidence_score', 'prediction']]
             status = 'GOOD'
             failed_attempts = 0
             
-            print(f"   ✅ AUC={auc:.3f} | Acc={acc:.3f} | WF={wf_mean:.3f}")
-
+            print(f"   ✅ AUC={auc:.3f} | Acc={acc:.3f} | WF={wf_mean:.3f} | Mode={mode}")
         else:
             group['confidence_score'] = 50
             group['prediction'] = 0
             result = group[['symbol', 'date', 'close', 'confidence_score', 'prediction']]
             status = 'BAD'
-
+            
             if not metadata.empty and symbol in metadata['symbol'].values:
                 prev_data = metadata[metadata['symbol'] == symbol].iloc[0]
                 failed_attempts = prev_data.get('failed_attempts', 0) + 1
             else:
                 failed_attempts = 1
             
-            print(f"   ❌ AUC={auc:.3f} < {AUC_THRESHOLD}")
-
+            print(f"   ❌ AUC={auc:.3f} < {auc_threshold} (Mode: {mode})")
+        
+        # Get sector info
+        sector = 'Unknown'
+        if sector_analyzer and symbol in sector_analyzer.symbol_sector_map:
+            sector = sector_analyzer.symbol_sector_map[symbol]
+        
         return result, {
             'symbol': symbol,
             'last_trained': datetime.now(),
             'last_attempt': datetime.now(),
             'auc': auc,
             'acc': acc,
-            'val_acc': val_acc,
+            'val_acc': accuracy_score(y_val, model.predict(X_val)),
             'wf_auc': wf_mean,
-            'failed_attempts': failed_attempts if auc < AUC_THRESHOLD else 0,
+            'failed_attempts': failed_attempts if auc < auc_threshold else 0,
             'status': status,
             'class_ratio': target_ratio,
             'sector': sector,
-            'features_used': len(features)
+            'features_used': len(available_features),
+            'mode': mode,
+            'ensemble': ensemble is not None
         }
-
+    
     except Exception as e:
         print(f"   ❌ Error training {symbol}: {str(e)[:100]}")
         return None, None
@@ -1062,13 +1575,21 @@ def download_from_huggingface():
 # =========================
 
 def main():
-    print("🚀 XGBOOST SCHEDULER (ALL ENHANCEMENTS)")
+    print("🚀 XGBOOST SCHEDULER (ALL ENHANCEMENTS v2.0)")
     print(f"   ✅ Walk-Forward Validation")
     print(f"   ✅ Probability Calibration")
     print(f"   ✅ Target Encoding")
     print(f"   ✅ Interaction Features")
-    print(f"   ✅ Optuna Tuning ({OPTUNA_TRIALS} trials)")
+    print(f"   ✅ Optuna Tuning")
     print(f"   ✅ Market Cap + Sector Features")
+    print(f"   ✅ Market Regime Detection")
+    print(f"   ✅ Technical Indicators (BB, MACD, ATR, MFI)")
+    print(f"   ✅ Temporal & Rolling Features")
+    print(f"   ✅ Price Pattern Detection")
+    print(f"   ✅ Feature Selection")
+    print(f"   ✅ Ensemble Models (Weekly/Monthly)")
+    print(f"   ✅ Mode-Specific Targets & Thresholds")
+    print(f"   ✅ Adaptive Parameters")
     print("="*60)
 
     # Load best params cache
@@ -1093,8 +1614,19 @@ def main():
         mode = "DAILY"
         params = DAILY_PARAMS
     else:
+        print("📅 No training needed. Uploading existing files...")
         upload_to_huggingface()
         return
+    
+    config = MODE_CONFIG[mode]
+    
+    print(f"\n📅 Mode: {mode}")
+    print(f"🎯 Target Horizon: {config['target_horizon']} days")
+    print(f"📈 Target Return: {config['target_return']*100}%")
+    print(f"🔧 Optuna Trials: {config['optuna_trials']}")
+    print(f"🤖 Ensemble: {config['ensemble_models']}")
+    print(f"📊 Feature Selection: {config['feature_selection']}")
+    print("="*60)
 
     # Feedback update
     feedback_log = update_actual_results()
@@ -1112,16 +1644,37 @@ def main():
     # Initialize Sector Analyzer
     sector_analyzer = SectorAnalyzer(df)
 
-    # Feature engineering
+    # Feature engineering (base features)
+    print("\n🔧 Engineering Base Features...")
     df = engineer_features(df)
+    
+    # ✅ Add new enhanced features
+    print("🔧 Adding Enhanced Features...")
+    df = add_market_regime_features(df)
+    df = add_temporal_features(df)
+    df = add_technical_indicators(df)
+    df = add_rolling_features(df)
+    df = detect_price_patterns(df)
+    
+    # Create mode-specific targets
+    df = create_mode_specific_targets(df, mode)
+    
+    # Use mode-specific target
+    target_col = f'target_{mode.lower()}'
+    if target_col in df.columns:
+        df['target'] = df[target_col]
+    
+    # Drop rows with NaN targets
+    df = df.dropna(subset=['target'])
+    
+    # Get all features
     features = get_features(df)
     
+    # Feature Selection
+    features = select_features_for_mode(df, mode, features)
+    
     print(f"\n📊 Features used: {len(features)}")
-    print(f"   Base: close, volume, return_5d, return_10d, volatility, volatility_5d, volume_ratio")
-    print(f"   Market Cap: {[f for f in features if 'cap' in f.lower() or 'liquidity' in f.lower()]}")
-    print(f"   Sector: {[f for f in features if 'sector' in f.lower()]}")
-    print(f"   Interaction: {[f for f in features if 'interaction' in f.lower() or 'signal' in f.lower()]}")
-    print(f"   Target Encoding: sector_target_mean, sector_target_std, sector_recent_target, symbol_target_mean")
+    print(f"   Mode-Specific: Target horizon {config['target_horizon']}d, Return > {config['target_return']*100}%")
 
     # Train models
     results = []
@@ -1136,7 +1689,7 @@ def main():
     sector_performance = defaultdict(lambda: {'good': 0, 'bad': 0, 'total': 0})
 
     for symbol, group in df.groupby('symbol'):
-        if len(group) < MIN_SAMPLES_PER_SYMBOL:
+        if len(group) < config['min_samples']:
             skipped_count += 1
             continue
 
@@ -1149,8 +1702,14 @@ def main():
         if 'monthly' in reason:
             monthly_retry_count += 1
 
+        # Detect market regime for this symbol
+        symbol_data = group.sort_values('date')
+        market_regime, regime_conf = detect_market_regime(symbol_data)
+        
         print(f"\n🔧 Training: {symbol} ({len(group)} rows)")
-        result, model_info = train_symbol(symbol, group, features, params, feedback_log, metadata, sector_analyzer)
+        print(f"   📊 Market Regime: {market_regime} (conf: {regime_conf:.2f})")
+        
+        result, model_info = train_symbol(symbol, group, features, params, feedback_log, metadata, sector_analyzer, mode)
 
         if result is not None:
             results.append(result)
@@ -1163,7 +1722,8 @@ def main():
                     good_models_list.append({
                         'symbol': symbol, 
                         'auc': model_info['auc'],
-                        'wf_auc': model_info.get('wf_auc', 0)
+                        'wf_auc': model_info.get('wf_auc', 0),
+                        'mode': mode
                     })
                     
                     sector = model_info.get('sector', 'Unknown')
@@ -1177,9 +1737,10 @@ def main():
         else:
             skipped_count += 1
 
-    # Save predictions
+    # Save predictions with mode prefix
     if results:
         final = pd.concat(results, ignore_index=True)
+        final.to_csv(f'./csv/xgb_confidence_{mode.lower()}.csv', index=False)
         final.to_csv(XGB_CONFIDENCE, index=False)
         save_prediction_log(final)
 
@@ -1226,7 +1787,9 @@ def main():
     upload_to_huggingface()
 
     print("\n" + "="*60)
-    print("🎉 ALL DONE!")
+    print(f"🎉 {mode} TRAINING COMPLETE!")
+    print(f"   Mode: {mode}")
+    print(f"   Target: {config['target_horizon']}d, >{config['target_return']*100}% return")
     print(f"   ✅ Good Models: {good_count}")
     print(f"   ❌ Bad Models: {bad_count}")
     print(f"   ⏭️ Skipped: {skipped_count}")
