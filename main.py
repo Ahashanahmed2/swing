@@ -15,6 +15,7 @@ scripts = [
     "scripts/hf_download.py",
     
     "scripts/mongodb.py",
+    "scripts/rsi.py",
     "scripts/sector_candle.py",
     "scripts/sector_weekly_diver_daily_symbol.py",
     "scripts/support_buy.py",
