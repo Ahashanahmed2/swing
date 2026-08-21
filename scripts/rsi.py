@@ -45,14 +45,12 @@ def extract_rsi_below_30():
             print("Please make sure the date column is in a valid format.")
             return
         
-        # Step 4: Get the latest date for each symbol
-        print("\nFinding latest date for each symbol...")
-        latest_dates = df.groupby('symbol')['date'].max().reset_index()
-        print(f"Total unique symbols: {len(latest_dates)}")
+        # Step 4: Sort by date to get the latest date for each symbol
+        df_sorted = df.sort_values('date', ascending=False)
         
-        # Step 5: Merge to get only the latest data for each symbol
-        latest_data = pd.merge(df, latest_dates, on=['symbol', 'date'], how='inner')
-        print(f"Rows with latest data for each symbol: {len(latest_data)}")
+        # Step 5: Keep only the first (latest) row for each symbol
+        latest_data = df_sorted.groupby('symbol').first().reset_index()
+        print(f"Latest data for each symbol: {len(latest_data)} rows")
         
         # Step 6: From latest data, filter rows where rsi <= 30
         filtered_df = latest_data[latest_data['rsi'] <= 30].copy()
@@ -69,8 +67,8 @@ def extract_rsi_below_30():
             print(display_df.to_string(index=False))
             return
         
-        # Step 7: Select only required columns (excluding any existing sl)
-        result_df = filtered_df[['date', 'symbol', 'high', 'rsi']].copy()
+        # Step 7: Select only required columns
+        result_df = filtered_df[['symbol', 'date', 'high', 'rsi']].copy()
         
         # Step 8: Sort by rsi ascending (lowest RSI first)
         result_df = result_df.sort_values('rsi', ascending=True)
@@ -82,15 +80,18 @@ def extract_rsi_below_30():
         result_df.reset_index(drop=True, inplace=True)
         result_df.insert(0, 'sl', range(1, len(result_df) + 1))
         
-        # Step 11: Save to CSV
+        # Step 11: Reorder columns to match requirement: sl, symbol, date, high, rsi
+        result_df = result_df[['sl', 'symbol', 'date', 'high', 'rsi']]
+        
+        # Step 12: Save to CSV
         result_df.to_csv(output_file, index=False)
         print(f"\nSuccessfully saved to: {output_file}")
         
-        # Step 12: Display summary
+        # Step 13: Display summary
         print("\n" + "="*50)
         print("SUMMARY")
         print("="*50)
-        print(f"Total symbols processed: {len(latest_dates)}")
+        print(f"Total symbols processed: {len(latest_data)}")
         print(f"Symbols with RSI <= 30: {len(result_df)}")
         print(f"Columns: {', '.join(result_df.columns)}")
         print(f"RSI Range: {result_df['rsi'].min():.2f} to {result_df['rsi'].max():.2f}")
@@ -99,17 +100,35 @@ def extract_rsi_below_30():
         print("\nAll symbols with RSI <= 30 (sorted by RSI):")
         print(result_df.to_string(index=False))
         
-        # Step 13: Show all symbols with their latest RSI for comparison
+        # Step 14: Show all symbols with their latest RSI for comparison
         print("\n" + "="*50)
         print("ALL SYMBOLS WITH LATEST RSI VALUES")
         print("="*50)
-        all_latest = latest_data[['symbol', 'date', 'rsi']].copy()
+        all_latest = latest_data[['symbol', 'date', 'rsi', 'high']].copy()
         all_latest['date'] = all_latest['date'].dt.strftime('%Y-%m-%d')
         all_latest = all_latest.sort_values('rsi', ascending=True)
         print(all_latest.to_string(index=False))
         
         print(f"\nFile size: {os.path.getsize(output_file)} bytes")
         print("="*50)
+        
+        # Step 15: Verify the output
+        print("\n" + "="*50)
+        print("VERIFYING OUTPUT FILE")
+        print("="*50)
+        verify_df = pd.read_csv(output_file)
+        print(f"Rows in output: {len(verify_df)}")
+        print(f"Columns in output: {', '.join(verify_df.columns)}")
+        print("\nSample data:")
+        print(verify_df.to_string(index=False))
+        
+        # Step 16: Check for duplicate symbols
+        duplicates = verify_df[verify_df.duplicated(['symbol'], keep=False)]
+        if len(duplicates) > 0:
+            print("\nWARNING: Duplicate symbols found in output:")
+            print(duplicates)
+        else:
+            print("\n✓ No duplicate symbols found - each symbol appears only once")
         
     except FileNotFoundError:
         print(f"Error: Input file '{input_file}' not found.")
@@ -124,6 +143,8 @@ def extract_rsi_below_30():
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         print(f"Error type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     print("Starting RSI extraction script...")
