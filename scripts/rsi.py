@@ -4,7 +4,7 @@ from datetime import datetime
 
 def extract_rsi_below_30():
     """
-    Extract rows with RSI <= 30 from mongodb.csv based on latest date
+    Extract rows with RSI <= 30 for each symbol's latest date from mongodb.csv
     and save to rsi.csv with new serial numbers starting from 1
     """
     
@@ -45,29 +45,28 @@ def extract_rsi_below_30():
             print("Please make sure the date column is in a valid format.")
             return
         
-        # Step 4: Get the latest date from the data
-        latest_date = df['date'].max()
-        print(f"Latest date in data: {latest_date.strftime('%Y-%m-%d')}")
+        # Step 4: Get the latest date for each symbol
+        print("\nFinding latest date for each symbol...")
+        latest_dates = df.groupby('symbol')['date'].max().reset_index()
+        print(f"Total unique symbols: {len(latest_dates)}")
         
-        # Step 5: Filter only the latest date's data
-        latest_data = df[df['date'] == latest_date].copy()
-        print(f"Rows on latest date: {len(latest_data)}")
+        # Step 5: Merge to get only the latest data for each symbol
+        latest_data = pd.merge(df, latest_dates, on=['symbol', 'date'], how='inner')
+        print(f"Rows with latest data for each symbol: {len(latest_data)}")
         
         # Step 6: From latest data, filter rows where rsi <= 30
         filtered_df = latest_data[latest_data['rsi'] <= 30].copy()
-        print(f"Rows with RSI <= 30 on latest date: {len(filtered_df)}")
+        print(f"Symbols with RSI <= 30 on their latest date: {len(filtered_df)}")
         
         if len(filtered_df) == 0:
-            print(f"No rows found with RSI <= 30 on {latest_date.strftime('%Y-%m-%d')}")
-            print("Checking if there are any rows with RSI <= 30 in entire dataset...")
+            print("\nNo symbols found with RSI <= 30 on their latest date.")
+            print("Showing all symbols with their latest RSI values:")
             
-            # Check if any rows with RSI <= 30 exist in entire dataset
-            any_rsi_below_30 = df[df['rsi'] <= 30]
-            if len(any_rsi_below_30) > 0:
-                print(f"Found {len(any_rsi_below_30)} rows with RSI <= 30 in entire dataset.")
-                print("But none on the latest date. Try checking the previous dates.")
-            else:
-                print("No rows found with RSI <= 30 anywhere in the dataset.")
+            # Show all symbols with their latest RSI
+            display_df = latest_data[['symbol', 'date', 'rsi']].copy()
+            display_df['date'] = display_df['date'].dt.strftime('%Y-%m-%d')
+            display_df = display_df.sort_values('rsi', ascending=True)
+            print(display_df.to_string(index=False))
             return
         
         # Step 7: Select only required columns (excluding any existing sl)
@@ -91,14 +90,23 @@ def extract_rsi_below_30():
         print("\n" + "="*50)
         print("SUMMARY")
         print("="*50)
-        print(f"Date: {latest_date.strftime('%Y-%m-%d')}")
-        print(f"Total records saved: {len(result_df)}")
+        print(f"Total symbols processed: {len(latest_dates)}")
+        print(f"Symbols with RSI <= 30: {len(result_df)}")
         print(f"Columns: {', '.join(result_df.columns)}")
         print(f"RSI Range: {result_df['rsi'].min():.2f} to {result_df['rsi'].max():.2f}")
         print(f"High Range: {result_df['high'].min():.2f} to {result_df['high'].max():.2f}")
         
-        print("\nAll rows (sorted by RSI):")
+        print("\nAll symbols with RSI <= 30 (sorted by RSI):")
         print(result_df.to_string(index=False))
+        
+        # Step 13: Show all symbols with their latest RSI for comparison
+        print("\n" + "="*50)
+        print("ALL SYMBOLS WITH LATEST RSI VALUES")
+        print("="*50)
+        all_latest = latest_data[['symbol', 'date', 'rsi']].copy()
+        all_latest['date'] = all_latest['date'].dt.strftime('%Y-%m-%d')
+        all_latest = all_latest.sort_values('rsi', ascending=True)
+        print(all_latest.to_string(index=False))
         
         print(f"\nFile size: {os.path.getsize(output_file)} bytes")
         print("="*50)
