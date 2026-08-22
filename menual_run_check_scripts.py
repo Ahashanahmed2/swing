@@ -14,7 +14,7 @@ scripts = [
     #"scripts/export_unknown_symbols.py",
     #"scripts/cleanup_ppo_all.py",
     "scripts/generate_pdf.py",
-    #"scripts/dayliMassage.py",
+    "scripts/dayliMassage.py",
 ]
 
 for script in scripts:
