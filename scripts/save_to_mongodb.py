@@ -1,6 +1,6 @@
 """
 scripts/save_to_mongodb.py
-FINAL_AI_SIGNALS.csv + Support/Resistance + EMA + Daily Buy + SWRSI + Strong Ratio সব MongoDB-তে সেইভ করে
+FINAL_AI_SIGNALS.csv + Support/Resistance + RSI + Daily Buy + SWRSI + Strong Ratio সব MongoDB-তে সেইভ করে
 """
 
 import os
@@ -40,10 +40,11 @@ FILES_TO_SAVE = [
         "description": "Daily Buy Signals"
     },
     {
-        "path": "./output/ai_signal/ema_21.csv",
-        "collection": "ema_21_signals",
-        "has_date": False,
-        "description": "EMA 21 Signals"
+        "path": "./output/ai_signal/rsi.csv",  # ema_21.csv বাদ দিয়ে rsi.csv যোগ করা হয়েছে
+        "collection": "rsi_signals",
+        "has_date": True,
+        "date_column": "DATE",
+        "description": "RSI Signals - Daily RSI values for all symbols"
     },
     {
         "path": "./output/ai_signal/swrsi.csv",
@@ -212,7 +213,7 @@ def parse_date_to_string(date_val):
 # MongoDB-তে সেইভ (Upsert - কোন ডাটা ডিলিট হবে না)
 # =========================================================
 def save_to_mongodb(df, client, collection_name, has_date=False, date_column=None, 
-                    is_ai_signals=False, is_swrsi=False, sector_map=None):
+                    is_ai_signals=False, is_swrsi=False, is_rsi=False, sector_map=None):
     """DataFrame MongoDB-তে সেইভ করে - ডুপ্লিকেট ছাড়া, sector সহ"""
     if df is None or client is None:
         return False
@@ -243,6 +244,12 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
                     symbols_in_ai.append(str(r['symbol']).strip().upper())
             if symbols_in_ai:
                 print(f"   🔍 AI signals symbols sample: {symbols_in_ai}")
+
+        # RSI signals এর column চেক
+        if is_rsi and records:
+            print(f"   📊 RSI columns: {df.columns.tolist()}")
+            sample_rsi = records[0] if records else {}
+            print(f"   📊 Sample RSI data: {sample_rsi}")
 
         # প্রতিটি রেকর্ডে তারিখ ও টাইমস্ট্যাম্প যোগ করুন
         processed_records = []
@@ -323,7 +330,14 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
                     if 'signal_date' in record and record.get('signal_date') and not pd.isna(record.get('signal_date')):
                         analysis_date = parse_date_to_string(record.get('signal_date'))
 
-                # ৫ম প্রাধান্য: সব ব্যর্থ হলে আজকের তারিখ
+                # ৫ম প্রাধান্য: RSI এর জন্য DATE ব্যবহার
+                if not analysis_date and is_rsi:
+                    if 'DATE' in record and record.get('DATE') and not pd.isna(record.get('DATE')):
+                        analysis_date = parse_date_to_string(record.get('DATE'))
+                    elif 'date' in record and record.get('date') and not pd.isna(record.get('date')):
+                        analysis_date = parse_date_to_string(record.get('date'))
+
+                # ৬ষ্ঠ প্রাধান্য: সব ব্যর্থ হলে আজকের তারিখ
                 if not analysis_date:
                     analysis_date = today
                     print(f"   ⚠️ Record {idx}: No date found, using today ({today})")
@@ -345,6 +359,16 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
                         record['composite_score'] = 0
                     if 'weekly_strength_label' not in record or pd.isna(record.get('weekly_strength_label')):
                         record['weekly_strength_label'] = 'Weak'
+
+                # RSI signals এর জন্য extra ফিল্ড
+                if is_rsi:
+                    record['analysis_datetime'] = today_datetime
+                    # Ensure RSI value exists
+                    if 'RSI' not in record or pd.isna(record.get('RSI')):
+                        record['RSI'] = None
+                    # Ensure HIGH value exists
+                    if 'HIGH' not in record or pd.isna(record.get('HIGH')):
+                        record['HIGH'] = None
 
                 # Strong Ratio signals এর জন্য extra ফিল্ড
                 if collection_name == "strong_ratio_signals":
@@ -490,6 +514,10 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
                 collection.create_index([('sector', 1)], background=True)
                 collection.create_index([('weekly_strength_label', 1)], background=True)
 
+            if is_rsi:
+                collection.create_index([('RSI', -1)], background=True)
+                collection.create_index([('HIGH', -1)], background=True)
+
             # ইউনিক কম্পাউন্ড ইনডেক্স (ডুপ্লিকেট প্রতিরোধের জন্য)
             if 'symbol' in df.columns and not is_ai_signals:
                 try:
@@ -501,6 +529,13 @@ def save_to_mongodb(df, client, collection_name, has_date=False, date_column=Non
             if collection_name == "strong_ratio_signals":
                 try:
                     collection.create_index([('rt', 1), ('date', 1)], unique=True, sparse=True, background=True)
+                except Exception as e:
+                    # Index might already exist
+                    pass
+
+            if is_rsi:
+                try:
+                    collection.create_index([('symbol', 1), ('analysis_date', 1)], unique=True, sparse=True, background=True)
                 except Exception as e:
                     # Index might already exist
                     pass
@@ -601,11 +636,75 @@ def check_ai_sector_stats(client):
         print(f"⚠️ Could not check AI sector stats: {e}")
 
 # =========================================================
+# RSI Statistics
+# =========================================================
+def check_rsi_stats(client):
+    """RSI collection-এর statistics দেখায়"""
+    try:
+        db = client[DATABASE_NAME]
+        rsi_col = db["rsi_signals"]
+        
+        total = rsi_col.count_documents({})
+        if total == 0:
+            print("\n📊 RSI SIGNALS STATISTICS:")
+            print("-" * 40)
+            print("   No RSI signals found")
+            return
+        
+        print(f"\n📊 RSI SIGNALS STATISTICS:")
+        print("-" * 40)
+        print(f"   Total RSI Records: {total}")
+        
+        # Date range
+        dates = rsi_col.distinct('analysis_date', sort=[('analysis_date', -1)])
+        if dates:
+            print(f"   Latest Date: {dates[0] if dates else 'N/A'}")
+            print(f"   Date Range: {dates[-1] if len(dates) > 1 else dates[0]} to {dates[0]}")
+        
+        # RSI statistics
+        try:
+            pipeline = [
+                {'$group': {
+                    '_id': None,
+                    'avg_rsi': {'$avg': '$RSI'},
+                    'min_rsi': {'$min': '$RSI'},
+                    'max_rsi': {'$max': '$RSI'},
+                    'count': {'$sum': 1}
+                }}
+            ]
+            rsi_stats = list(rsi_col.aggregate(pipeline))
+            if rsi_stats:
+                stats = rsi_stats[0]
+                print(f"\n   RSI Statistics:")
+                print(f"     Average RSI: {stats.get('avg_rsi', 0):.2f}")
+                print(f"     Min RSI: {stats.get('min_rsi', 0):.2f}")
+                print(f"     Max RSI: {stats.get('max_rsi', 0):.2f}")
+        except Exception as e:
+            print(f"   ⚠️ Could not calculate RSI statistics: {e}")
+        
+        # Overbought (>70) and Oversold (<30) counts
+        overbought = rsi_col.count_documents({'RSI': {'$gt': 70}})
+        oversold = rsi_col.count_documents({'RSI': {'$lt': 30}})
+        print(f"\n   Signal Distribution:")
+        print(f"     Overbought (RSI > 70): {overbought} ({overbought/total*100:.1f}%)")
+        print(f"     Oversold (RSI < 30): {oversold} ({oversold/total*100:.1f}%)")
+        print(f"     Neutral (30-70): {total - overbought - oversold} ({(total-overbought-oversold)/total*100:.1f}%)")
+        
+        # Sample records
+        sample = rsi_col.find().limit(5)
+        print(f"\n   Sample Records (first 5):")
+        for doc in sample:
+            print(f"     {doc.get('symbol', 'N/A')}: {doc.get('analysis_date', 'N/A')} - RSI: {doc.get('RSI', 'N/A')}, HIGH: {doc.get('HIGH', 'N/A')}")
+        
+    except Exception as e:
+        print(f"⚠️ Could not check RSI stats: {e}")
+
+# =========================================================
 # মেইন ফাংশন
 # =========================================================
 def main():
     print("=" * 70)
-    print("💾 MONGODB SAVE SCRIPT - ALL TRADING DATA + SWRSI + STRONG RATIO + SECTOR")
+    print("💾 MONGODB SAVE SCRIPT - ALL TRADING DATA + RSI + SWRSI + STRONG RATIO + SECTOR")
     print("=" * 70)
     print(f"📅 Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"📂 Files to save: {len(FILES_TO_SAVE)}")
@@ -641,6 +740,7 @@ def main():
         date_column = file_config.get("date_column", None)
         is_ai_signals = (collection_name == "daily_ai_signals")
         is_swrsi = (collection_name == "swrsi_signals")
+        is_rsi = (collection_name == "rsi_signals")
         description = file_config.get("description", "")
 
         print(f"\n{'='*50}")
@@ -649,6 +749,8 @@ def main():
         print(f"   Collection: {collection_name}")
         if is_ai_signals:
             print(f"   🆕 Will add sector data from mongodb.csv")
+        if is_rsi:
+            print(f"   📊 RSI data: SL, SYMBOL, DATE, HIGH, RSI")
         print(f"{'='*50}")
 
         # CSV লোড
@@ -667,6 +769,7 @@ def main():
                 date_column=date_column,
                 is_ai_signals=is_ai_signals,
                 is_swrsi=is_swrsi,
+                is_rsi=is_rsi,
                 sector_map=sector_map  # 🆕 sector_map পাস করুন
             )
 
@@ -694,7 +797,13 @@ def main():
     except Exception as e:
         print(f"⚠️ Could not check AI sector stats: {e}")
 
-    # ৬. SWRSI Summary (extra)
+    # ৬. RSI Statistics
+    try:
+        check_rsi_stats(client)
+    except Exception as e:
+        print(f"⚠️ Could not check RSI stats: {e}")
+
+    # ৭. SWRSI Summary (extra)
     try:
         db = client[DATABASE_NAME]
         swrsi_col = db["swrsi_signals"]
@@ -721,7 +830,7 @@ def main():
     except Exception as e:
         print(f"⚠️ Could not generate SWRSI summary: {e}")
 
-    # ৭. Strong Ratio Summary (extra)
+    # ৮. Strong Ratio Summary (extra)
     try:
         strong_ratio_col = db["strong_ratio_signals"]
         if strong_ratio_col.count_documents({}) > 0:
@@ -745,7 +854,7 @@ def main():
     except Exception as e:
         print(f"⚠️ Could not generate Strong Ratio summary: {e}")
 
-    # ৮. ক্লোজ
+    # ৯. ক্লোজ
     client.close()
 
     print("\n" + "=" * 70)
