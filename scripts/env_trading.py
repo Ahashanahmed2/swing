@@ -1,9 +1,12 @@
 # ================== env_trading.py ==================
 # FINAL VERSION — SIGNAL-FREE PURE RL (50-DIM SIMPLE)
+# ✅ FIXED: Sector files loaded ONLY ONCE per env instance
+# ✅ FIXED: Better reward scaling (risk-based not capital-based)
+# ✅ FIXED: Reduced SL penalty (0.2 → 0.05) + TP bonus (+0.1)
+# ✅ FIXED: SL 2% → 3%, TP 4% → 6% (2:1 R:R)
+# ✅ FIXED: Minimum 50 steps before termination
 # ✅ 50-dim observation (base market features only)
-# ✅ All Tier 1-4 features computed for reward shaping
 # ✅ Trade tracking for training metrics
-# ✅ Auto SL/TP + Volatility-based position sizing
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -270,12 +273,18 @@ class PortfolioOptimizer:
 
 
 # =========================================================
-# RSI DIVERGENCE FEATURES
+# RSI DIVERGENCE — ✅ CLASS-LEVEL CACHE
 # =========================================================
 
 class RSIDivergenceFeatures:
+    _CACHE = {}  # ✅ class-level cache (shared across instances)
+
     def __init__(self, csv_path="./csv/rsi_diver.csv"):
-        self.data = self._load(csv_path)
+        if csv_path in RSIDivergenceFeatures._CACHE:
+            self.data = RSIDivergenceFeatures._CACHE[csv_path]
+        else:
+            self.data = self._load(csv_path)
+            RSIDivergenceFeatures._CACHE[csv_path] = self.data
 
     def _load(self, path):
         if not Path(path).exists():
@@ -287,7 +296,7 @@ class RSIDivergenceFeatures:
             data = {}
             for sym in df['symbol'].unique():
                 data[sym] = df[df['symbol'] == sym].reset_index(drop=True)
-            print(f"✅ RSI Divergence: {len(data)} symbols")
+            print(f"✅ RSI Divergence: {len(data)} symbols (loaded once)")
             return data
         except:
             return {}
@@ -319,12 +328,18 @@ class RSIDivergenceFeatures:
 
 
 # =========================================================
-# SUPPORT / RESISTANCE FEATURES
+# SUPPORT / RESISTANCE — ✅ CLASS-LEVEL CACHE
 # =========================================================
 
 class SupportResistanceFeatures:
+    _CACHE = {}  # ✅ class-level cache
+
     def __init__(self, csv_path="./csv/support_resistance.csv"):
-        self.data = self._load(csv_path)
+        if csv_path in SupportResistanceFeatures._CACHE:
+            self.data = SupportResistanceFeatures._CACHE[csv_path]
+        else:
+            self.data = self._load(csv_path)
+            SupportResistanceFeatures._CACHE[csv_path] = self.data
 
     def _load(self, path):
         if not Path(path).exists():
@@ -333,7 +348,7 @@ class SupportResistanceFeatures:
             df = pd.read_csv(path)
             if 'current_date' in df.columns:
                 df['current_date'] = pd.to_datetime(df['current_date'])
-            print(f"✅ Support/Resistance: {df['symbol'].nunique()} symbols")
+            print(f"✅ Support/Resistance: {df['symbol'].nunique()} symbols (loaded once)")
             return df
         except:
             return pd.DataFrame()
@@ -371,12 +386,15 @@ class SupportResistanceFeatures:
 class MultiSymbolTradingEnv(gym.Env):
     """
     Multi-symbol trading environment for PPO.
-    Action per symbol:
-        0 = HOLD, 1 = BUY, 2 = SELL
+    Action per symbol: 0=HOLD, 1=BUY, 2=SELL
 
-    ✅ 50-dim observation (base market features only)
-    ✅ All Tier 1-4 features used for reward shaping
-    ✅ Auto SL/TP + Volatility-based sizing
+    ✅ FIXED:
+        - Sector files loaded ONLY ONCE per env instance
+        - Better reward scaling (risk-based)
+        - Reduced SL penalty (0.2 → 0.05)
+        - TP bonus (+0.1)
+        - SL 3%, TP 6% (2:1 R:R)
+        - Minimum 50 steps before termination
     """
 
     metadata = {"render_modes": ["human"]}
@@ -393,14 +411,15 @@ class MultiSymbolTradingEnv(gym.Env):
         xgb_models=None,
         agentic_loop=None,
         patch_tst=None,
-        # SL/TP config
-        sl_pct=0.02,
-        tp_pct=0.04,
+        # ✅ SL/TP tuned for 2:1 R:R
+        sl_pct=0.03,
+        tp_pct=0.06,
         max_position_pct=0.30,
         hold_penalty=0.0001,
         illegal_action_penalty=0.002,
         open_cost=0.001,
-        sl_penalty=0.2,
+        sl_penalty=0.05,       # ✅ FIXED: 0.2 → 0.05
+        tp_bonus=0.10,         # ✅ FIXED: new
         signals=None,
     ):
         super().__init__()
@@ -414,7 +433,7 @@ class MultiSymbolTradingEnv(gym.Env):
         self.total_capital = total_capital
         self.risk_percent = risk_percent
 
-        # SL/TP
+        # SL/TP + reward shaping
         self.sl_pct = sl_pct
         self.tp_pct = tp_pct
         self.max_position_pct = max_position_pct
@@ -422,6 +441,7 @@ class MultiSymbolTradingEnv(gym.Env):
         self.illegal_action_penalty = illegal_action_penalty
         self.open_cost = open_cost
         self.sl_penalty = sl_penalty
+        self.tp_bonus = tp_bonus
 
         self.n_symbols = len(self.symbols)
         self.max_steps = max(len(df) for df in self.dfs.values())
@@ -447,8 +467,8 @@ class MultiSymbolTradingEnv(gym.Env):
         self.portfolio_weights = None
 
         self.patch_tst = patch_tst
-        self.rsi_div = RSIDivergenceFeatures()
-        self.sr_features = SupportResistanceFeatures()
+        self.rsi_div = RSIDivergenceFeatures()          # ✅ cached
+        self.sr_features = SupportResistanceFeatures()  # ✅ cached
 
         # Sector engine
         self.sector_engine = sector_engine
@@ -462,7 +482,7 @@ class MultiSymbolTradingEnv(gym.Env):
             except:
                 self.sector_features_enabled = False
 
-        # ✅ 50-dim observation only
+        # 50-dim observation
         self.effective_state_dim = self.state_dim
 
         # Spaces
@@ -476,6 +496,10 @@ class MultiSymbolTradingEnv(gym.Env):
 
         # Trade tracking
         self._last_trades = []
+
+        # ✅ FIXED: Track initialization state to avoid reloading sector data
+        self._sector_initialized = False
+        self._regime_fitted = False
 
     # -------------------------------------------------
     # Tier 1: Microstructure (used in reward calc)
@@ -524,7 +548,7 @@ class MultiSymbolTradingEnv(gym.Env):
             return np.zeros(3, dtype=np.float32)
 
     # -------------------------------------------------
-    # Tier 2: Regime (updates self.current_state)
+    # Tier 2: Regime (updates state for reward)
     # -------------------------------------------------
     def _update_regime_state(self, df, idx):
         if idx < 50 or not self.regime_fitted:
@@ -593,7 +617,7 @@ class MultiSymbolTradingEnv(gym.Env):
             return 1.0
 
     # -------------------------------------------------
-    # RESET
+    # RESET — ✅ ONLY FIT ONCE
     # -------------------------------------------------
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -607,8 +631,8 @@ class MultiSymbolTradingEnv(gym.Env):
         self.current_state = 1
         self.current_regime = 'SIDEWAYS'
 
-        # Fit HMM ONCE
-        if HMM_AVAILABLE and not self.regime_fitted:
+        # ✅ FIXED: Fit HMM ONCE per env instance
+        if not self._regime_fitted and HMM_AVAILABLE:
             try:
                 combined = pd.concat(self.dfs.values(), ignore_index=True)
                 if 'date' in combined.columns:
@@ -619,18 +643,21 @@ class MultiSymbolTradingEnv(gym.Env):
                     volumes = combined['volume'].fillna(0)
                 self.regime_model.fit(returns, volumes)
                 self.regime_fitted = True
+                self._regime_fitted = True
             except:
                 self.regime_fitted = False
 
-        # Sector setup
-        if self.sector_features_enabled and self.sector_engine is not None:
-            try:
-                combined_df = pd.concat(self.dfs.values(), ignore_index=True)
-                self.sector_engine.update(combined_df)
-                self._detect_sector_leaders()
-                self._calculate_portfolio_weights()
-            except:
-                pass
+        # ✅ FIXED: Sector setup ONLY ONCE per env instance (not every reset)
+        if not self._sector_initialized:
+            if self.sector_features_enabled and self.sector_engine is not None:
+                try:
+                    combined_df = pd.concat(self.dfs.values(), ignore_index=True)
+                    self.sector_engine.update(combined_df)
+                    self._detect_sector_leaders()
+                    self._calculate_portfolio_weights()
+                    self._sector_initialized = True
+                except:
+                    pass
 
         return self._get_obs(), {}
 
@@ -642,10 +669,10 @@ class MultiSymbolTradingEnv(gym.Env):
         for s in self.symbols:
             df = self.dfs[s]
             if self.t < len(df):
-                # ✅ Update regime (side-effect, used for reward)
+                # Update regime (side-effect for reward)
                 self._update_regime_state(df, self.t)
 
-                # ✅ Base 50-dim observation only
+                # 50-dim base observation
                 o = self.build_observation(df, self.t)
 
                 o = np.asarray(o, dtype=np.float32).flatten()
@@ -661,7 +688,7 @@ class MultiSymbolTradingEnv(gym.Env):
         return np.asarray(obs, dtype=np.float32)
 
     # -------------------------------------------------
-    # STEP — Signal-free pure RL
+    # STEP — Signal-free pure RL + FIXED reward
     # -------------------------------------------------
     def step(self, actions):
         self._last_trades = []
@@ -715,15 +742,23 @@ class MultiSymbolTradingEnv(gym.Env):
                     pnl = (price - entry) * self.position[s]
                     self.balance[s] += self.position[s] * price
 
-                    reward = float(np.tanh(pnl / (self.total_capital * self.risk_percent)))
+                    # ✅ FIXED: Better reward scaling (based on risk, not capital)
+                    risk_amount = self.total_capital * self.risk_percent
+                    reward = float(np.tanh(pnl / (risk_amount * 0.5)))
+
                     reward *= self._get_sector_reward_multiplier(s)
 
                     if self.regime_fitted:
                         mults = self.regime_model.get_regime_multipliers(self.current_state)
                         reward *= mults['reward_bonus']
 
+                    # ✅ FIXED: Much smaller SL penalty (0.2 → 0.05)
                     if close_reason == 'sl':
                         reward -= self.sl_penalty
+
+                    # ✅ NEW: TP bonus
+                    if close_reason == 'tp':
+                        reward += self.tp_bonus
 
                     self._last_trades.append({
                         'success': bool(pnl > 0),
@@ -771,7 +806,10 @@ class MultiSymbolTradingEnv(gym.Env):
                 reward -= self.illegal_action_penalty
 
             rewards.append(float(reward))
-            done_flags.append(self.t >= len(df) - 1)
+
+            # ✅ FIXED: Minimum 50 steps before termination
+            is_done = (self.t >= len(df) - 1) and (self.t >= 50)
+            done_flags.append(is_done)
 
         self.t += 1
         terminated = all(done_flags)
