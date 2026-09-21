@@ -3,14 +3,15 @@ scripts/generate_final_ai_signals.py
 সমস্ত AI মডেল (LLM + XGBoost + PPO + Agentic Loop + Elliott Wave) একত্রে
 কম্বাইন্ড ফাইনাল ট্রেডিং সিগন্যাল জেনারেটর
 ✅ PPO: Actual model load with proper observation reshape (1, 50)
+✅ PPO: Safe action extraction (numpy 2.0 compatible)
 ✅ Ensemble path fixed (uses PPO_MODELS_DIR)
+✅ Safe file loading (no crash if files missing)
 ✅ PPO obs from real market features (not zeros)
-✅ Sector: Dynamic + cached mongo_by_symbol (no re-read)
+✅ Sector: Dynamic + cached mongo_by_symbol
 ✅ Agentic Loop: Live consensus
 ✅ PatchTST: Added prediction
 ✅ Bullish Strong: Added from rsi_diver (rt, bbr, strong columns)
 ✅ mongo_df loaded ONCE, cached as mongo_by_symbol
-✅ RSI_DIVER_PATH removed (dead variable)
 ✅ S/R সম্পূর্ণ বাদ - শুধু AI মডেল থেকে সিগনাল
 """
 
@@ -174,6 +175,10 @@ print("="*70)
 # ১. mongodb — ONCE লোড (perf + consistency)
 # =========================================================
 print("\n📂 Loading symbols from mongodb...")
+if not os.path.exists(MONGO_PATH):
+    print(f"   ❌ mongodb.csv not found: {MONGO_PATH}")
+    sys.exit(1)
+
 mongo_df = pd.read_csv(MONGO_PATH)
 mongo_df['date'] = pd.to_datetime(mongo_df['date'], format='mixed', errors='coerce')
 mongo_df = mongo_df.sort_values(['symbol', 'date'])
@@ -226,39 +231,104 @@ def build_ppo_observation(symbol, symbol_df=None, window=WINDOW):
         return np.zeros(STATE_DIM, dtype=np.float32)
 
 # =========================================================
-# ২. XGBoost ডেটা লোড
+# ✅ SAFE ACTION EXTRACTOR (numpy 2.0 compatible)
+# =========================================================
+def extract_ppo_action(action):
+    """Extract scalar action value from PPO predict output (any shape)."""
+    try:
+        action_arr = np.asarray(action).flatten()
+        if len(action_arr) > 0:
+            return int(action_arr[0])
+    except:
+        pass
+    return 0
+
+# =========================================================
+# ২. XGBoost ডেটা লোড — ✅ SAFE LOADING
 # =========================================================
 print("\n📂 Loading XGBoost data...")
-meta_df = pd.read_csv(MODEL_METADATA_PATH)
-meta_df = meta_df[meta_df['auc'] >= 0.55]
-good_xgb_symbols = meta_df['symbol'].unique()
 
-pred_df = pd.read_csv(PREDICTION_LOG_PATH)
-pred_df['date'] = pd.to_datetime(pred_df['date'], format='mixed', errors='coerce')
-pred_df = pred_df.sort_values(['symbol', 'date'])
-pred_df = pred_df.drop_duplicates(subset=['symbol', 'date'], keep='last')
+# ✅ Safe load model_metadata
+meta_df = pd.DataFrame()
+good_xgb_symbols = np.array([])
+if os.path.exists(MODEL_METADATA_PATH):
+    try:
+        _meta = pd.read_csv(MODEL_METADATA_PATH)
+        if 'auc' in _meta.columns and 'symbol' in _meta.columns:
+            meta_df = _meta[_meta['auc'] >= 0.55]
+            good_xgb_symbols = meta_df['symbol'].unique()
+            print(f"   ✅ model_metadata.csv loaded ({len(good_xgb_symbols)} good models)")
+        else:
+            print(f"   ⚠️ model_metadata.csv missing 'auc'/'symbol' columns")
+    except Exception as e:
+        print(f"   ⚠️ Failed to load model_metadata: {e}")
+else:
+    print(f"   ⚠️ model_metadata.csv not found — XGB signals disabled")
 
-conf_df = pd.read_csv(XGB_CONFIDENCE_PATH)
-conf_df['date'] = pd.to_datetime(conf_df['date'], format='mixed', errors='coerce')
+# ✅ Safe load prediction_log
+pred_df = pd.DataFrame()
+if os.path.exists(PREDICTION_LOG_PATH):
+    try:
+        pred_df = pd.read_csv(PREDICTION_LOG_PATH)
+        pred_df['date'] = pd.to_datetime(pred_df['date'], format='mixed', errors='coerce')
+        pred_df = pred_df.sort_values(['symbol', 'date'])
+        pred_df = pred_df.drop_duplicates(subset=['symbol', 'date'], keep='last')
+        print(f"   ✅ prediction_log.csv loaded ({len(pred_df)} rows)")
+    except Exception as e:
+        print(f"   ⚠️ Failed to load prediction_log: {e}")
+        pred_df = pd.DataFrame()
+else:
+    print(f"   ⚠️ prediction_log.csv not found")
 
-xgb_df = pd.merge(pred_df, conf_df, on=['symbol', 'date'], how='left')
-xgb_df = xgb_df[xgb_df['symbol'].isin(good_xgb_symbols)]
+# ✅ Safe load xgb_confidence
+conf_df = pd.DataFrame()
+if os.path.exists(XGB_CONFIDENCE_PATH):
+    try:
+        conf_df = pd.read_csv(XGB_CONFIDENCE_PATH)
+        conf_df['date'] = pd.to_datetime(conf_df['date'], format='mixed', errors='coerce')
+        print(f"   ✅ xgb_confidence.csv loaded ({len(conf_df)} rows)")
+    except Exception as e:
+        print(f"   ⚠️ Failed to load xgb_confidence: {e}")
+        conf_df = pd.DataFrame()
+else:
+    print(f"   ⚠️ xgb_confidence.csv not found")
 
-if 'prob_up' not in xgb_df.columns:
-    if 'prediction' in xgb_df.columns and 'confidence_score' in xgb_df.columns:
-        xgb_df['prob_up'] = xgb_df.apply(
-            lambda row: row['confidence_score'] / 100 if row['prediction'] == 1
-            else (100 - row['confidence_score']) / 100,
-            axis=1
-        )
-    else:
-        xgb_df['prob_up'] = 0.5
+# Merge if possible
+if not pred_df.empty and not conf_df.empty:
+    try:
+        xgb_df = pd.merge(pred_df, conf_df, on=['symbol', 'date'], how='left')
+    except Exception as e:
+        print(f"   ⚠️ Merge failed: {e}")
+        xgb_df = pred_df.copy()
+elif not pred_df.empty:
+    xgb_df = pred_df.copy()
+else:
+    xgb_df = pd.DataFrame()
 
-xgb_latest = xgb_df.sort_values(['symbol', 'date']).groupby('symbol').tail(1).set_index('symbol')
-print(f"   ✅ XGBoost: {len(good_xgb_symbols)} good models")
+# Filter to good symbols
+if not xgb_df.empty and len(good_xgb_symbols) > 0:
+    xgb_df = xgb_df[xgb_df['symbol'].isin(good_xgb_symbols)]
+
+# Compute prob_up
+if not xgb_df.empty:
+    if 'prob_up' not in xgb_df.columns:
+        if 'prediction' in xgb_df.columns and 'confidence_score' in xgb_df.columns:
+            xgb_df['prob_up'] = xgb_df.apply(
+                lambda row: row['confidence_score'] / 100 if row['prediction'] == 1
+                else (100 - row['confidence_score']) / 100,
+                axis=1
+            )
+        else:
+            xgb_df['prob_up'] = 0.5
+
+    xgb_latest = xgb_df.sort_values(['symbol', 'date']).groupby('symbol').tail(1).set_index('symbol')
+else:
+    xgb_latest = pd.DataFrame()
+
+print(f"   ✅ XGBoost: {len(good_xgb_symbols)} good models, {len(xgb_latest)} symbols ready")
 
 # =========================================================
-# ৩. PPO মডেল লোড — ✅ REAL OBSERVATION + RESHAPE FIX
+# ৩. PPO মডেল লোড — ✅ REAL OBS + RESHAPE + SAFE ACTION
 # =========================================================
 print("\n📂 Loading PPO models with REAL market observations...")
 ppo_data = {}
@@ -270,7 +340,7 @@ for symbol in target_symbols:
 
     # ✅ Build symbol-specific observation from ACTUAL market data
     obs = build_ppo_observation(symbol, mongo_by_symbol.get(symbol))
-    # ✅ FIX: reshape to 2D (1, 50) for SB3 PPO.predict
+    # ✅ Reshape to 2D (1, 50) for SB3 PPO.predict
     obs_2d = np.asarray(obs, dtype=np.float32).reshape(1, -1)
 
     if os.path.exists(ppo_path) and SB3_AVAILABLE:
@@ -278,10 +348,8 @@ for symbol in target_symbols:
             ppo_model = PPO.load(ppo_path, device="cpu")
             action, _ = ppo_model.predict(obs_2d, deterministic=True)
 
-            if isinstance(action, (list, tuple, np.ndarray)):
-                action_val = int(action[0]) if len(action) > 0 else 0
-            else:
-                action_val = int(action)
+            # ✅ Safe action extraction
+            action_val = extract_ppo_action(action)
 
             action_map = {0: 'HOLD', 1: 'BUY', 2: 'SELL'}
             ppo_data[symbol] = {
@@ -298,21 +366,17 @@ for symbol in target_symbols:
             with open(ensemble_path, 'rb') as f:
                 ensemble_info = joblib.load(f)
             if ensemble_info.get('model_paths'):
-                # ✅ Average obs across all ensemble models
+                # ✅ Majority vote across ensemble models
                 all_actions = []
                 for mp in ensemble_info['model_paths']:
                     try:
                         m = PPO.load(mp, device="cpu")
                         a, _ = m.predict(obs_2d, deterministic=True)
-                        if isinstance(a, (list, tuple, np.ndarray)):
-                            all_actions.append(int(a[0]) if len(a) > 0 else 0)
-                        else:
-                            all_actions.append(int(a))
+                        all_actions.append(extract_ppo_action(a))
                     except:
                         continue
 
                 if all_actions:
-                    # Majority vote
                     action_val = int(pd.Series(all_actions).mode().iloc[0])
                 else:
                     action_val = 0
@@ -376,7 +440,7 @@ else:
     print(f"   ⚠️ Elliott backtest not found")
 
 # =========================================================
-# ৬. Elliott Wave Details (uses cached mongo_by_symbol)
+# ৬. Elliott Wave Details
 # =========================================================
 def get_elliott_wave_details(symbol):
     try:
@@ -537,7 +601,7 @@ RECOMMENDATION:"""
 # ৯-১০.৮ Signal fetchers
 # =========================================================
 def get_xgb_data(symbol):
-    if symbol in xgb_latest.index:
+    if not xgb_latest.empty and symbol in xgb_latest.index:
         row = xgb_latest.loc[symbol]
         prob = row.get('prob_up', 0.5)
         conf = row.get('confidence_score', 50)
@@ -546,9 +610,13 @@ def get_xgb_data(symbol):
         elif prob < 0.40: signal = 'SELL'
         else: signal = 'HOLD'
 
+        auc_val = 0
+        if not meta_df.empty and symbol in meta_df['symbol'].values:
+            auc_val = meta_df[meta_df['symbol'] == symbol]['auc'].values[0]
+
         return {
             'signal': signal, 'confidence': conf, 'prob_up': prob,
-            'auc': meta_df[meta_df['symbol'] == symbol]['auc'].values[0] if symbol in meta_df['symbol'].values else 0
+            'auc': auc_val
         }
     return {'signal': 'N/A', 'confidence': 0, 'prob_up': 0.5, 'auc': 0}
 
@@ -840,29 +908,44 @@ print(f"   Elliott Wave: {elliott_data.get('accuracy', 50):.1f}% accuracy")
 print(f"   Bullish Strong: {'✅' if len(bullish_strong_dict) > 0 else '❌'} Available ({len(bullish_strong_dict)} signals)")
 
 print(f"\n📈 SIGNAL DISTRIBUTION:")
-print(output_df['final_signal'].value_counts().to_string())
+if len(output_df) > 0:
+    print(output_df['final_signal'].value_counts().to_string())
+else:
+    print("   (No signals)")
 
 print(f"\n📊 PPO SIGNAL DISTRIBUTION (proof it's NOT all same):")
-print(output_df['ppo_signal'].value_counts().to_string())
+if len(output_df) > 0:
+    print(output_df['ppo_signal'].value_counts().to_string())
+else:
+    print("   (No signals)")
 
 print(f"\n📊 MODEL AVAILABILITY:")
-print(output_df['model_availability'].value_counts().to_string())
+if len(output_df) > 0:
+    print(output_df['model_availability'].value_counts().to_string())
+else:
+    print("   (No signals)")
 
 print(f"\n🔥 TOP 10 BUY SIGNALS:")
-buy_signals = output_df[output_df['final_signal'].str.contains('BUY', na=False)].head(10)
-if len(buy_signals) > 0:
-    print(buy_signals[['symbol', 'final_signal', 'final_combined_score',
-                        'entry_price', 'ppo_signal', 'bullish_strong_signal',
-                        'elliott_current_wave']].to_string())
+if len(output_df) > 0:
+    buy_signals = output_df[output_df['final_signal'].str.contains('BUY', na=False)].head(10)
+    if len(buy_signals) > 0:
+        print(buy_signals[['symbol', 'final_signal', 'final_combined_score',
+                            'entry_price', 'ppo_signal', 'bullish_strong_signal',
+                            'elliott_current_wave']].to_string())
+    else:
+        print("   (No BUY signals)")
 else:
-    print("   (No BUY signals)")
+    print("   (No signals)")
 
 print(f"\n💀 TOP 5 SELL SIGNALS:")
-sell_signals = output_df[output_df['final_signal'].str.contains('SELL', na=False)].head(5)
-if len(sell_signals) > 0:
-    print(sell_signals[['symbol', 'final_signal', 'final_combined_score', 'ppo_signal']].to_string())
+if len(output_df) > 0:
+    sell_signals = output_df[output_df['final_signal'].str.contains('SELL', na=False)].head(5)
+    if len(sell_signals) > 0:
+        print(sell_signals[['symbol', 'final_signal', 'final_combined_score', 'ppo_signal']].to_string())
+    else:
+        print("   (No SELL signals)")
 else:
-    print("   (No SELL signals)")
+    print("   (No signals)")
 
 print(f"\n" + "="*70)
 print(f"✅ FINAL OUTPUT: {FINAL_OUTPUT_PATH}")
