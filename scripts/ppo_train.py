@@ -333,7 +333,6 @@ def get_hf_uploader():
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CSV_MARKET = BASE_DIR / "csv" / "mongodb.csv"
-CSV_SIGNAL = BASE_DIR / "csv" / "trade_stock.csv"
 XGB_MODEL_DIR = BASE_DIR / "csv" / "xgboost"
 PPO_MODEL_DIR = BASE_DIR / "csv" / "ppo_models"
 PPO_SHARED_PATH = PPO_MODEL_DIR / "ppo_shared"
@@ -392,7 +391,7 @@ try:
 except ImportError:
     MARKET_COLS = DEFAULT_MARKET_COLS
 
-STATE_DIM = len(MARKET_COLS) * WINDOW + 4
+STATE_DIM = len(MARKET_COLS) * WINDOW
 
 PPO_CONFIG = {
     'n_steps': 2048,
@@ -686,7 +685,7 @@ if SB3_AVAILABLE:
 # ✅ CREATE ENVIRONMENT (RSI Div + S/R auto-loaded by env_trading.py)
 # =========================================================
 
-def create_multi_symbol_env(symbol_dfs, signals, sector_engine=None, xgb_models=None, 
+def create_multi_symbol_env(symbol_dfs, sector_engine=None, xgb_models=None, 
                            agentic_loop=None, patch_tst=None):
     if not MULTI_ENV_AVAILABLE:
         return None
@@ -694,7 +693,6 @@ def create_multi_symbol_env(symbol_dfs, signals, sector_engine=None, xgb_models=
     try:
         env = MultiSymbolTradingEnv(
             symbol_dfs=symbol_dfs,
-            signals=signals,
             build_observation=build_observation,
             window=WINDOW,
             state_dim=STATE_DIM,
@@ -714,7 +712,7 @@ def create_multi_symbol_env(symbol_dfs, signals, sector_engine=None, xgb_models=
 # 🔥 MAXIMUM QUALITY TRAINING (With Local Checkpoint + HF Upload)
 # =========================================================
 
-def train_max_quality(symbol, symbol_data, signals, xgb_auc, is_retrain=False,
+def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
                       sector_engine=None, xgb_models=None, agentic_loop=None, patch_tst=None):
     """
     Maximum Quality Training
@@ -800,10 +798,10 @@ def train_max_quality(symbol, symbol_data, signals, xgb_auc, is_retrain=False,
         
         try:
             train_env = create_multi_symbol_env(
-                {symbol: train_data}, signals, sector_engine, xgb_models, agentic_loop, patch_tst
+                {symbol: train_data}, sector_engine, xgb_models, agentic_loop, patch_tst
             )
             val_env = create_multi_symbol_env(
-                {symbol: val_data}, signals, sector_engine, xgb_models, agentic_loop, patch_tst
+                {symbol: val_data}, sector_engine, xgb_models, agentic_loop, patch_tst
             )
             
             if train_env is None:
@@ -960,7 +958,7 @@ def train_max_quality(symbol, symbol_data, signals, xgb_auc, is_retrain=False,
     
     try:
         test_env = create_multi_symbol_env(
-            {symbol: test_data}, signals, sector_engine, xgb_models, agentic_loop, patch_tst
+            {symbol: test_data}, sector_engine, xgb_models, agentic_loop, patch_tst
         )
         test_env = DummyVecEnv([lambda: test_env])
         
@@ -1105,22 +1103,6 @@ def train_max_quality(symbol, symbol_data, signals, xgb_auc, is_retrain=False,
 # UTILITY FUNCTIONS
 # =========================================================
 
-def load_signals(path):
-    if not os.path.exists(path):
-        return {}
-    try:
-        df = pd.read_csv(path, parse_dates=["date"])
-        df["date"] = df["date"].dt.strftime("%Y-%m-%d")
-        signals = {}
-        for _, r in df.iterrows():
-            signals[(r["symbol"], r["date"])] = {
-                "buy": float(r["buy"]), "SL": float(r["SL"]),
-                "tp": float(r["tp"]), "RRR": float(r["RRR"]),
-            }
-        return signals
-    except:
-        return {}
-
 def load_xgb_metadata():
     if not os.path.exists(MODEL_METADATA):
         return pd.DataFrame()
@@ -1132,7 +1114,7 @@ def load_xgb_metadata():
     except:
         return pd.DataFrame()
 
-def build_observation(df, idx, signals):
+def build_observation(df, idx):
     try:
         available_cols = [col for col in MARKET_COLS if col in df.columns]
         if not available_cols:
@@ -1144,15 +1126,7 @@ def build_observation(df, idx, signals):
         market_vec = seg.flatten()
         if len(market_vec) < len(MARKET_COLS) * WINDOW:
             market_vec = np.pad(market_vec, (0, len(MARKET_COLS) * WINDOW - len(market_vec)))
-        row = df.iloc[idx]
-        sig = signals.get((row["symbol"], row["date"]))
-        if sig:
-            buy = sig["buy"]
-            signal_vec = [row["close"] / (buy + 1e-8), (buy - sig["SL"]) / (buy + 1e-8),
-                         (sig["tp"] - buy) / (buy + 1e-8), sig["RRR"]]
-        else:
-            signal_vec = [0.0] * 4
-        return np.nan_to_num(list(market_vec) + signal_vec)
+        return np.nan_to_num(list(market_vec))
     except:
         return np.zeros(STATE_DIM, dtype=np.float32)
 
@@ -1231,7 +1205,6 @@ def train_ppo_system():
         df['date'] = pd.to_datetime(df['date']).dt.strftime("%Y-%m-%d")
     print(f"   ✅ {len(df)} rows, {df['symbol'].nunique()} symbols")
 
-    signals = load_signals(CSV_SIGNAL)
     xgb_metadata = load_xgb_metadata()
 
     top_symbol_list = []
@@ -1280,7 +1253,7 @@ def train_ppo_system():
             
             try:
                 model, stats = train_max_quality(
-                    symbol, symbol_data, signals, xgb_auc, is_retrain,
+                    symbol, symbol_data, xgb_auc, is_retrain,
                     sector_engine, xgb_models, agentic, patch_tst
                 )
                 if model is not None:
