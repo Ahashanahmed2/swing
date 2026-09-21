@@ -949,6 +949,7 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
         
         final_model = EnsemblePPO(ensemble_models, weights.tolist())
     else:
+        weights = np.array([1.0])    # ✅ ADD THIS LINE
         final_model = PPO.load(ensemble_models[0], device="cpu")
     
     # 🔥 FINAL TEST
@@ -1095,6 +1096,9 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
                 'model_paths': [str(p) for p in ensemble_models],
                 'weights': weights.tolist()
             }, ensemble_info_path)
+            # ✅ Also save the representative best model for loaders
+            
+_for_save.save(final_path)
         
         print(f"\n   💾 Model saved: {final_path}")
         print(f"   📤 Uploaded to HF: {HF_DATASET_REPO}/{HF_CHECKPOINT_DIR}/{symbol}/")
