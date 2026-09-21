@@ -1054,8 +1054,17 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
             print(f"   ✅ GOOD MODEL — Can be used with caution")
         else:
             print(f"   ⚠️ NEEDS IMPROVEMENT — Consider more training")
+
         
         # ✅ Save BEST model locally
+        # If final_model is EnsemblePPO, save first member as representative
+        # (EnsemblePPO has no .save() method)
+        if isinstance(final_model, EnsemblePPO) and len(ensemble_models) > 0:
+            model_for_save = PPO.load(str(ensemble_models[0]), device="cpu")
+        else:
+            model_for_save = final_model
+
+
         best_model_path, best_metrics_path = local_ckpt.save_model_checkpoint(
             symbol=symbol,
             model=final_model if not isinstance(final_model, EnsemblePPO) else EnsemblePPO.__new__(EnsemblePPO),
