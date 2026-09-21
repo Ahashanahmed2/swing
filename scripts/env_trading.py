@@ -1,16 +1,18 @@
 # ================== env_trading.py ==================
-# FINAL VERSION — ALL SYSTEMS INTEGRATED
+# FINAL VERSION — SIGNAL-FREE PURE RL
 # ✅ Original Structure 100% Preserved
-# ✅ No Code Deleted
+# ✅ No signal dependency — PPO learns entry/exit itself
+# ✅ Auto SL/TP (configurable) for stable training
+# ✅ Volatility-based position sizing
 # ✅ ALL Features Included:
 #    - Tier 1: Market Microstructure + Greeks + Sector Leader
 #    - Tier 2: HMM Regime + GARCH Volatility
 #    - Tier 3: Portfolio Optimization
 #    - Tier 4: PatchTST Transformer Predictor
 #    - LLM + Agentic Loop + XGBoost + Sector Features
-#    - ✅ RSI Divergence (rsi_diver.csv)
-#    - ✅ Support/Resistance (support_resistance.csv)
-#    - ✅ Sector Features from ./csv/sector/ (8 dims with RSI)
+#    - RSI Divergence (rsi_diver.csv)
+#    - Support/Resistance (support_resistance.csv)
+#    - Sector Features from ./csv/sector/ (8 dims with RSI)
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -54,7 +56,7 @@ except ImportError:
 
 class MarketMicrostructure:
     """Order Flow, VWAP, Spread, Liquidity"""
-    
+
     @staticmethod
     def order_flow_imbalance(df):
         df = df.copy()
@@ -63,7 +65,7 @@ class MarketMicrostructure:
                                   np.where(df['price_change'] < 0, -df['volume'], 0))
         df['ofi'] = df['volume_direction'].rolling(10).sum() / (df['volume'].rolling(10).sum() + 1e-8)
         return df['ofi'].fillna(0)
-    
+
     @staticmethod
     def vwap_deviation(df):
         df = df.copy()
@@ -72,7 +74,7 @@ class MarketMicrostructure:
         df['vwap'] = df['cum_pv'] / df['cum_vol']
         df['vwap_dev'] = (df['close'] - df['vwap']) / df['vwap']
         return df['vwap_dev'].fillna(0)
-    
+
     @staticmethod
     def spread_proxy(df):
         df = df.copy()
@@ -80,7 +82,7 @@ class MarketMicrostructure:
         df['spread_ma'] = df['spread'].rolling(20).mean()
         df['spread_z'] = (df['spread'] - df['spread_ma']) / (df['spread'].rolling(20).std() + 1e-8)
         return df['spread_z'].fillna(0)
-    
+
     @staticmethod
     def amihud_illiquidity(df):
         df = df.copy()
@@ -88,7 +90,7 @@ class MarketMicrostructure:
         df['dollar_volume'] = df['close'] * df['volume']
         df['illiq'] = abs(df['daily_return']) / (df['dollar_volume'] + 1e-8)
         return df['illiq'].rolling(20).mean().fillna(0)
-    
+
     @staticmethod
     def turnover_ratio(df):
         df = df.copy()
@@ -96,14 +98,14 @@ class MarketMicrostructure:
             df['turnover_ratio'] = df['volume'] / (df['marketCap'] + 1e-8)
             return df['turnover_ratio'].fillna(0)
         return pd.Series(0, index=df.index)
-    
+
     @staticmethod
     def bid_ask_bounce(df):
         df = df.copy()
         df['high_low_range'] = df['high'] - df['low']
         df['bounce'] = (df['close'] - df['low']) / (df['high_low_range'] + 1e-8)
         return df['bounce'].fillna(0.5)
-    
+
     @staticmethod
     def compute_all(df):
         return pd.DataFrame({
@@ -122,7 +124,7 @@ class MarketMicrostructure:
 
 class SyntheticGreeks:
     """Delta, Gamma, Vega proxies"""
-    
+
     @staticmethod
     def delta(df, sector_returns, window=20):
         stock_returns = df['close'].pct_change()
@@ -131,11 +133,11 @@ class SyntheticGreeks:
             var = sector_returns.rolling(window).var()
             return (cov / (var + 1e-8)).fillna(1.0)
         return pd.Series(1.0, index=df.index)
-    
+
     @staticmethod
     def gamma(delta_series):
         return delta_series.diff().fillna(0)
-    
+
     @staticmethod
     def vega(df, vix_proxy):
         returns = df['close'].pct_change()
@@ -148,35 +150,46 @@ class SyntheticGreeks:
 
 class MarketRegimeHMM:
     """Hidden Markov Model Regime Detection"""
-    
+
     def __init__(self, n_regimes=3):
         self.n_regimes = n_regimes
         self.model = None
         self.regime_map = {0: 'BEAR', 1: 'SIDEWAYS', 2: 'BULL'}
         self.current_regime = 'SIDEWAYS'
         self.fitted = False
-    
+
     def fit(self, returns, volumes):
         if not HMM_AVAILABLE or len(returns) < 50:
             return np.zeros(len(returns))
         try:
             features = np.column_stack([returns.fillna(0).values, volumes.fillna(0).values])
-            self.model = hmm.GaussianHMM(n_components=self.n_regimes, covariance_type="diag", n_iter=100)
+            # Cap for performance
+            if len(features) > 2000:
+                features = features[-2000:]
+            self.model = hmm.GaussianHMM(n_components=self.n_regimes,
+                                          covariance_type="diag", n_iter=100)
             self.model.fit(features)
             self.fitted = True
             return self.model.predict(features)
         except:
             return np.zeros(len(returns))
-    
+
     def predict(self, returns, volumes):
+        """✅ Predict using rolling window (fitted once, cheap inference)"""
         if not self.fitted or self.model is None:
             return 1
         try:
-            features = np.column_stack([returns.fillna(0).values[-1:], volumes.fillna(0).values[-1:]])
-            return self.model.predict(features)[0]
+            n = min(30, len(returns))
+            if n < 5:
+                return 1
+            features = np.column_stack([
+                returns.fillna(0).values[-n:],
+                volumes.fillna(0).values[-n:]
+            ])
+            return int(self.model.predict(features)[-1])
         except:
             return 1
-    
+
     def get_regime_multipliers(self, state):
         regime = self.regime_map.get(state, 'SIDEWAYS')
         if regime == 'BULL':
@@ -194,15 +207,17 @@ class MarketRegimeHMM:
 def forecast_volatility(returns, horizon=5):
     """GARCH volatility forecast"""
     if not ARCH_AVAILABLE or len(returns) < 30:
-        return np.std(returns) if len(returns) > 0 else 0.02
+        return float(np.std(returns)) if len(returns) > 0 else 0.02
     try:
         returns_clean = returns.dropna()
+        if len(returns_clean) < 30:
+            return float(np.std(returns_clean)) if len(returns_clean) > 0 else 0.02
         model = arch_model(returns_clean, vol='Garch', p=1, q=1)
         fitted = model.fit(disp='off')
         forecast = fitted.forecast(horizon=horizon)
-        return np.sqrt(forecast.variance.values[-1, -1])
+        return float(np.sqrt(forecast.variance.values[-1, -1]))
     except:
-        return np.std(returns) if len(returns) > 0 else 0.02
+        return float(np.std(returns)) if len(returns) > 0 else 0.02
 
 
 # =========================================================
@@ -211,16 +226,16 @@ def forecast_volatility(returns, horizon=5):
 
 class SectorLeaderDetector:
     """Find leading stocks in each sector"""
-    
+
     def __init__(self):
         self.leaders = {}
-    
+
     def detect_leader(self, sector_data):
         from collections import defaultdict
         symbols = sector_data['symbol'].unique()
         if len(symbols) < 2:
             return symbols[0] if len(symbols) > 0 else None
-        
+
         leader_scores = defaultdict(int)
         for sym in symbols:
             sym_data = sector_data[sector_data['symbol'] == sym].sort_values('date')
@@ -234,7 +249,7 @@ class SectorLeaderDetector:
                         lead_corr = sym_returns.iloc[:min_len].corr(other_returns.iloc[1:min_len+1])
                         if abs(lead_corr) > 0.6:
                             leader_scores[sym] += 1
-        
+
         if leader_scores:
             return max(leader_scores, key=leader_scores.get)
         return symbols[0]
@@ -246,14 +261,14 @@ class SectorLeaderDetector:
 
 class PortfolioOptimizer:
     """Risk Parity & Minimum Variance"""
-    
+
     @staticmethod
     def risk_parity_weights(returns_df):
         cov = returns_df.cov().values
         inv_vol = 1.0 / np.sqrt(np.diag(cov) + 1e-8)
         weights = inv_vol / inv_vol.sum()
         return weights
-    
+
     @staticmethod
     def min_variance_weights(returns_df):
         cov = returns_df.cov().values
@@ -262,14 +277,15 @@ class PortfolioOptimizer:
             return np.array([])
         if n == 1:
             return np.array([1.0])
-        
+
         def portfolio_var(w):
             return w @ cov @ w
-        
+
         constraints = ({'type': 'eq', 'fun': lambda w: w.sum() - 1})
         bounds = [(0, 0.3) for _ in range(n)]
         try:
-            result = minimize(portfolio_var, np.ones(n)/n, bounds=bounds, constraints=constraints, method='SLSQP')
+            result = minimize(portfolio_var, np.ones(n)/n, bounds=bounds,
+                              constraints=constraints, method='SLSQP')
             return result.x if result.success else np.ones(n)/n
         except:
             return np.ones(n)/n
@@ -281,10 +297,10 @@ class PortfolioOptimizer:
 
 class RSIDivergenceFeatures:
     """RSI Divergence feature extractor"""
-    
+
     def __init__(self, csv_path="./csv/rsi_diver.csv"):
         self.data = self._load(csv_path)
-    
+
     def _load(self, path):
         if not Path(path).exists():
             return {}
@@ -299,7 +315,7 @@ class RSIDivergenceFeatures:
             return data
         except:
             return {}
-    
+
     def get_features(self, symbol, current_date):
         if not self.data or symbol not in self.data:
             return np.zeros(3, dtype=np.float32)
@@ -309,18 +325,18 @@ class RSIDivergenceFeatures:
             recent = df[df['date'] <= current_dt].tail(1)
             if recent.empty:
                 return np.zeros(3, dtype=np.float32)
-            
+
             row = recent.iloc[-1]
             div_type = str(row.get('divergence_type', 'NONE')).upper()
             div_signal = 1.0 if 'BULLISH' in div_type else 0.0 if 'BEARISH' in div_type else 0.5
-            
+
             strength = str(row.get('divergence_strength', 'NONE')).upper()
             strength_map = {'STRONG': 1.0, 'MODERATE': 0.6, 'WEAK': 0.3}
             div_strength = strength_map.get(strength, 0.0)
-            
+
             rsi = float(row.get('rsi', 50))
             rsi_norm = np.clip((rsi - 30) / 40, 0, 1)
-            
+
             return np.array([div_signal, div_strength, rsi_norm], dtype=np.float32)
         except:
             return np.zeros(3, dtype=np.float32)
@@ -332,10 +348,10 @@ class RSIDivergenceFeatures:
 
 class SupportResistanceFeatures:
     """Support/Resistance level features"""
-    
+
     def __init__(self, csv_path="./csv/support_resistance.csv"):
         self.data = self._load(csv_path)
-    
+
     def _load(self, path):
         if not Path(path).exists():
             return pd.DataFrame()
@@ -347,7 +363,7 @@ class SupportResistanceFeatures:
             return df
         except:
             return pd.DataFrame()
-    
+
     def get_features(self, symbol, current_date, current_close):
         if self.data.empty or symbol not in self.data['symbol'].values:
             return np.zeros(3, dtype=np.float32)
@@ -357,25 +373,25 @@ class SupportResistanceFeatures:
             recent = sym_data[sym_data['current_date'] <= current_dt].tail(1)
             if recent.empty:
                 return np.zeros(3, dtype=np.float32)
-            
+
             row = recent.iloc[-1]
             level_price = float(row['level_price'])
             distance_pct = (current_close - level_price) / current_close if current_close > 0 else 0
-            
+
             strength_str = str(row.get('strength', 'Weak')).capitalize()
             strength_map = {'Weak': 0.3, 'Moderate': 0.6, 'Strong': 1.0}
             strength_val = strength_map.get(strength_str, 0.5)
-            
+
             level_type = str(row.get('type', '')).lower()
             type_val = 1.0 if level_type == 'support' else -1.0 if level_type == 'resistance' else 0.0
-            
+
             return np.array([distance_pct, strength_val, type_val], dtype=np.float32)
         except:
             return np.zeros(3, dtype=np.float32)
 
 
 # =========================================================
-# MAIN ENVIRONMENT CLASS
+# MAIN ENVIRONMENT CLASS — SIGNAL-FREE PURE RL
 # =========================================================
 
 class MultiSymbolTradingEnv(gym.Env):
@@ -383,23 +399,13 @@ class MultiSymbolTradingEnv(gym.Env):
     Multi-symbol trading environment for PPO (SB3 + gymnasium)
     Action per symbol:
         0 = HOLD
-        1 = BUY
-        2 = SELL
-    
-    ✅ ALL SYSTEMS INTEGRATED:
-        - Tier 1: Microstructure (OFI, VWAP, Spread, Illiquidity, Turnover, Bounce)
-        - Tier 1: Synthetic Greeks (Delta, Gamma, Vega)
-        - Tier 1: Sector Leader Detection
-        - Tier 2: HMM Regime Detection
-        - Tier 2: GARCH Volatility Forecasting
-        - Tier 3: Portfolio Optimization (Risk Parity / Min Variance)
-        - Tier 4: PatchTST Transformer Predictor
-        - LLM Sentiment Analysis
-        - Agentic Loop Consensus
-        - XGBoost Probability
-        - Sector Features from ./csv/sector/ (8 dims with RSI)
-        - RSI Divergence (rsi_diver.csv)
-        - Support/Resistance (support_resistance.csv)
+        1 = BUY (open long position)
+        2 = SELL (close position)
+
+    ✅ SIGNAL-FREE: PPO learns entry/exit from raw features
+    ✅ Auto SL/TP for stable training
+    ✅ Volatility-based position sizing
+    ✅ ALL systems integrated (Tier 1-4 + RSI Div + S/R)
     """
 
     metadata = {"render_modes": ["human"]}
@@ -407,7 +413,6 @@ class MultiSymbolTradingEnv(gym.Env):
     def __init__(
         self,
         symbol_dfs,
-        signals,
         build_observation,
         window,
         state_dim,
@@ -417,12 +422,20 @@ class MultiSymbolTradingEnv(gym.Env):
         xgb_models=None,
         agentic_loop=None,
         patch_tst=None,
+        # ✅ NEW: SL/TP config
+        sl_pct=0.02,
+        tp_pct=0.04,
+        max_position_pct=0.30,
+        hold_penalty=0.0001,
+        illegal_action_penalty=0.002,
+        open_cost=0.001,
+        sl_penalty=0.2,
+        signals=None,  # kept for backward-compat but ignored
     ):
         super().__init__()
 
         self.symbols = list(symbol_dfs.keys())
         self.dfs = symbol_dfs
-        self.signals = signals
         self.build_observation = build_observation
         self.window = window
         self.state_dim = state_dim
@@ -430,48 +443,58 @@ class MultiSymbolTradingEnv(gym.Env):
         self.total_capital = total_capital
         self.risk_percent = risk_percent
 
+        # ✅ SL/TP and reward shaping
+        self.sl_pct = sl_pct
+        self.tp_pct = tp_pct
+        self.max_position_pct = max_position_pct
+        self.hold_penalty = hold_penalty
+        self.illegal_action_penalty = illegal_action_penalty
+        self.open_cost = open_cost
+        self.sl_penalty = sl_penalty
+
         self.n_symbols = len(self.symbols)
         self.max_steps = max(len(df) for df in self.dfs.values())
 
         # External models
         self.xgb_models = xgb_models or {}
         self.agentic_loop = agentic_loop
-        
+
         # Tier 1: Microstructure
         self.micro = MarketMicrostructure()
-        
+
         # Tier 1: Sector Leader Detector
         self.leader_detector = SectorLeaderDetector()
         self.sector_leaders = {}
-        
+
         # Tier 1: Synthetic Greeks
         self.greeks = SyntheticGreeks()
         self.sector_returns_cache = None
         self.vix_proxy_cache = None
-        
+
         # Tier 2: Regime HMM
         self.regime_model = MarketRegimeHMM(n_regimes=3)
         self.current_regime = 'SIDEWAYS'
+        self.current_state = 1
         self.regime_fitted = False
-        
+
         # Tier 3: Portfolio Optimizer
         self.optimizer = PortfolioOptimizer()
         self.portfolio_weights = None
-        
+
         # Tier 4: PatchTST
         self.patch_tst = patch_tst
-        
+
         # ✅ RSI Divergence
         self.rsi_div = RSIDivergenceFeatures()
-        
+
         # ✅ Support/Resistance
         self.sr_features = SupportResistanceFeatures()
-        
-        # ✅ Sector Engine (from ./csv/sector/ - 8 dims with RSI)
+
+        # ✅ Sector Engine
         self.sector_engine = sector_engine
         self.sector_features_enabled = False
-        self.sector_feature_dim = 8  # ✅ 8 dims (was 15, now includes RSI)
-        
+        self.sector_feature_dim = 8
+
         if self.sector_engine is not None and SECTOR_AVAILABLE:
             try:
                 combined_df = pd.concat(self.dfs.values(), ignore_index=True)
@@ -479,10 +502,10 @@ class MultiSymbolTradingEnv(gym.Env):
                 self.sector_features_enabled = True
             except:
                 self.sector_features_enabled = False
-        
+
         if not self.sector_features_enabled:
             self.sector_feature_dim = 0
-        
+
         # Feature dimensions
         self.xgb_feature_dim = 2 if self.xgb_models else 0
         self.llm_feature_dim = 2
@@ -493,9 +516,9 @@ class MultiSymbolTradingEnv(gym.Env):
         self.patch_tst_feature_dim = 5 if self.patch_tst else 0
         self.rsi_div_feature_dim = 3
         self.sr_feature_dim = 3
-        
-        # Total state dim
-        self.market_cap_feature_dim = 1  # ✅ যোগ করুন
+        self.market_cap_feature_dim = 1
+
+        # Total effective state dim
         self.effective_state_dim = (
             self.state_dim +
             self.sector_feature_dim +
@@ -511,21 +534,17 @@ class MultiSymbolTradingEnv(gym.Env):
             self.market_cap_feature_dim
         )
 
-
         # -------- Spaces --------
         self.action_space = spaces.MultiDiscrete([3] * self.n_symbols)
-
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
             shape=(self.n_symbols, self.effective_state_dim),
             dtype=np.float32,
         )
-        
-        self._feature_cache = {}
 
     # -------------------------------------------------
-    # Tier 1: Microstructure Features
+    # Tier 1: Microstructure
     # -------------------------------------------------
     def _get_microstructure_features(self, df, idx):
         if idx < 20:
@@ -540,7 +559,7 @@ class MultiSymbolTradingEnv(gym.Env):
             ], dtype=np.float32)
         except:
             return np.zeros(self.micro_feature_dim, dtype=np.float32)
-    
+
     # -------------------------------------------------
     # Tier 1: Greek Features
     # -------------------------------------------------
@@ -551,14 +570,17 @@ class MultiSymbolTradingEnv(gym.Env):
             df_slice = df.iloc[:idx+1]
             if self.sector_returns_cache is None:
                 combined = pd.concat(self.dfs.values(), ignore_index=True)
-                self.sector_returns_cache = combined.groupby('date')['close'].mean().pct_change()
+                if 'date' in combined.columns:
+                    self.sector_returns_cache = combined.groupby('date')['close'].mean().pct_change()
+                else:
+                    self.sector_returns_cache = combined['close'].pct_change()
             if self.vix_proxy_cache is None:
                 self.vix_proxy_cache = df_slice['close'].pct_change().rolling(20).std()
-            
+
             delta = self.greeks.delta(df_slice, self.sector_returns_cache)
             gamma = self.greeks.gamma(delta)
             vega = self.greeks.vega(df_slice, self.vix_proxy_cache)
-            
+
             return np.array([
                 delta.iloc[-1] if not delta.empty else 1.0,
                 gamma.iloc[-1] if not gamma.empty else 0.0,
@@ -566,38 +588,32 @@ class MultiSymbolTradingEnv(gym.Env):
             ], dtype=np.float32)
         except:
             return np.zeros(self.greek_feature_dim, dtype=np.float32)
-    
+
     # -------------------------------------------------
-    # Tier 2: Regime Features
+    # Tier 2: Regime Features (fit once, cheap inference)
     # -------------------------------------------------
     def _get_regime_features(self, df, idx):
-        if idx < 50:
+        if idx < 50 or not self.regime_fitted:
             return np.zeros(self.regime_feature_dim, dtype=np.float32)
         try:
             df_slice = df.iloc[:idx+1]
             returns = df_slice['close'].pct_change().fillna(0)
             volumes = df_slice['volume'].fillna(0)
-            
-            if not self.regime_fitted and HMM_AVAILABLE:
-                try:
-                    self.regime_model.fit(returns, volumes)
-                    self.regime_fitted = True
-                except:
-                    pass
-            
-            if self.regime_fitted:
-                current_state = self.regime_model.predict(returns, volumes)
-                self.current_regime = self.regime_model.regime_map.get(current_state, 'SIDEWAYS')
-            else:
-                current_state = 1
-                self.current_regime = 'SIDEWAYS'
-            
+
+            self.current_state = self.regime_model.predict(returns, volumes)
+            self.current_regime = self.regime_model.regime_map.get(
+                self.current_state, 'SIDEWAYS'
+            )
+
             garch_vol = forecast_volatility(returns)
-            
-            return np.array([float(current_state) / 2.0, min(garch_vol, 0.5)], dtype=np.float32)
+
+            return np.array([
+                float(self.current_state) / 2.0,
+                min(float(garch_vol), 0.5)
+            ], dtype=np.float32)
         except:
             return np.zeros(self.regime_feature_dim, dtype=np.float32)
-    
+
     # -------------------------------------------------
     # Tier 4: PatchTST Features
     # -------------------------------------------------
@@ -608,21 +624,21 @@ class MultiSymbolTradingEnv(gym.Env):
             return self.patch_tst.get_features(symbol, df)
         except:
             return np.zeros(self.patch_tst_feature_dim, dtype=np.float32)
-    
+
     # -------------------------------------------------
-    # ✅ RSI Divergence Features
+    # RSI Divergence Features
     # -------------------------------------------------
     def _get_rsi_divergence_features(self, symbol, current_date):
         return self.rsi_div.get_features(symbol, current_date)
-    
+
     # -------------------------------------------------
-    # ✅ Support/Resistance Features
+    # Support/Resistance Features
     # -------------------------------------------------
     def _get_sr_features(self, symbol, current_date, current_close):
         return self.sr_features.get_features(symbol, current_date, current_close)
-    
+
     # -------------------------------------------------
-    # Tier 1+2: Sector Leader
+    # Sector Leader Detection
     # -------------------------------------------------
     def _detect_sector_leaders(self):
         if not self.sector_features_enabled or self.sector_engine is None:
@@ -639,9 +655,9 @@ class MultiSymbolTradingEnv(gym.Env):
                         self.sector_leaders[sector] = leader
         except:
             pass
-    
+
     # -------------------------------------------------
-    # Tier 3: Portfolio Weights
+    # Portfolio Weights
     # -------------------------------------------------
     def _calculate_portfolio_weights(self):
         try:
@@ -656,9 +672,9 @@ class MultiSymbolTradingEnv(gym.Env):
                     self.portfolio_weights = self.optimizer.risk_parity_weights(returns_df)
         except:
             self.portfolio_weights = None
-    
+
     # -------------------------------------------------
-    # ✅ Sector Features (8 dims from ./csv/sector/)
+    # Sector Features
     # -------------------------------------------------
     def _get_sector_features(self, symbol):
         if not self.sector_features_enabled or self.sector_engine is None:
@@ -667,7 +683,7 @@ class MultiSymbolTradingEnv(gym.Env):
             return self.sector_engine.get_feature_vector(symbol)
         except:
             return np.zeros(self.sector_feature_dim, dtype=np.float32)
-    
+
     def _get_sector_reward_multiplier(self, symbol):
         if not self.sector_features_enabled or self.sector_engine is None:
             return 1.0
@@ -682,7 +698,7 @@ class MultiSymbolTradingEnv(gym.Env):
             return 1.0
         except:
             return 1.0
-    
+
     # -------------------------------------------------
     # XGBoost
     # -------------------------------------------------
@@ -691,22 +707,17 @@ class MultiSymbolTradingEnv(gym.Env):
             return np.zeros(self.xgb_feature_dim, dtype=np.float32)
         try:
             model_info = self.xgb_models[symbol]
-        
-            # ✅ যদি dict না হয়, তাহলে float/int ভ্যালু থেকে dict বানান
             if isinstance(model_info, (int, float)):
-                # সরাসরি float পেয়ে গেছি, এটাকেই probability ধরা যাক
                 prob = float(model_info)
                 return np.array([prob, 0.5], dtype=np.float32)
-        
             if not isinstance(model_info, dict):
                 return np.zeros(self.xgb_feature_dim, dtype=np.float32)
-            
             prob = float(model_info.get('probability', 0.5))
             conf = float(model_info.get('confidence', 0.5))
             return np.array([prob, conf], dtype=np.float32)
-        except Exception as e:
-            print(f"⚠️ XGBoost error for {symbol}: {e}")
+        except:
             return np.zeros(self.xgb_feature_dim, dtype=np.float32)
+
     # -------------------------------------------------
     # LLM
     # -------------------------------------------------
@@ -726,7 +737,7 @@ class MultiSymbolTradingEnv(gym.Env):
                 llm_sentiment = 0.0
         llm_score = float(row.get('LLM', 50)) / 100.0 if 'LLM' in row else 0.5
         return np.array([llm_sentiment, llm_score], dtype=np.float32)
-    
+
     # -------------------------------------------------
     # Agentic Loop
     # -------------------------------------------------
@@ -739,7 +750,9 @@ class MultiSymbolTradingEnv(gym.Env):
                 volatility=0.02, market_regime=self.current_regime
             )
             decision_map = {'BUY': 1.0, 'SELL': 0.0, 'HOLD': 0.5}
-            decision_val = decision_map.get(decision.upper() if isinstance(decision, str) else 'HOLD', 0.5)
+            decision_val = decision_map.get(
+                decision.upper() if isinstance(decision, str) else 'HOLD', 0.5
+            )
             return np.array([decision_val, confidence], dtype=np.float32)
         except:
             return np.zeros(self.agentic_feature_dim, dtype=np.float32)
@@ -753,10 +766,27 @@ class MultiSymbolTradingEnv(gym.Env):
         self.balance = {s: self.total_capital for s in self.symbols}
         self.position = {s: 0 for s in self.symbols}
         self.entry_price = {s: 0.0 for s in self.symbols}
-        self._feature_cache = {}
         self.sector_returns_cache = None
         self.vix_proxy_cache = None
-        
+        self.current_state = 1
+        self.current_regime = 'SIDEWAYS'
+
+        # ✅ Fit HMM ONCE at reset
+        if HMM_AVAILABLE and not self.regime_fitted:
+            try:
+                combined = pd.concat(self.dfs.values(), ignore_index=True)
+                if 'date' in combined.columns:
+                    returns = combined.groupby('date')['close'].mean().pct_change().fillna(0)
+                    volumes = combined.groupby('date')['volume'].mean().fillna(0)
+                else:
+                    returns = combined['close'].pct_change().fillna(0)
+                    volumes = combined['volume'].fillna(0)
+                self.regime_model.fit(returns, volumes)
+                self.regime_fitted = True
+            except:
+                self.regime_fitted = False
+
+        # ✅ Update sector engine + detect leaders + portfolio weights
         if self.sector_features_enabled and self.sector_engine is not None:
             try:
                 combined_df = pd.concat(self.dfs.values(), ignore_index=True)
@@ -769,7 +799,7 @@ class MultiSymbolTradingEnv(gym.Env):
         return self._get_obs(), {}
 
     # -------------------------------------------------
-    # OBSERVATION
+    # OBSERVATION (✅ FIXED: mcap added per-symbol, exact dim)
     # -------------------------------------------------
     def _get_obs(self):
         obs = []
@@ -779,9 +809,11 @@ class MultiSymbolTradingEnv(gym.Env):
                 row = df.iloc[self.t]
                 current_date = row.get('date', None)
                 current_close = float(row['close'])
-                
-                o = self.build_observation(df, self.t, self.signals)
-                
+
+                # Base observation (50 dims, signal-free)
+                o = self.build_observation(df, self.t)
+
+                # Append feature blocks
                 if self.sector_features_enabled:
                     o = np.concatenate([o, self._get_sector_features(s)])
                 if self.xgb_models:
@@ -789,38 +821,45 @@ class MultiSymbolTradingEnv(gym.Env):
                 o = np.concatenate([o, self._get_llm_features(s, row)])
                 if self.agentic_loop:
                     o = np.concatenate([o, self._get_agentic_features(s)])
-                
+
                 o = np.concatenate([o, self._get_microstructure_features(df, self.t)])
                 o = np.concatenate([o, self._get_greek_features(df, self.t)])
                 o = np.concatenate([o, self._get_regime_features(df, self.t)])
-                
+
                 if self.patch_tst:
                     o = np.concatenate([o, self._get_patch_tst_features(s, df)])
-                
-                # ✅ RSI Divergence (3 dims)
+
                 o = np.concatenate([o, self._get_rsi_divergence_features(s, current_date)])
-                
-                # ✅ Support/Resistance (3 dims)
                 o = np.concatenate([o, self._get_sr_features(s, current_date, current_close)])
+
+                # ✅ Market cap per-symbol
+                if 'freeFloatMarketCap' in df.columns:
+                    mcap = row.get('freeFloatMarketCap', 0)
+                    mcap_norm = np.log1p(float(mcap)) / 10 if pd.notna(mcap) else 0.0
+                else:
+                    mcap_norm = 0.0
+                o = np.concatenate([o, np.array([mcap_norm], dtype=np.float32)])
+
+                # ✅ Enforce exact dim
+                o = np.asarray(o, dtype=np.float32).flatten()
+                if len(o) < self.effective_state_dim:
+                    o = np.pad(o, (0, self.effective_state_dim - len(o)))
+                elif len(o) > self.effective_state_dim:
+                    o = o[:self.effective_state_dim]
+
+                o = np.nan_to_num(o)
             else:
-                o = np.zeros(self.effective_state_dim)
+                o = np.zeros(self.effective_state_dim, dtype=np.float32)
+
             obs.append(o)
-            
-        if 'freeFloatMarketCap' in df.columns:
-            mcap = df.iloc[self.t].get('freeFloatMarketCap', 0)
-            mcap_norm = np.log1p(float(mcap)) / 10  # Normalize
-            o = np.concatenate([o, [mcap_norm]])
 
         return np.asarray(obs, dtype=np.float32)
 
     # -------------------------------------------------
-    # STEP
+    # STEP — ✅ SIGNAL-FREE PURE RL
     # -------------------------------------------------
     def step(self, actions):
-    
-        # ============================
-        # ACTION FORMAT HANDLER
-        # ============================
+        # -------- Parse actions --------
         if np.isscalar(actions):
             actions_list = [int(actions)] * self.n_symbols
         elif isinstance(actions, np.ndarray):
@@ -829,13 +868,14 @@ class MultiSymbolTradingEnv(gym.Env):
             actions_list = actions
         else:
             actions_list = [0] * self.n_symbols
-    
+
         rewards = []
         done_flags = []
 
         for i, s in enumerate(self.symbols):
-            action = int(actions_list[i]) if i < len(actions_list) else 0  # ✅ Fixed!
+            action = int(actions_list[i]) if i < len(actions_list) else 0
             df = self.dfs[s]
+
             if self.t >= len(df):
                 rewards.append(0.0)
                 done_flags.append(True)
@@ -843,53 +883,88 @@ class MultiSymbolTradingEnv(gym.Env):
 
             row = df.iloc[self.t]
             price = float(row["close"])
-            sig = self.signals.get((s, row["date"]))
             reward = 0.0
 
-            if action == 1 and not sig:
-                action = 0
-            if action == 2 and self.position[s] == 0:
-                action = 0
+            # -------- 1. Auto SL/TP + manual close --------
+            if self.position[s] > 0:
+                entry = self.entry_price[s]
+                sl_price = entry * (1.0 - self.sl_pct)
+                tp_price = entry * (1.0 + self.tp_pct)
 
-            if action == 1 and self.position[s] == 0 and sig:
-                buy = sig["buy"]
-                sl = sig["SL"]
-                risk_amount = self.total_capital * self.risk_percent
-                risk_per_share = max(buy - sl, 1e-6)
-                shares = max(int(risk_amount / risk_per_share), 1)
-                
-                if self.regime_fitted:
-                    mults = self.regime_model.get_regime_multipliers(
-                        self.regime_model.predict(df['close'].pct_change().fillna(0), df['volume'].fillna(0))
-                    )
-                    shares = int(shares * mults['position_mult'])
-                    shares = max(shares, 1)
+                should_close = False
+                close_reason = None
 
-                if price <= buy:
-                    self.position[s] = shares
-                    self.entry_price[s] = price
-                    self.balance[s] -= shares * price
+                if price <= sl_price:
+                    should_close = True
+                    close_reason = 'sl'
+                elif price >= tp_price:
+                    should_close = True
+                    close_reason = 'tp'
+                elif action == 2:
+                    should_close = True
+                    close_reason = 'signal'
 
-            if self.position[s] > 0 and sig:
-                if price >= sig["TP"] or price <= sig["SL"] or action == 2:
-                    pnl = (price - self.entry_price[s]) * self.position[s]
+                if should_close:
+                    pnl = (price - entry) * self.position[s]
                     self.balance[s] += self.position[s] * price
-                    reward = np.tanh(pnl / (self.total_capital * self.risk_percent))
+
+                    # Base reward: tanh-scaled PnL
+                    reward = float(np.tanh(pnl / (self.total_capital * self.risk_percent)))
+
+                    # Sector multiplier
                     reward *= self._get_sector_reward_multiplier(s)
-                    
+
+                    # Regime reward bonus
                     if self.regime_fitted:
-                        mults = self.regime_model.get_regime_multipliers(
-                            self.regime_model.predict(df['close'].pct_change().fillna(0), df['volume'].fillna(0))
-                        )
+                        mults = self.regime_model.get_regime_multipliers(self.current_state)
                         reward *= mults['reward_bonus']
+
+                    # Small penalty if SL close (discourage bad entries)
+                    if close_reason == 'sl':
+                        reward -= self.sl_penalty
 
                     self.position[s] = 0
                     self.entry_price[s] = 0.0
 
-            if action != 0 and reward == 0:
-                reward -= 0.005
+            # -------- 2. Open new position --------
+            if action == 1 and self.position[s] == 0:
+                # Volatility-based sizing
+                if self.t > 20:
+                    recent_vol = df['close'].iloc[max(0, self.t-20):self.t+1].pct_change().std()
+                    recent_vol = max(float(recent_vol) if pd.notna(recent_vol) else 0.02, 0.005)
+                else:
+                    recent_vol = 0.02
 
-            rewards.append(reward)
+                # Position value = risk / (3σ × price) — capped
+                risk_amount = self.total_capital * self.risk_percent
+                position_value = risk_amount / (recent_vol * 3.0)
+                position_value = min(position_value, self.balance[s] * self.max_position_pct)
+
+                shares = int(position_value / price) if price > 0 else 0
+
+                # Regime position multiplier
+                if self.regime_fitted:
+                    mults = self.regime_model.get_regime_multipliers(self.current_state)
+                    shares = int(shares * mults['position_mult'])
+
+                shares = max(shares, 0)
+
+                if shares > 0 and shares * price <= self.balance[s]:
+                    self.position[s] = shares
+                    self.entry_price[s] = price
+                    self.balance[s] -= shares * price
+                    reward -= self.open_cost  # small open cost
+
+            # -------- 3. Inaction penalties --------
+            if action == 0 and self.position[s] == 0:
+                # Tiny penalty to encourage decisive action
+                reward -= self.hold_penalty
+
+            if action == 2 and self.position[s] == 0:
+                # Illegal SELL (no position) penalty
+                reward -= self.illegal_action_penalty
+
+            rewards.append(float(reward))
             done_flags.append(self.t >= len(df) - 1)
 
         self.t += 1
@@ -912,12 +987,12 @@ class MultiSymbolTradingEnv(gym.Env):
         if self.sector_engine:
             return self.sector_engine.get_summary()
         return {}
-    
+
     def get_top_sectors(self, n=3):
         if self.sector_engine:
             return self.sector_engine.get_top_sectors(n)
         return []
-    
+
     def export_sector_rankings(self, path="./csv/sector_rankings.csv"):
         if self.sector_engine:
             return self.sector_engine.export_rankings(path)
