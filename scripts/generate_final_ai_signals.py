@@ -2,12 +2,15 @@
 scripts/generate_final_ai_signals.py
 সমস্ত AI মডেল (LLM + XGBoost + PPO + Agentic Loop + Elliott Wave) একত্রে
 কম্বাইন্ড ফাইনাল ট্রেডিং সিগন্যাল জেনারেটর
-✅ PPO: Actual observation from market features (NOT zeros)
-✅ Elliott Wave Main/Sub/Current Wave সহ ৩৩+ কলাম
-✅ Sector: Dynamic from SectorFeatureEngine
-✅ Agentic Loop: Live consensus (not just state file)
+✅ PPO: Actual model load with proper observation reshape (1, 50)
+✅ Ensemble path fixed (uses PPO_MODELS_DIR)
+✅ PPO obs from real market features (not zeros)
+✅ Sector: Dynamic + cached mongo_by_symbol (no re-read)
+✅ Agentic Loop: Live consensus
 ✅ PatchTST: Added prediction
 ✅ Bullish Strong: Added from rsi_diver (rt, bbr, strong columns)
+✅ mongo_df loaded ONCE, cached as mongo_by_symbol
+✅ RSI_DIVER_PATH removed (dead variable)
 ✅ S/R সম্পূর্ণ বাদ - শুধু AI মডেল থেকে সিগনাল
 """
 
@@ -45,7 +48,7 @@ BULLISH_STRONG_PATH = "./output/ai_signal/bullish_strong.csv"
 FINAL_OUTPUT_PATH = "./output/ai_signal/FINAL_AI_SIGNALS.csv"
 os.makedirs("./output/ai_signal", exist_ok=True)
 
-# PPO observation config — MUST match ppo_train.py
+# ✅ PPO observation config — MUST match ppo_train.py
 WINDOW = 10
 DEFAULT_MARKET_COLS = ["open", "high", "low", "close", "volume"]
 try:
@@ -129,6 +132,7 @@ bullish_strong_df = None
 try:
     if os.path.exists(BULLISH_STRONG_PATH):
         bullish_strong_df = pd.read_csv(BULLISH_STRONG_PATH)
+
         for _, row in bullish_strong_df.iterrows():
             symbol = row['symbol']
             bullish_strong_dict[symbol] = {
@@ -139,6 +143,7 @@ try:
                 'bbr': row.get('bbr', 1.0),
                 'strong': row.get('strong', '0:0')
             }
+
         print(f"   ✅ Loaded {len(bullish_strong_dict)} Bullish Strong signals")
     else:
         print(f"   ⚠️ Bullish Strong file not found: {BULLISH_STRONG_PATH}")
@@ -158,7 +163,7 @@ AI_WEIGHTS = {
 }
 
 print("="*70)
-print("🤖 COMBINED AI TRADING SIGNAL GENERATOR (FULL - NO S/R)")
+print("🤖 COMBINED AI TRADING SIGNAL GENERATOR (50-DIM PPO)")
 print("="*70)
 print(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print(f"📊 AI Weights: LLM={AI_WEIGHTS['llm']*100:.0f}% | XGB={AI_WEIGHTS['xgb']*100:.0f}% | PPO={AI_WEIGHTS['ppo']*100:.0f}% | Agentic={AI_WEIGHTS['agentic']*100:.0f}% | PatchTST={AI_WEIGHTS['patch_tst']*100:.0f}% | Sector={AI_WEIGHTS['sector']*100:.0f}%")
@@ -166,7 +171,7 @@ print(f"🔧 PPO STATE_DIM={STATE_DIM} | WINDOW={WINDOW}")
 print("="*70)
 
 # =========================================================
-# ১. mongodb — ONCE লোড (perf fix)
+# ১. mongodb — ONCE লোড (perf + consistency)
 # =========================================================
 print("\n📂 Loading symbols from mongodb...")
 mongo_df = pd.read_csv(MONGO_PATH)
@@ -175,47 +180,47 @@ mongo_df = mongo_df.sort_values(['symbol', 'date'])
 target_symbols = mongo_df['symbol'].unique().tolist()
 print(f"   ✅ Loaded {len(target_symbols)} symbols")
 
-# Per-symbol data cache (perf fix)
+# Per-symbol data cache (perf)
 mongo_by_symbol = {sym: grp for sym, grp in mongo_df.groupby('symbol')}
 latest_market = mongo_df.groupby('symbol').tail(1).set_index('symbol')
 
 # =========================================================
-# ✅ PPO OBSERVATION BUILDER — matches training format
+# ✅ PPO OBSERVATION BUILDER — matches training format (50-dim)
 # =========================================================
 def build_ppo_observation(symbol, symbol_df=None, window=WINDOW):
     """
-    Build PPO observation from market features.
-    MUST match ppo_train.py build_observation():
+    Build 50-dim PPO observation from market features.
+    MUST match ppo_train.py build_observation() and env_trading.py:
     last `window` rows of [open,high,low,close,volume] flattened → 50 dims
     """
     try:
         if symbol_df is None:
             symbol_df = mongo_by_symbol.get(symbol)
-        
+
         if symbol_df is None or len(symbol_df) == 0:
             return np.zeros(STATE_DIM, dtype=np.float32)
-        
+
         sym_tail = symbol_df.tail(window)
-        
+
         available_cols = [c for c in MARKET_COLS if c in sym_tail.columns]
         if not available_cols:
             available_cols = ['close', 'volume'] if 'close' in sym_tail.columns else ['close']
-        
+
         seg = sym_tail[available_cols].values.astype(np.float32)
-        
+
         # Pad rows to WINDOW
         if len(seg) < window:
             pad = window - len(seg)
             seg = np.pad(seg, ((pad, 0), (0, 0)), mode="edge")
-        
+
         market_vec = seg.flatten()
-        
+
         # Ensure exact STATE_DIM
         if len(market_vec) < STATE_DIM:
             market_vec = np.pad(market_vec, (0, STATE_DIM - len(market_vec)))
         elif len(market_vec) > STATE_DIM:
             market_vec = market_vec[:STATE_DIM]
-        
+
         return np.nan_to_num(market_vec).astype(np.float32)
     except Exception as e:
         return np.zeros(STATE_DIM, dtype=np.float32)
@@ -242,7 +247,7 @@ xgb_df = xgb_df[xgb_df['symbol'].isin(good_xgb_symbols)]
 if 'prob_up' not in xgb_df.columns:
     if 'prediction' in xgb_df.columns and 'confidence_score' in xgb_df.columns:
         xgb_df['prob_up'] = xgb_df.apply(
-            lambda row: row['confidence_score'] / 100 if row['prediction'] == 1 
+            lambda row: row['confidence_score'] / 100 if row['prediction'] == 1
             else (100 - row['confidence_score']) / 100,
             axis=1
         )
@@ -253,28 +258,31 @@ xgb_latest = xgb_df.sort_values(['symbol', 'date']).groupby('symbol').tail(1).se
 print(f"   ✅ XGBoost: {len(good_xgb_symbols)} good models")
 
 # =========================================================
-# ৩. PPO মডেল লোড — ✅ REAL OBSERVATION (BUG FIXED)
+# ৩. PPO মডেল লোড — ✅ REAL OBSERVATION + RESHAPE FIX
 # =========================================================
 print("\n📂 Loading PPO models with REAL market observations...")
 ppo_data = {}
 
 for symbol in target_symbols:
     ppo_path = os.path.join(PPO_MODELS_DIR, f"ppo_{symbol}.zip")
-    ensemble_path = os.path.join("./csv/ppo_models", f"ensemble_{symbol}.pkl")
-    
+    # ✅ FIX: same directory as PPO_MODELS_DIR
+    ensemble_path = os.path.join(PPO_MODELS_DIR, f"ensemble_{symbol}.pkl")
+
     # ✅ Build symbol-specific observation from ACTUAL market data
     obs = build_ppo_observation(symbol, mongo_by_symbol.get(symbol))
-    
+    # ✅ FIX: reshape to 2D (1, 50) for SB3 PPO.predict
+    obs_2d = np.asarray(obs, dtype=np.float32).reshape(1, -1)
+
     if os.path.exists(ppo_path) and SB3_AVAILABLE:
         try:
             ppo_model = PPO.load(ppo_path, device="cpu")
-            action, _ = ppo_model.predict(obs, deterministic=True)
-            
+            action, _ = ppo_model.predict(obs_2d, deterministic=True)
+
             if isinstance(action, (list, tuple, np.ndarray)):
                 action_val = int(action[0]) if len(action) > 0 else 0
             else:
                 action_val = int(action)
-            
+
             action_map = {0: 'HOLD', 1: 'BUY', 2: 'SELL'}
             ppo_data[symbol] = {
                 'available': True,
@@ -295,20 +303,20 @@ for symbol in target_symbols:
                 for mp in ensemble_info['model_paths']:
                     try:
                         m = PPO.load(mp, device="cpu")
-                        a, _ = m.predict(obs, deterministic=True)
+                        a, _ = m.predict(obs_2d, deterministic=True)
                         if isinstance(a, (list, tuple, np.ndarray)):
                             all_actions.append(int(a[0]) if len(a) > 0 else 0)
                         else:
                             all_actions.append(int(a))
                     except:
                         continue
-                
+
                 if all_actions:
                     # Majority vote
                     action_val = int(pd.Series(all_actions).mode().iloc[0])
                 else:
                     action_val = 0
-                
+
                 action_map = {0: 'HOLD', 1: 'BUY', 2: 'SELL'}
                 ppo_data[symbol] = {
                     'available': True,
@@ -368,7 +376,7 @@ else:
     print(f"   ⚠️ Elliott backtest not found")
 
 # =========================================================
-# ৬. Elliott Wave Details (✅ mongo_by_symbol use করে — no re-read)
+# ৬. Elliott Wave Details (uses cached mongo_by_symbol)
 # =========================================================
 def get_elliott_wave_details(symbol):
     try:
@@ -379,26 +387,26 @@ def get_elliott_wave_details(symbol):
                 'current_wave': 'Unknown', 'wave_confidence': 0,
                 'is_bullish': False, 'wave_position': 'Unknown'
             }
-        
+
         try:
             from generate_pattern_training_data_complete import detect_elliott_wave_complete
             elliott_result = detect_elliott_wave_complete(sym_data, len(sym_data)-1, lookback=200)
-            
+
             if elliott_result and elliott_result.get('wave_structure'):
                 wave_structure = elliott_result['wave_structure']
                 wave_count = wave_structure.get('wave_count', [])
                 sub_waves = wave_structure.get('sub_waves', {})
-                
+
                 current_wave = wave_count[-1] if wave_count else 'Unknown'
                 confidence = wave_structure.get('confidence', 0)
                 is_bullish = elliott_result.get('is_bullish', False)
-                
+
                 sub_wave_text = ""
                 for wave_name, sub in sub_waves.items():
                     sub_structure = sub.get('structure', 'N/A')
                     sub_wave_list = sub.get('sub_waves', [])
                     sub_wave_text += f"{wave_name}:{sub_structure}({'-'.join(sub_wave_list)}) | "
-                
+
                 return {
                     'wave_count': ' → '.join(wave_count),
                     'sub_waves': sub_wave_text.strip('| '),
@@ -409,7 +417,7 @@ def get_elliott_wave_details(symbol):
                 }
         except ImportError:
             pass
-        
+
         return {
             'wave_count': 'No Pattern Detected',
             'sub_waves': 'N/A',
@@ -465,7 +473,7 @@ def get_llm_signal(symbol, row):
             'signal': 'MODEL_NOT_READY', 'confidence': 0, 'strength': 'N/A',
             'bias': 'NEUTRAL', 'entry': 0, 'stop_loss': 0, 'target': 0
         }
-    
+
     sector = 'Unknown'
     if sector_engine:
         try:
@@ -474,7 +482,7 @@ def get_llm_signal(symbol, row):
             sector = row.get('sector', 'Unknown') if hasattr(row, 'get') else 'Unknown'
     else:
         sector = row.get('sector', 'Unknown') if hasattr(row, 'get') else 'Unknown'
-    
+
     prompt = f"""Symbol: {symbol} | Price: {row.get('close', 0):.2f}
 RSI: {row.get('rsi', 50):.1f} | MACD: {row.get('macd', 0):.4f}
 Sector: {sector}
@@ -482,42 +490,42 @@ Sector: {sector}
 Provide trading signal (BUY/SELL/HOLD), confidence%, entry, stop loss, target.
 
 RECOMMENDATION:"""
-    
+
     try:
         inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512).to(device)
-        
+
         with torch.no_grad():
-            outputs = model.generate(**inputs, max_new_tokens=100, temperature=0.7, 
+            outputs = model.generate(**inputs, max_new_tokens=100, temperature=0.7,
                                     do_sample=True, pad_token_id=tokenizer.eos_token_id)
-        
+
         response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        
+
         result = {
             'signal': 'HOLD', 'confidence': 50, 'strength': 'MEDIUM',
             'bias': 'NEUTRAL', 'entry': row.get('close', 0),
             'stop_loss': row.get('close', 0) * 0.98, 'target': row.get('close', 0) * 1.05
         }
-        
+
         if re.search(r'BUY', response, re.IGNORECASE):
             result['signal'] = 'BUY'; result['bias'] = 'BULLISH'
         elif re.search(r'SELL', response, re.IGNORECASE):
             result['signal'] = 'SELL'; result['bias'] = 'BEARISH'
-        
+
         conf_match = re.search(r'(\d+)%', response)
         if conf_match: result['confidence'] = float(conf_match.group(1))
-        
+
         entry_match = re.search(r'Entry:?\s*([\d.]+)', response, re.IGNORECASE)
         if entry_match: result['entry'] = float(entry_match.group(1))
-        
+
         sl_match = re.search(r'Stop Loss:?\s*([\d.]+)', response, re.IGNORECASE)
         if sl_match: result['stop_loss'] = float(sl_match.group(1))
-        
+
         tp_match = re.search(r'Target:?\s*([\d.]+)', response, re.IGNORECASE)
         if tp_match: result['target'] = float(tp_match.group(1))
-        
+
         if re.search(r'STRONG', response, re.IGNORECASE): result['strength'] = 'STRONG'
         elif re.search(r'WEAK', response, re.IGNORECASE): result['strength'] = 'WEAK'
-        
+
         return result
     except Exception as e:
         return {
@@ -526,18 +534,18 @@ RECOMMENDATION:"""
         }
 
 # =========================================================
-# ৯-১০.8 Signal fetchers
+# ৯-১০.৮ Signal fetchers
 # =========================================================
 def get_xgb_data(symbol):
     if symbol in xgb_latest.index:
         row = xgb_latest.loc[symbol]
         prob = row.get('prob_up', 0.5)
         conf = row.get('confidence_score', 50)
-        
+
         if prob > 0.60: signal = 'BUY'
         elif prob < 0.40: signal = 'SELL'
         else: signal = 'HOLD'
-        
+
         return {
             'signal': signal, 'confidence': conf, 'prob_up': prob,
             'auc': meta_df[meta_df['symbol'] == symbol]['auc'].values[0] if symbol in meta_df['symbol'].values else 0
@@ -552,12 +560,12 @@ def get_ppo_data(symbol):
 def get_agentic_signal(symbol):
     if not agentic_available or agentic_loop is None:
         return {'score': 50, 'bias': 'NEUTRAL', 'available': False, 'confidence': 0}
-    
+
     try:
         symbol_data = mongo_by_symbol.get(symbol)
         if symbol_data is not None:
             symbol_data = symbol_data.tail(50)
-        
+
         decision, score, confidence, details = agentic_loop.get_consensus(
             symbol=symbol,
             symbol_data=symbol_data,
@@ -576,7 +584,7 @@ def get_agentic_signal(symbol):
 def get_patch_tst_signal(symbol):
     if not PATCHTST_AVAILABLE or patch_tst is None:
         return {'available': False, 'direction': 'N/A', 'confidence': 0, 'up_prob': 0.5}
-    
+
     try:
         symbol_df = mongo_by_symbol.get(symbol)
         pred = patch_tst.predict(symbol, symbol_df)
@@ -590,7 +598,6 @@ def get_patch_tst_signal(symbol):
         return {'available': False, 'direction': 'N/A', 'confidence': 0, 'up_prob': 0.5}
 
 def get_sector_from_mongodb(symbol):
-    """✅ mongo_by_symbol use করে — no re-read"""
     try:
         sym_data = mongo_by_symbol.get(symbol)
         if sym_data is not None and 'sector' in sym_data.columns:
@@ -604,19 +611,19 @@ def get_sector_from_mongodb(symbol):
 def get_sector_score(symbol):
     if not SECTOR_AVAILABLE or sector_engine is None:
         return get_sector_from_mongodb(symbol)
-    
+
     try:
         sector = sector_engine.get_sector(symbol)
         if sector in ['Other', 'Unknown', 'other', 'unknown', '']:
             return get_sector_from_mongodb(symbol)
-        
+
         top3 = [s for s, _ in sector_engine.get_top_sectors(3)]
         bottom2 = [s for s, _ in sector_engine.get_bottom_sectors(2)]
-        
+
         if sector in top3: score = 80
         elif sector in bottom2: score = 20
         else: score = 50
-        
+
         return {'score': score, 'name': sector, 'is_top': sector in top3}
     except:
         return get_sector_from_mongodb(symbol)
@@ -629,7 +636,7 @@ def get_bullish_strong_boost(symbol):
         elif bbr >= 2.0: boost = 12
         elif bbr >= 1.5: boost = 8
         else: boost = 5
-        
+
         strong_ratio = data['strong']
         if ':' in strong_ratio:
             try:
@@ -638,7 +645,7 @@ def get_bullish_strong_boost(symbol):
                     boost += 5
             except:
                 pass
-        
+
         return {
             'has_signal': True, 'boost': boost, 'bbr': bbr,
             'rt': data['rt'], 'strong': data['strong'],
@@ -664,34 +671,34 @@ def get_agentic_score_global():
 
 def calculate_final_combined_score(llm_sig, xgb_sig, ppo_sig, agentic_sig, patch_tst_sig, sector_sig, bullish_boost):
     final_score = 0
-    
+
     if llm_sig['signal'] == 'BUY': final_score += llm_sig['confidence'] * AI_WEIGHTS['llm']
     elif llm_sig['signal'] == 'SELL': final_score += (100 - llm_sig['confidence']) * AI_WEIGHTS['llm']
     else: final_score += 50 * AI_WEIGHTS['llm']
-    
+
     if xgb_sig['signal'] == 'BUY': final_score += xgb_sig['confidence'] * AI_WEIGHTS['xgb']
     elif xgb_sig['signal'] == 'SELL': final_score += (100 - xgb_sig['confidence']) * AI_WEIGHTS['xgb']
     else: final_score += 50 * AI_WEIGHTS['xgb']
-    
+
     if ppo_sig['available']:
         if ppo_sig['signal'] == 'BUY': final_score += ppo_sig['confidence'] * AI_WEIGHTS['ppo']
         elif ppo_sig['signal'] == 'SELL': final_score += (100 - ppo_sig['confidence']) * AI_WEIGHTS['ppo']
         else: final_score += 50 * AI_WEIGHTS['ppo']
     else: final_score += 50 * AI_WEIGHTS['ppo']
-    
+
     if agentic_sig['available']:
         if agentic_sig['bias'] == 'BUY': final_score += agentic_sig['score'] * AI_WEIGHTS['agentic']
         elif agentic_sig['bias'] == 'SELL': final_score += (100 - agentic_sig['score']) * AI_WEIGHTS['agentic']
         else: final_score += 50 * AI_WEIGHTS['agentic']
     else: final_score += 50 * AI_WEIGHTS['agentic']
-    
+
     if patch_tst_sig['available']: final_score += patch_tst_sig['up_prob'] * 100 * AI_WEIGHTS['patch_tst']
     else: final_score += 50 * AI_WEIGHTS['patch_tst']
-    
+
     final_score += sector_sig['score'] * AI_WEIGHTS['sector']
-    
+
     if bullish_boost['has_signal']: final_score += bullish_boost['boost']
-    
+
     return min(100, final_score)
 
 def get_final_signal_label(score):
@@ -721,13 +728,13 @@ agentic_score_global, agentic_bias_global = get_agentic_score_global()
 
 for i, symbol in enumerate(target_symbols):
     print(f"\r   🔍 Processing {i+1}/{len(target_symbols)}: {symbol}...", end='')
-    
+
     if symbol in latest_market.index:
         market_row = latest_market.loc[symbol]
         current_high = market_row.get('high', 0) if hasattr(market_row, 'get') else 0
     else:
         market_row = pd.Series({'close': 0, 'rsi': 50, 'macd': 0, 'sector': 'Unknown'})
-    
+
     llm_sig = get_llm_signal(symbol, market_row)
     xgb_sig = get_xgb_data(symbol)
     ppo_sig = get_ppo_data(symbol)
@@ -736,7 +743,7 @@ for i, symbol in enumerate(target_symbols):
     sector_sig = get_sector_score(symbol)
     bullish_boost = get_bullish_strong_boost(symbol)
     elliott_details = get_elliott_wave_details(symbol)
-    
+
     model_avail = get_model_availability(
         llm_available,
         symbol in good_xgb_symbols,
@@ -744,15 +751,15 @@ for i, symbol in enumerate(target_symbols):
         agentic_sig['available'],
         patch_tst_sig['available']
     )
-    
+
     final_score = calculate_final_combined_score(
-        llm_sig, xgb_sig, ppo_sig, agentic_sig, 
+        llm_sig, xgb_sig, ppo_sig, agentic_sig,
         patch_tst_sig, sector_sig, bullish_boost
     )
     final_signal = get_final_signal_label(final_score)
-    
+
     entry_price = llm_sig['entry'] if llm_sig['entry'] > 0 else market_row.get('close', 0)
-    
+
     results.append({
         'symbol': symbol,
         'date': str(market_row.get('date', ''))[:10] if hasattr(market_row, 'get') else '',
@@ -818,7 +825,7 @@ output_df.to_csv(FINAL_OUTPUT_PATH, index=False)
 # ১৬. রিপোর্ট
 # =========================================================
 print("="*70)
-print("📊 FINAL AI TRADING SIGNALS REPORT (NO S/R)")
+print("📊 FINAL AI TRADING SIGNALS REPORT (50-DIM PPO)")
 print("="*70)
 print(f"📅 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print(f"📊 Total Signals: {len(output_df)}")
@@ -844,7 +851,7 @@ print(output_df['model_availability'].value_counts().to_string())
 print(f"\n🔥 TOP 10 BUY SIGNALS:")
 buy_signals = output_df[output_df['final_signal'].str.contains('BUY', na=False)].head(10)
 if len(buy_signals) > 0:
-    print(buy_signals[['symbol', 'final_signal', 'final_combined_score', 
+    print(buy_signals[['symbol', 'final_signal', 'final_combined_score',
                         'entry_price', 'ppo_signal', 'bullish_strong_signal',
                         'elliott_current_wave']].to_string())
 else:
