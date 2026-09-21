@@ -651,6 +651,7 @@ if SB3_AVAILABLE:
 if SB3_AVAILABLE:
     class EnsemblePPO:
         def __init__(self, model_paths, weights=None):
+            self.model_paths = [str(p) for p in model_paths]     ← ✅ যোগ করুন
             self.models = []
             self.weights = weights if weights else [1.0 / len(model_paths)] * len(model_paths)
             for path in model_paths:
@@ -1068,7 +1069,7 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
 
         best_model_path, best_metrics_path = local_ckpt.save_model_checkpoint(
             symbol=symbol,
-            model=final_model if not isinstance(final_model, EnsemblePPO) else EnsemblePPO.__new__(EnsemblePPO),
+            model=model_for_save,
             metrics=final_metrics,
             step=config['timesteps'],
             is_best=True
@@ -1098,7 +1099,7 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
             }, ensemble_info_path)
             # ✅ Also save the representative best model for loaders
             
-_for_save.save(final_path)
+model_for_save.save(final_path)
         
         print(f"\n   💾 Model saved: {final_path}")
         print(f"   📤 Uploaded to HF: {HF_DATASET_REPO}/{HF_CHECKPOINT_DIR}/{symbol}/")
