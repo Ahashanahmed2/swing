@@ -1,7 +1,10 @@
 # ================== ppo_train.py ==================
 # HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM
 # MAXIMUM QUALITY — 50-DIM SIMPLE OBSERVATION
-# ✅ All 4 fixes applied (EnsemblePPO save, model_paths, weights, indent)
+# ✅ ALL FIXES APPLIED:
+#    - DummyVecEnv 4-tuple handling (3 locations)
+#    - EnsemblePPO model_paths, save, weights defined
+#    - Proper indentation
 # ✅ HF CHECKPOINT: Upload to HF via Batch
 # ✅ RESUME: From ./csv/ppo_checkpoints/
 
@@ -394,7 +397,7 @@ PPO_PER_SYMBOL_CONFIG = {
 }
 
 # =========================================================
-# AGENTIC LOOP WRAPPER
+# ✅ AGENTIC LOOP WRAPPER
 # =========================================================
 
 class AgenticLoopWrapper:
@@ -468,7 +471,7 @@ def get_agentic_loop():
     return _agentic_loop
 
 # =========================================================
-# SAFE TRADE RESULT EXTRACTOR
+# ✅ SAFE TRADE RESULT EXTRACTOR
 # =========================================================
 
 def safe_extract_trade_result(info):
@@ -488,7 +491,7 @@ def safe_extract_trade_result(info):
     }
 
 # =========================================================
-# MISTAKE LEARNER
+# ✅ MISTAKE LEARNER
 # =========================================================
 
 class MistakeLearner:
@@ -537,7 +540,7 @@ class MistakeLearner:
             return []
 
 # =========================================================
-# HELPER
+# ✅ HELPERS — DummyVecEnv 4-tuple unpacker
 # =========================================================
 
 def ensure_vecenv_action(action):
@@ -549,8 +552,45 @@ def ensure_vecenv_action(action):
         return list(action)
     return action
 
+
+def parse_vecenv_step(step_result):
+    """
+    ✅ Parse DummyVecEnv step result (4-tuple).
+    Returns: (obs, reward_scalar, terminated_bool, info_dict)
+
+    DummyVecEnv returns: (observations, rewards, dones, infos)
+    """
+    obs = step_result[0]
+    reward_raw = step_result[1] if len(step_result) > 1 else 0.0
+    dones_raw = step_result[2] if len(step_result) > 2 else True
+    infos_raw = step_result[3] if len(step_result) > 3 else [{}]
+
+    # Reward → scalar
+    if hasattr(reward_raw, '__len__') and len(reward_raw) > 0:
+        reward = float(reward_raw[0])
+    elif np.isscalar(reward_raw):
+        reward = float(reward_raw)
+    else:
+        reward = 0.0
+
+    # Dones → bool
+    if hasattr(dones_raw, '__len__') and len(dones_raw) > 0:
+        terminated = bool(dones_raw[0])
+    else:
+        terminated = bool(dones_raw)
+
+    # Infos → dict
+    if isinstance(infos_raw, list) and len(infos_raw) > 0:
+        info = infos_raw[0] if isinstance(infos_raw[0], dict) else {}
+    elif isinstance(infos_raw, dict):
+        info = infos_raw
+    else:
+        info = {}
+
+    return obs, reward, terminated, info
+
 # =========================================================
-# EARLY STOPPING
+# 🔥 EARLY STOPPING — FIXED
 # =========================================================
 
 if SB3_AVAILABLE:
@@ -583,7 +623,7 @@ if SB3_AVAILABLE:
             obs = self.eval_env.reset()
             if isinstance(obs, tuple):
                 obs = obs[0]
-            total_reward = 0
+            total_reward = 0.0
             steps = 0
             terminated = False
             truncated = False
@@ -594,22 +634,20 @@ if SB3_AVAILABLE:
                 action, _ = self.model.predict(obs, deterministic=True)
                 action = ensure_vecenv_action(action)
                 step_result = self.eval_env.step(action)
+
                 if step_result is None or len(step_result) == 0:
                     break
-                obs = step_result[0]
-                reward = step_result[1] if len(step_result) > 1 else 0
-                terminated = step_result[2] if len(step_result) > 2 else False
-                truncated = step_result[3] if len(step_result) > 3 else False
-                if isinstance(reward, (list, np.ndarray)):
-                    reward = reward[0] if len(reward) > 0 else 0
-                elif not isinstance(reward, (int, float)):
-                    reward = 0
+
+                # ✅ FIX: Use helper for 4-tuple
+                obs, reward, terminated, _ = parse_vecenv_step(step_result)
+                truncated = False
                 total_reward += reward
                 steps += 1
+
             return total_reward / steps if steps > 0 else 0
 
 # =========================================================
-# ENSEMBLE PPO
+# ✅ ENSEMBLE PPO
 # =========================================================
 
 if SB3_AVAILABLE:
@@ -647,7 +685,7 @@ if SB3_AVAILABLE:
             return [final_action], {'actions': all_actions, 'weighted_votes': weighted_votes}
 
 # =========================================================
-# CREATE ENVIRONMENT
+# ✅ CREATE ENVIRONMENT
 # =========================================================
 
 def create_multi_symbol_env(symbol_dfs, sector_engine=None, xgb_models=None,
@@ -673,7 +711,7 @@ def create_multi_symbol_env(symbol_dfs, sector_engine=None, xgb_models=None,
         return None
 
 # =========================================================
-# MAXIMUM QUALITY TRAINING
+# 🔥 MAXIMUM QUALITY TRAINING
 # =========================================================
 
 def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
@@ -809,12 +847,12 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
 
                 print(f"      💾 Checkpoint: step {current_step}/{config['timesteps']}")
 
-            # Validation
+            # ---- Validation ----
             obs = val_env.reset()
             if isinstance(obs, tuple):
                 obs = obs[0]
 
-            total_return = 0
+            total_return = 0.0
             steps = 0
             rewards_list = []
             terminated = False
@@ -824,15 +862,14 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
                 action, _ = model.predict(obs, deterministic=True)
                 action = ensure_vecenv_action(action)
                 step_result = val_env.step(action)
+
                 if step_result is None or len(step_result) == 0:
                     break
-                obs = step_result[0]
-                reward = step_result[1] if len(step_result) > 1 else 0
-                terminated = step_result[2] if len(step_result) > 2 else False
-                truncated = step_result[3] if len(step_result) > 3 else False
-                info = step_result[4] if len(step_result) > 4 else {}
-                if isinstance(reward, (list, np.ndarray)):
-                    reward = reward[0] if len(reward) > 0 else 0
+
+                # ✅ FIX: Use helper for 4-tuple
+                obs, reward, terminated, info = parse_vecenv_step(step_result)
+                truncated = False
+
                 total_return += reward
                 rewards_list.append(reward)
                 steps += 1
@@ -897,7 +934,7 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
         weights = np.array([1.0])
         final_model = PPO.load(ensemble_models[0], device="cpu")
 
-    # FINAL TEST
+    # ---- FINAL TEST ----
     print(f"\n   {'═'*50}")
     print(f"   🧪 FINAL TEST — NEVER-TOUCHED DATA")
     print(f"   {'═'*50}")
@@ -912,7 +949,7 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
         if isinstance(obs, tuple):
             obs = obs[0]
 
-        total_return = 0
+        total_return = 0.0
         test_trades = []
         rewards_list = []
         steps = 0
@@ -923,15 +960,14 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
             action, _ = final_model.predict(obs, deterministic=True)
             action = ensure_vecenv_action(action)
             step_result = test_env.step(action)
+
             if step_result is None or len(step_result) == 0:
                 break
-            obs = step_result[0]
-            reward = step_result[1] if len(step_result) > 1 else 0
-            terminated = step_result[2] if len(step_result) > 2 else False
-            truncated = step_result[3] if len(step_result) > 3 else False
-            info = step_result[4] if len(step_result) > 4 else {}
-            if isinstance(reward, (list, np.ndarray)):
-                reward = reward[0] if len(reward) > 0 else 0
+
+            # ✅ FIX: Use helper for 4-tuple
+            obs, reward, terminated, info = parse_vecenv_step(step_result)
+            truncated = False
+
             total_return += reward
             rewards_list.append(reward)
             steps += 1
@@ -996,7 +1032,7 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
         else:
             print(f"   ⚠️ NEEDS IMPROVEMENT — Consider more training")
 
-        # Save BEST model locally
+        # Save BEST model locally (EnsemblePPO → save representative member)
         if isinstance(final_model, EnsemblePPO) and len(ensemble_models) > 0:
             model_for_save = PPO.load(str(ensemble_models[0]), device="cpu")
         else:
@@ -1089,7 +1125,7 @@ def update_last_ppo_train():
         f.write(datetime.now().strftime('%Y-%m-%d'))
 
 # =========================================================
-# MAIN TRAINING
+# 🔥 MAIN TRAINING
 # =========================================================
 
 def train_ppo_system():
@@ -1161,6 +1197,11 @@ def train_ppo_system():
             all_symbols_data[symbol] = symbol_df
     print(f"   ✅ {len(all_symbols_data)} symbols with sufficient data")
 
+    # ✅ Fallback if no XGB metadata
+    if not top_symbol_list:
+        top_symbol_list = list(all_symbols_data.keys())[:MAX_PER_SYMBOL_MODELS]
+        print(f"   ⚠️ Fallback: using all {len(top_symbol_list)} symbols (no XGB filter)")
+
     completed_symbols = local_ckpt.get_completed_symbols()
     pending_symbols = local_ckpt.get_pending_symbols(top_symbol_list)
 
@@ -1186,7 +1227,7 @@ def train_ppo_system():
                 continue
 
             symbol_data = all_symbols_data[symbol]
-            xgb_info = xgb_metadata[xgb_metadata['symbol'] == symbol]
+            xgb_info = xgb_metadata[xgb_metadata['symbol'] == symbol] if not xgb_metadata.empty else pd.DataFrame()
             xgb_auc = xgb_info.iloc[0]['auc'] if len(xgb_info) > 0 else 0.65
 
             print(f"\n📈 Progress: {idx+1}/{len(pending_symbols)} [Pending] | Total: {len(completed_symbols)+idx+1}/{len(top_symbol_list)}")
