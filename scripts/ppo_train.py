@@ -1,17 +1,14 @@
 # ================== ppo_train.py ==================
-# HEDGE FUND LEVEL HYBRID PPO TRAINING SYSTEM
-# MAXIMUM QUALITY — 50-DIM SIMPLE OBSERVATION
-# ✅ ALL FIXES APPLIED:
-#    - DummyVecEnv 4-tuple handling (3 locations)
-#    - EnsemblePPO model_paths, save, weights defined
-#    - Proper indentation
-# ✅ HF CHECKPOINT: Upload to HF via Batch
-# ✅ RESUME: From ./csv/ppo_checkpoints/
+# HEDGE FUND LEVEL — MAX QUALITY PPO TRAINING
+# ✅ Train ALL symbols (400+)
+# ✅ Slow learning OK (conservative LR, no early stop)
+# ✅ HF upload batches every 50 files
+# ✅ Resume support
+# ✅ DummyVecEnv 4-tuple handling
 
 import os
 import sys
 import json
-import glob
 import shutil
 import time
 import pandas as pd
@@ -19,30 +16,22 @@ import numpy as np
 import joblib
 from pathlib import Path
 from datetime import datetime
-from collections import Counter
-from sklearn.preprocessing import StandardScaler
 import warnings
 warnings.filterwarnings('ignore')
 
-# =========================================================
-# ✅ IMPORTS
-# =========================================================
-
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-try:
-    from xgboost_ppo_env import HedgeFundTradingEnv, HedgeFundConfig, FeatureScaler
-    ENV_AVAILABLE = True
-    print("✅ HedgeFundTradingEnv loaded")
-except ImportError:
-    ENV_AVAILABLE = False
+# =========================================================
+# IMPORTS
+# =========================================================
 
 try:
     from env_trading import MultiSymbolTradingEnv
     MULTI_ENV_AVAILABLE = True
     print("✅ MultiSymbolTradingEnv loaded")
-except ImportError:
+except ImportError as e:
     MULTI_ENV_AVAILABLE = False
+    print(f"⚠️ MultiSymbolTradingEnv not available: {e}")
 
 try:
     import gymnasium as gym
@@ -54,8 +43,7 @@ except ImportError:
 try:
     from stable_baselines3 import PPO
     from stable_baselines3.common.vec_env import DummyVecEnv
-    from stable_baselines3.common.callbacks import BaseCallback, EvalCallback
-    from stable_baselines3.common.env_checker import check_env
+    from stable_baselines3.common.callbacks import BaseCallback
     SB3_AVAILABLE = True
 except ImportError:
     SB3_AVAILABLE = False
@@ -78,21 +66,20 @@ try:
 except ImportError:
     PATCHTST_AVAILABLE = False
 
-# =========================================================
-# ✅ HUGGINGFACE UPLOAD (Batch) + LOCAL RESUME
-# =========================================================
-
 try:
-    from huggingface_hub import HfApi, upload_folder, login, create_repo
+    from huggingface_hub import HfApi, login, create_repo
     HF_AVAILABLE = True
     print("✅ HuggingFace Hub available")
 except ImportError:
     HF_AVAILABLE = False
     print("⚠️ HuggingFace Hub not available")
 
+# =========================================================
+# HF + LOCAL CHECKPOINT
+# =========================================================
+
 HF_DATASET_REPO = "ahashanahmed/csv"
 HF_CHECKPOINT_DIR = "checkpoints"
-
 LOCAL_CHECKPOINT_DIR = Path("./csv/ppo_checkpoints")
 LOCAL_CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -137,12 +124,12 @@ class HFCheckpointUploader:
                 repo_id=self.repo_id,
                 token=self.token,
                 repo_type="dataset",
-                commit_message=f"🔥 PPO Checkpoint: {len(self.upload_queue)} files"
+                commit_message=f"🔥 PPO: {len(self.upload_queue)} files"
             )
             shutil.rmtree(temp_dir, ignore_errors=True)
             print(f"   📤 HF Uploaded: {len(self.upload_queue)} files")
         except Exception as e:
-            print(f"   ⚠️ HF Upload failed (files saved locally): {e}")
+            print(f"   ⚠️ HF Upload failed: {e}")
         self.upload_queue = []
 
     def upload_file_direct(self, local_path, hf_path, commit_msg="Update"):
@@ -278,10 +265,6 @@ class LocalCheckpointManager:
         checkpoints.sort(key=lambda x: x.stat().st_mtime, reverse=True)
         return str(checkpoints[0])
 
-    def get_best_checkpoint(self, symbol):
-        best_path = self.base_dir / symbol / f"{symbol}_best.zip"
-        return str(best_path) if best_path.exists() else self.get_latest_checkpoint(symbol)
-
     def get_summary_path(self):
         return self.base_dir / "ppo_training_summary.json"
 
@@ -313,18 +296,15 @@ PPO_SHARED_PATH = PPO_MODEL_DIR / "ppo_shared"
 PPO_SYMBOL_DIR = PPO_MODEL_DIR / "per_symbol"
 PPO_ENSEMBLE_DIR = PPO_MODEL_DIR / "ensemble"
 MODEL_METADATA = BASE_DIR / "csv" / "model_metadata.csv"
-PREDICTION_LOG = BASE_DIR / "csv" / "prediction_log.csv"
 LAST_PPO_TRAIN = BASE_DIR / "csv" / "last_ppo_train.txt"
-TENSORBOARD_LOG = BASE_DIR / "logs" / "ppo_tensorboard"
 MISTAKES_FILE = BASE_DIR / "csv" / "trading_mistakes.csv"
 
 os.makedirs(PPO_MODEL_DIR, exist_ok=True)
 os.makedirs(PPO_SYMBOL_DIR, exist_ok=True)
 os.makedirs(PPO_ENSEMBLE_DIR, exist_ok=True)
-os.makedirs(TENSORBOARD_LOG, exist_ok=True)
 
 # =========================================================
-# 🔥 CONFIG — 50-DIM SIMPLE
+# CONFIG — TRAIN ALL SYMBOLS
 # =========================================================
 
 WINDOW = 10
@@ -332,24 +312,18 @@ TOTAL_CAPITAL = 500_000
 RISK_PERCENT = 0.01
 PPO_RETRAIN_INTERVAL = 7
 
-XGB_AUC_THRESHOLD_FOR_PPO = 0.55
-MAX_PER_SYMBOL_MODELS = 50
+XGB_AUC_THRESHOLD_FOR_PPO = 0.50
+MAX_PER_SYMBOL_MODELS = 10000   # ✅ effectively unlimited (all 400+)
 
-TRAIN_RATIO = 0.65
-VALIDATION_RATIO = 0.15
-TEST_RATIO = 0.20
+TRAIN_RATIO = 0.80       # ✅ 65% → 80% (small data friendly)
+VALIDATION_RATIO = 0.10  # ✅ 15% → 10%
+TEST_RATIO = 0.10        # ✅ 20% → 10%
 
-WALK_FORWARD_WINDOW = 252
-WALK_FORWARD_STEP = 21
-
-EARLY_STOPPING_PATIENCE = 15
-EVAL_FREQ = 500
-
-NOISE_STD = 0.0005
-USE_NOISE_INJECTION = True
+EARLY_STOPPING_PATIENCE = 999   # ✅ effectively disabled
+EVAL_FREQ = 10000               # ✅ rarely evaluate
+ENABLE_EARLY_STOP = False       # ✅ MASTER SWITCH
 
 ENSEMBLE_SIZE = 5
-USE_ENSEMBLE = True
 
 AGENTIC_LOOP_CONFIG = {
     'enabled': True,
@@ -381,23 +355,24 @@ PPO_CONFIG = {
     'target_kl': 0.03,
 }
 
+# ✅ Slow, safe learning (user prefers patience)
 PPO_PER_SYMBOL_CONFIG = {
     'high_quality': {
-        'n_steps': 4096, 'batch_size': 1024, 'learning_rate': 8e-5,
-        'timesteps': 80000, 'n_epochs': 20
+        'n_steps': 2048, 'batch_size': 256, 'learning_rate': 8e-5,
+        'timesteps': 100000, 'n_epochs': 15
     },
     'good_quality': {
-        'n_steps': 2048, 'batch_size': 512, 'learning_rate': 5e-5,
-        'timesteps': 60000, 'n_epochs': 15
+        'n_steps': 2048, 'batch_size': 256, 'learning_rate': 5e-5,
+        'timesteps': 80000, 'n_epochs': 15
     },
     'fallback': {
-        'n_steps': 2048, 'batch_size': 512, 'learning_rate': 5e-5,
-        'timesteps': 40000, 'n_epochs': 15
+        'n_steps': 1024, 'batch_size': 128, 'learning_rate': 5e-5,
+        'timesteps': 50000, 'n_epochs': 10
     },
 }
 
 # =========================================================
-# ✅ AGENTIC LOOP WRAPPER
+# AGENTIC LOOP WRAPPER
 # =========================================================
 
 class AgenticLoopWrapper:
@@ -449,18 +424,9 @@ class AgenticLoopWrapper:
         if not self.decisions:
             return
         try:
-            df = pd.DataFrame(self.decisions)
-            df.to_csv('./csv/agentic_decisions.csv', index=False)
+            pd.DataFrame(self.decisions).to_csv('./csv/agentic_decisions.csv', index=False)
         except:
             pass
-
-    def get_summary(self):
-        if not self.init_if_needed():
-            return pd.DataFrame()
-        try:
-            return self.loop.get_summary()
-        except:
-            return pd.DataFrame()
 
 _agentic_loop = None
 
@@ -471,15 +437,15 @@ def get_agentic_loop():
     return _agentic_loop
 
 # =========================================================
-# ✅ SAFE TRADE RESULT EXTRACTOR
+# HELPERS
 # =========================================================
 
 def safe_extract_trade_result(info):
-    trade_result = None
     if isinstance(info, list) and len(info) > 0:
         info = info[0]
-    if isinstance(info, dict):
-        trade_result = info.get('trade_result')
+    if not isinstance(info, dict):
+        return None
+    trade_result = info.get('trade_result')
     if not isinstance(trade_result, dict):
         return None
     return {
@@ -490,8 +456,45 @@ def safe_extract_trade_result(info):
         'exit_reason': trade_result.get('exit_reason', 'unknown')
     }
 
+def parse_vecenv_step(step_result):
+    """Parse DummyVecEnv 4-tuple: (obs, rewards, dones, infos)"""
+    obs = step_result[0]
+    reward_raw = step_result[1] if len(step_result) > 1 else 0.0
+    dones_raw = step_result[2] if len(step_result) > 2 else True
+    infos_raw = step_result[3] if len(step_result) > 3 else [{}]
+
+    if hasattr(reward_raw, '__len__') and len(reward_raw) > 0:
+        reward = float(reward_raw[0])
+    elif np.isscalar(reward_raw):
+        reward = float(reward_raw)
+    else:
+        reward = 0.0
+
+    if hasattr(dones_raw, '__len__') and len(dones_raw) > 0:
+        terminated = bool(dones_raw[0])
+    else:
+        terminated = bool(dones_raw)
+
+    if isinstance(infos_raw, list) and len(infos_raw) > 0:
+        info = infos_raw[0] if isinstance(infos_raw[0], dict) else {}
+    elif isinstance(infos_raw, dict):
+        info = infos_raw
+    else:
+        info = {}
+
+    return obs, reward, terminated, info
+
+def ensure_vecenv_action(action):
+    if isinstance(action, (int, float, np.integer, np.floating)):
+        return [int(action)]
+    elif isinstance(action, np.ndarray) and action.ndim == 0:
+        return [int(action.item())]
+    elif isinstance(action, (list, tuple)):
+        return list(action)
+    return action
+
 # =========================================================
-# ✅ MISTAKE LEARNER
+# MISTAKE LEARNER
 # =========================================================
 
 class MistakeLearner:
@@ -503,8 +506,7 @@ class MistakeLearner:
         if not os.path.exists(self.mistakes_file):
             return []
         try:
-            df = pd.read_csv(self.mistakes_file)
-            return df.to_dict('records')
+            return pd.read_csv(self.mistakes_file).to_dict('records')
         except:
             return []
 
@@ -519,97 +521,35 @@ class MistakeLearner:
             }
             self.mistakes.append(mistake)
             try:
-                df = pd.DataFrame(self.mistakes)
                 os.makedirs(os.path.dirname(self.mistakes_file), exist_ok=True)
-                df.to_csv(self.mistakes_file, index=False)
+                pd.DataFrame(self.mistakes).to_csv(self.mistakes_file, index=False)
             except:
                 pass
             return mistake
         except:
             return None
 
-    def get_avoid_list(self):
-        try:
-            avoid = {}
-            for mistake in self.mistakes:
-                symbol = mistake.get('symbol')
-                if symbol:
-                    avoid[symbol] = avoid.get(symbol, 0) + 1
-            return [s for s, count in avoid.items() if count >= 5]
-        except:
-            return []
-
 # =========================================================
-# ✅ HELPERS — DummyVecEnv 4-tuple unpacker
-# =========================================================
-
-def ensure_vecenv_action(action):
-    if isinstance(action, (int, float, np.integer, np.floating)):
-        return [int(action)]
-    elif isinstance(action, np.ndarray) and action.ndim == 0:
-        return [int(action.item())]
-    elif isinstance(action, (list, tuple)):
-        return list(action)
-    return action
-
-
-def parse_vecenv_step(step_result):
-    """
-    ✅ Parse DummyVecEnv step result (4-tuple).
-    Returns: (obs, reward_scalar, terminated_bool, info_dict)
-
-    DummyVecEnv returns: (observations, rewards, dones, infos)
-    """
-    obs = step_result[0]
-    reward_raw = step_result[1] if len(step_result) > 1 else 0.0
-    dones_raw = step_result[2] if len(step_result) > 2 else True
-    infos_raw = step_result[3] if len(step_result) > 3 else [{}]
-
-    # Reward → scalar
-    if hasattr(reward_raw, '__len__') and len(reward_raw) > 0:
-        reward = float(reward_raw[0])
-    elif np.isscalar(reward_raw):
-        reward = float(reward_raw)
-    else:
-        reward = 0.0
-
-    # Dones → bool
-    if hasattr(dones_raw, '__len__') and len(dones_raw) > 0:
-        terminated = bool(dones_raw[0])
-    else:
-        terminated = bool(dones_raw)
-
-    # Infos → dict
-    if isinstance(infos_raw, list) and len(infos_raw) > 0:
-        info = infos_raw[0] if isinstance(infos_raw[0], dict) else {}
-    elif isinstance(infos_raw, dict):
-        info = infos_raw
-    else:
-        info = {}
-
-    return obs, reward, terminated, info
-
-# =========================================================
-# 🔥 EARLY STOPPING — FIXED
+# EARLY STOPPING (DISABLED)
 # =========================================================
 
 if SB3_AVAILABLE:
     class EarlyStoppingCallback(BaseCallback):
-        def __init__(self, eval_env, patience=15, threshold=0.0005, min_delta=0.0001, verbose=0):
+        def __init__(self, eval_env, patience=999, min_delta=0.0001, verbose=0, enabled=False):
             super().__init__(verbose)
             self.eval_env = eval_env
             self.patience = patience
-            self.threshold = threshold
             self.min_delta = min_delta
             self.best_mean_reward = -np.inf
             self.no_improvement_count = 0
             self.eval_freq = EVAL_FREQ
-            self.reward_history = []
+            self.enabled = enabled   # ✅ master switch
 
         def _on_step(self):
+            if not self.enabled:
+                return True   # ✅ skip entirely if disabled
             if self.n_calls % self.eval_freq == 0:
                 mean_reward = self._evaluate()
-                self.reward_history.append(mean_reward)
                 if mean_reward > self.best_mean_reward + self.min_delta:
                     self.best_mean_reward = mean_reward
                     self.no_improvement_count = 0
@@ -626,28 +566,21 @@ if SB3_AVAILABLE:
             total_reward = 0.0
             steps = 0
             terminated = False
-            truncated = False
-
-            while not (terminated or truncated) and steps < 10000:
+            while not terminated and steps < 10000:
                 if isinstance(obs, np.ndarray) and len(obs.shape) == 1:
                     obs = obs.reshape(1, -1)
                 action, _ = self.model.predict(obs, deterministic=True)
                 action = ensure_vecenv_action(action)
                 step_result = self.eval_env.step(action)
-
                 if step_result is None or len(step_result) == 0:
                     break
-
-                # ✅ FIX: Use helper for 4-tuple
                 obs, reward, terminated, _ = parse_vecenv_step(step_result)
-                truncated = False
                 total_reward += reward
                 steps += 1
-
             return total_reward / steps if steps > 0 else 0
 
 # =========================================================
-# ✅ ENSEMBLE PPO
+# ENSEMBLE
 # =========================================================
 
 if SB3_AVAILABLE:
@@ -685,7 +618,7 @@ if SB3_AVAILABLE:
             return [final_action], {'actions': all_actions, 'weighted_votes': weighted_votes}
 
 # =========================================================
-# ✅ CREATE ENVIRONMENT
+# ENV FACTORY
 # =========================================================
 
 def create_multi_symbol_env(symbol_dfs, sector_engine=None, xgb_models=None,
@@ -693,7 +626,7 @@ def create_multi_symbol_env(symbol_dfs, sector_engine=None, xgb_models=None,
     if not MULTI_ENV_AVAILABLE:
         return None
     try:
-        env = MultiSymbolTradingEnv(
+        return MultiSymbolTradingEnv(
             symbol_dfs=symbol_dfs,
             build_observation=build_observation,
             window=WINDOW,
@@ -705,13 +638,32 @@ def create_multi_symbol_env(symbol_dfs, sector_engine=None, xgb_models=None,
             agentic_loop=agentic_loop,
             patch_tst=patch_tst
         )
-        return env
     except Exception as e:
         print(f"   ⚠️ Error creating env: {e}")
         return None
 
 # =========================================================
-# 🔥 MAXIMUM QUALITY TRAINING
+# BUILD OBSERVATION (50-dim)
+# =========================================================
+
+def build_observation(df, idx):
+    try:
+        available_cols = [col for col in MARKET_COLS if col in df.columns]
+        if not available_cols:
+            available_cols = ['close', 'volume']
+        pad = max(0, WINDOW - (idx + 1))
+        start = max(0, idx - WINDOW + 1)
+        seg = df.iloc[start:idx+1][available_cols].values
+        seg = np.pad(seg, ((pad, 0), (0, 0)), mode="edge")
+        market_vec = seg.flatten()
+        if len(market_vec) < len(MARKET_COLS) * WINDOW:
+            market_vec = np.pad(market_vec, (0, len(MARKET_COLS) * WINDOW - len(market_vec)))
+        return np.nan_to_num(list(market_vec))
+    except:
+        return np.zeros(STATE_DIM, dtype=np.float32)
+
+# =========================================================
+# MAX QUALITY TRAINING
 # =========================================================
 
 def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
@@ -724,7 +676,7 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
     hf_uploader = get_hf_uploader()
 
     print(f"\n{'═'*60}")
-    print(f"🎯 MAX QUALITY TRAINING: {symbol}")
+    print(f"🎯 TRAINING: {symbol}")
     print(f"   AUC: {xgb_auc:.2%} | Data: {len(symbol_data)} rows")
     print(f"{'═'*60}")
 
@@ -738,9 +690,7 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
                 symbol=symbol, symbol_data=symbol_data.tail(50),
                 volatility=volatility, market_regime='NEUTRAL'
             )
-            if AGENTIC_LOOP_CONFIG['show_consensus']:
-                print(f"\n   🤖 AGENTIC CONSENSUS:")
-                print(f"      Decision: {decision} | Score: {score:.3f} | Conf: {confidence:.3f}")
+            print(f"\n   🤖 AGENTIC: {decision} | Score: {score:.3f} | Conf: {confidence:.3f}")
         except:
             pass
 
@@ -752,35 +702,26 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
     val_data = symbol_data.iloc[train_end:val_end]
     test_data = symbol_data.iloc[val_end:]
 
-    print(f"\n   📊 Data Split:")
-    print(f"      Train: {len(train_data)} ({len(train_data)/len(symbol_data):.0%})")
-    print(f"      Val:   {len(val_data)} ({len(val_data)/len(symbol_data):.0%})")
-    print(f"      Test:  {len(test_data)} ({len(test_data)/len(symbol_data):.0%})")
+    print(f"\n   📊 Split: Train={len(train_data)} | Val={len(val_data)} | Test={len(test_data)}")
 
     # Config
     if xgb_auc >= 0.85:
-        config = PPO_PER_SYMBOL_CONFIG['high_quality']
-        quality = 'HIGH'
+        config = PPO_PER_SYMBOL_CONFIG['high_quality']; quality = 'HIGH'
     elif xgb_auc >= 0.70:
-        config = PPO_PER_SYMBOL_CONFIG['good_quality']
-        quality = 'GOOD'
+        config = PPO_PER_SYMBOL_CONFIG['good_quality']; quality = 'GOOD'
     else:
-        config = PPO_PER_SYMBOL_CONFIG['fallback']
-        quality = 'FALLBACK'
+        config = PPO_PER_SYMBOL_CONFIG['fallback']; quality = 'FALLBACK'
 
-    print(f"\n   🎚️ Quality: {quality} | Timesteps: {config['timesteps']:,} | Steps: {config['n_steps']}")
+    print(f"   🎚️ Quality: {quality} | Timesteps: {config['timesteps']:,}")
 
     # Resume
     last_step = local_ckpt.get_last_step(symbol)
     last_ensemble = local_ckpt.get_last_ensemble(symbol)
-
     if last_step > 0:
-        print(f"\n   🔄 RESUME: Found previous checkpoint at step {last_step}")
-        print(f"      Last ensemble: {last_ensemble + 1}/{ENSEMBLE_SIZE}")
+        print(f"   🔄 RESUME: step {last_step} | ensemble {last_ensemble + 1}/{ENSEMBLE_SIZE}")
 
     ensemble_models = []
     ensemble_stats = []
-
     start_ensemble = max(0, last_ensemble + 1) if last_step > 0 else 0
 
     for ensemble_idx in range(start_ensemble, ENSEMBLE_SIZE):
@@ -812,6 +753,7 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
                 'seed': 42 + ensemble_idx
             })
 
+            # Resume model
             resume_step = 0
             if ensemble_idx == start_ensemble and last_step > 0:
                 checkpoint_path = local_ckpt.get_latest_checkpoint(symbol)
@@ -824,12 +766,18 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
             else:
                 model = PPO("MlpPolicy", train_env, **ppo_config, verbose=0)
 
-            early_stop = EarlyStoppingCallback(val_env, patience=EARLY_STOPPING_PATIENCE, verbose=0)
+            # ✅ Early stop disabled
+            early_stop = EarlyStoppingCallback(
+                val_env,
+                patience=EARLY_STOPPING_PATIENCE,
+                verbose=0,
+                enabled=ENABLE_EARLY_STOP    # False
+            )
 
             remaining_steps = config['timesteps'] - resume_step
-            print(f"      ⏳ Training {remaining_steps:,} timesteps (resume from {resume_step})...")
+            print(f"      ⏳ Training {remaining_steps:,} timesteps...")
 
-            checkpoint_interval = 5000
+            checkpoint_interval = 10000
             for step in range(0, remaining_steps, checkpoint_interval):
                 train_steps = min(checkpoint_interval, remaining_steps - step)
                 model.learn(total_timesteps=train_steps, callback=early_stop)
@@ -841,7 +789,6 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
                     metrics={'step': current_step, 'sharpe': 0, 'win_rate': 0, 'quality_score': 0},
                     step=current_step, ensemble_idx=ensemble_idx
                 )
-
                 hf_uploader.add_to_batch(model_path, f"{symbol}/{model_path.name}")
                 hf_uploader.add_to_batch(metrics_path, f"{symbol}/{metrics_path.name}")
 
@@ -856,20 +803,15 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
             steps = 0
             rewards_list = []
             terminated = False
-            truncated = False
 
-            while not (terminated or truncated) and steps < 10000:
+            while not terminated and steps < 10000:
                 action, _ = model.predict(obs, deterministic=True)
                 action = ensure_vecenv_action(action)
                 step_result = val_env.step(action)
-
                 if step_result is None or len(step_result) == 0:
                     break
 
-                # ✅ FIX: Use helper for 4-tuple
                 obs, reward, terminated, info = parse_vecenv_step(step_result)
-                truncated = False
-
                 total_return += reward
                 rewards_list.append(reward)
                 steps += 1
@@ -891,23 +833,21 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
                             'success': trade_result.get('success', False)
                         })
 
-            returns_array = np.array(rewards_list)
+            returns_array = np.array(rewards_list) if rewards_list else np.array([0.0])
             sharpe = np.mean(returns_array) / (np.std(returns_array) + 1e-8) * np.sqrt(252)
-            win_rate = np.mean(np.array(rewards_list) > 0)
+            win_rate = float(np.mean(np.array(rewards_list) > 0)) if rewards_list else 0.0
 
             elapsed = (datetime.now() - start_time).total_seconds() / 60
 
-            print(f"      ✅ Model {ensemble_idx+1} Complete ({elapsed:.1f} min)")
+            print(f"      ✅ Model {ensemble_idx+1} Done ({elapsed:.1f} min)")
             print(f"      Return: {total_return:.4f} | Sharpe: {sharpe:.3f} | Win: {win_rate:.1%}")
 
             model_path = PPO_ENSEMBLE_DIR / f"ppo_{symbol}_ens{ensemble_idx}"
             model.save(model_path)
             ensemble_models.append(model_path)
             ensemble_stats.append({
-                'return': total_return,
-                'sharpe': sharpe,
-                'win_rate': win_rate,
-                'steps': steps
+                'return': total_return, 'sharpe': sharpe,
+                'win_rate': win_rate, 'steps': steps
             })
 
         except Exception as e:
@@ -924,20 +864,16 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
     if len(ensemble_models) > 1:
         sharpe_values = np.array([max(0.01, s['sharpe']) for s in ensemble_stats])
         weights = sharpe_values / sharpe_values.sum()
-
-        print(f"\n   🎯 ENSEMBLE CREATED ({len(ensemble_models)} models)")
+        print(f"\n   🎯 ENSEMBLE ({len(ensemble_models)} models)")
         for i, (w, s) in enumerate(zip(weights, ensemble_stats)):
-            print(f"      Model {i+1}: Weight={w:.3f} | Sharpe={s['sharpe']:.3f} | Win={s['win_rate']:.1%}")
-
+            print(f"      M{i+1}: W={w:.3f} | Sharpe={s['sharpe']:.3f} | Win={s['win_rate']:.1%}")
         final_model = EnsemblePPO(ensemble_models, weights.tolist())
     else:
         weights = np.array([1.0])
         final_model = PPO.load(ensemble_models[0], device="cpu")
 
     # ---- FINAL TEST ----
-    print(f"\n   {'═'*50}")
-    print(f"   🧪 FINAL TEST — NEVER-TOUCHED DATA")
-    print(f"   {'═'*50}")
+    print(f"\n   🧪 FINAL TEST")
 
     try:
         test_env = create_multi_symbol_env(
@@ -954,20 +890,15 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
         rewards_list = []
         steps = 0
         terminated = False
-        truncated = False
 
-        while not (terminated or truncated) and steps < 10000:
+        while not terminated and steps < 10000:
             action, _ = final_model.predict(obs, deterministic=True)
             action = ensure_vecenv_action(action)
             step_result = test_env.step(action)
-
             if step_result is None or len(step_result) == 0:
                 break
 
-            # ✅ FIX: Use helper for 4-tuple
             obs, reward, terminated, info = parse_vecenv_step(step_result)
-            truncated = False
-
             total_return += reward
             rewards_list.append(reward)
             steps += 1
@@ -982,7 +913,7 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
                         'success': trade_result.get('success', False)
                     })
 
-        returns_array = np.array(rewards_list)
+        returns_array = np.array(rewards_list) if rewards_list else np.array([0.0])
         final_sharpe = np.mean(returns_array) / (np.std(returns_array) + 1e-8) * np.sqrt(252)
 
         profitable = sum(1 for t in test_trades if t.get('success', False))
@@ -1006,56 +937,34 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
         quality_score = min(100, (final_sharpe * 20) + (win_rate * 50) + (min(profit_factor, 5) * 10))
 
         final_metrics = {
-            'sharpe': final_sharpe,
-            'win_rate': win_rate,
-            'return': total_return,
-            'trades': total_trades,
-            'profit_factor': profit_factor,
-            'quality_score': quality_score,
+            'sharpe': final_sharpe, 'win_rate': win_rate,
+            'return': total_return, 'trades': total_trades,
+            'profit_factor': profit_factor, 'quality_score': quality_score,
             'ensemble_size': len(ensemble_models)
         }
 
-        print(f"\n   📊 FINAL TEST RESULTS:")
-        print(f"   {'─'*40}")
-        print(f"   Total Return:    {total_return:>10.4f}")
-        print(f"   Sharpe Ratio:    {final_sharpe:>10.3f}")
-        print(f"   Win Rate:        {win_rate:>10.1%} ({profitable}/{total_trades})")
-        print(f"   Avg Win:         {avg_win:>10.2f} Tk")
-        print(f"   Avg Loss:        {avg_loss:>10.2f} Tk")
-        print(f"   Profit Factor:   {profit_factor:>10.2f}")
-        print(f"   QUALITY SCORE:   {quality_score:>10.1f}/100")
+        print(f"\n   📊 RESULTS:")
+        print(f"   Return: {total_return:.4f} | Sharpe: {final_sharpe:.3f}")
+        print(f"   Win: {win_rate:.1%} ({profitable}/{total_trades}) | PF: {profit_factor:.2f}")
+        print(f"   Quality: {quality_score:.1f}/100")
 
-        if quality_score >= 80:
-            print(f"   ⭐ EXCELLENT MODEL — Ready for production!")
-        elif quality_score >= 60:
-            print(f"   ✅ GOOD MODEL — Can be used with caution")
-        else:
-            print(f"   ⚠️ NEEDS IMPROVEMENT — Consider more training")
-
-        # Save BEST model locally (EnsemblePPO → save representative member)
+        # Save best
         if isinstance(final_model, EnsemblePPO) and len(ensemble_models) > 0:
             model_for_save = PPO.load(str(ensemble_models[0]), device="cpu")
         else:
             model_for_save = final_model
 
         best_model_path, best_metrics_path = local_ckpt.save_model_checkpoint(
-            symbol=symbol,
-            model=model_for_save,
-            metrics=final_metrics,
-            step=config['timesteps'],
-            is_best=True
+            symbol=symbol, model=model_for_save,
+            metrics=final_metrics, step=config['timesteps'], is_best=True
         )
-
         hf_uploader.add_to_batch(best_model_path, f"{symbol}/{Path(best_model_path).name}")
         hf_uploader.add_to_batch(best_metrics_path, f"{symbol}/{Path(best_metrics_path).name}")
         hf_uploader.flush()
 
-        progress_path = local_ckpt.progress_path
-        hf_uploader.upload_file_direct(progress_path, "ppo_training_progress.json", "📊 Update progress")
-
+        hf_uploader.upload_file_direct(local_ckpt.progress_path, "ppo_training_progress.json", "📊 Progress")
         local_ckpt.mark_completed(symbol, final_metrics)
 
-        # Save to PPO_MODEL_DIR
         final_path = PPO_SYMBOL_DIR / f"ppo_{symbol}"
         if not isinstance(final_model, EnsemblePPO):
             final_model.save(final_path)
@@ -1067,9 +976,7 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
             }, ensemble_info_path)
             model_for_save.save(final_path)
 
-        print(f"\n   💾 Model saved: {final_path}")
-        print(f"   📤 Uploaded to HF: {HF_DATASET_REPO}/{HF_CHECKPOINT_DIR}/{symbol}/")
-
+        print(f"   💾 Saved: {final_path}")
         return final_model, final_metrics
 
     except Exception as e:
@@ -1080,7 +987,7 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
         return None, {}
 
 # =========================================================
-# UTILITY FUNCTIONS
+# UTILS
 # =========================================================
 
 def load_xgb_metadata():
@@ -1094,59 +1001,28 @@ def load_xgb_metadata():
     except:
         return pd.DataFrame()
 
-def build_observation(df, idx):
-    try:
-        available_cols = [col for col in MARKET_COLS if col in df.columns]
-        if not available_cols:
-            available_cols = ['close', 'volume']
-        pad = max(0, WINDOW - (idx + 1))
-        start = max(0, idx - WINDOW + 1)
-        seg = df.iloc[start:idx+1][available_cols].values
-        seg = np.pad(seg, ((pad,0),(0,0)), mode="edge")
-        market_vec = seg.flatten()
-        if len(market_vec) < len(MARKET_COLS) * WINDOW:
-            market_vec = np.pad(market_vec, (0, len(MARKET_COLS) * WINDOW - len(market_vec)))
-        return np.nan_to_num(list(market_vec))
-    except:
-        return np.zeros(STATE_DIM, dtype=np.float32)
-
-def should_retrain_ppo():
-    if not os.path.exists(LAST_PPO_TRAIN):
-        return True, "First training"
-    with open(LAST_PPO_TRAIN, 'r') as f:
-        last_date = datetime.strptime(f.read().strip(), '%Y-%m-%d')
-    days_since = (datetime.now() - last_date).days
-    if days_since >= PPO_RETRAIN_INTERVAL:
-        return True, f"Retrain (last: {days_since} days ago)"
-    return False, f"Next retrain in {PPO_RETRAIN_INTERVAL - days_since} days"
-
 def update_last_ppo_train():
     with open(LAST_PPO_TRAIN, 'w') as f:
         f.write(datetime.now().strftime('%Y-%m-%d'))
 
 # =========================================================
-# 🔥 MAIN TRAINING
+# MAIN
 # =========================================================
 
 def train_ppo_system():
     print("="*70)
-    print("🏦 HEDGE FUND LEVEL — MAXIMUM QUALITY PPO TRAINING (50-DIM)")
+    print("🏦 MAXIMUM QUALITY PPO TRAINING (50-DIM, ALL SYMBOLS)")
     print("="*70)
-    print(f"📅 Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    print(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print(f"💰 Capital: ${TOTAL_CAPITAL:,.0f}")
-    print(f"🔧 Ensemble: {ENSEMBLE_SIZE} | Patience: {EARLY_STOPPING_PATIENCE}")
-    print(f"💾 Local Checkpoint: {LOCAL_CHECKPOINT_DIR}")
-    print(f"📤 HF Upload: {HF_DATASET_REPO}/{HF_CHECKPOINT_DIR}")
-    print(f"📊 Obs Dim: {STATE_DIM} (50-dim simple)")
+    print(f"🔧 Ensemble: {ENSEMBLE_SIZE} | Early Stop: {ENABLE_EARLY_STOP}")
+    print(f"📊 Obs: {STATE_DIM}-dim | Max Symbols: {MAX_PER_SYMBOL_MODELS}")
+    print(f"📈 Ratios: Train={TRAIN_RATIO} Val={VALIDATION_RATIO} Test={TEST_RATIO}")
     print("="*70)
 
     if not SB3_AVAILABLE or not GYM_AVAILABLE:
-        print("\n⚠️ Required packages not available!")
+        print("\n⚠️ Packages not available!")
         return [], None
-
-    should_retrain, reason = should_retrain_ppo()
-    is_retrain = should_retrain and os.path.exists(f"{PPO_SHARED_PATH}.zip")
-    print(f"\n📊 Status: {reason}")
 
     agentic = get_agentic_loop() if AGENTIC_LOOP_CONFIG['enabled'] else None
     if agentic:
@@ -1184,33 +1060,37 @@ def train_ppo_system():
 
     xgb_metadata = load_xgb_metadata()
 
-    top_symbol_list = []
+    # ✅ ALL symbols (no 50 limit)
     if not xgb_metadata.empty:
         top_symbols = xgb_metadata[xgb_metadata['auc'] >= XGB_AUC_THRESHOLD_FOR_PPO].head(MAX_PER_SYMBOL_MODELS)
         top_symbol_list = top_symbols['symbol'].tolist()
-        print(f"   ✅ {len(top_symbol_list)} symbols for MAX QUALITY training")
+        print(f"   ✅ {len(top_symbol_list)} symbols (from XGB filter)")
+    else:
+        top_symbol_list = []
 
     all_symbols_data = {}
     for symbol in df['symbol'].unique():
         symbol_df = df[df['symbol'] == symbol].reset_index(drop=True)
-        if len(symbol_df) >= WINDOW + 100:
+        if len(symbol_df) >= WINDOW + 50:  # ✅ lowered from 100 to 50
             all_symbols_data[symbol] = symbol_df
     print(f"   ✅ {len(all_symbols_data)} symbols with sufficient data")
 
-    # ✅ Fallback if no XGB metadata
+    # Fallback if XGB filter empty
     if not top_symbol_list:
-        top_symbol_list = list(all_symbols_data.keys())[:MAX_PER_SYMBOL_MODELS]
-        print(f"   ⚠️ Fallback: using all {len(top_symbol_list)} symbols (no XGB filter)")
+        top_symbol_list = list(all_symbols_data.keys())
+        print(f"   ⚠️ Fallback: using ALL {len(top_symbol_list)} symbols")
+
+    # Filter to available
+    top_symbol_list = [s for s in top_symbol_list if s in all_symbols_data]
+    print(f"   🎯 Final list: {len(top_symbol_list)} symbols to train")
 
     completed_symbols = local_ckpt.get_completed_symbols()
     pending_symbols = local_ckpt.get_pending_symbols(top_symbol_list)
 
-    if completed_symbols:
-        print(f"\n📊 LOCAL Progress: {len(completed_symbols)} already completed")
-        print(f"   Pending: {len(pending_symbols)} symbols")
+    print(f"\n📊 Progress: {len(completed_symbols)} done, {len(pending_symbols)} pending")
 
     if not pending_symbols:
-        print("\n✅ ALL SYMBOLS ALREADY TRAINED!")
+        print("\n✅ ALL TRAINED!")
         return completed_symbols, None
 
     trained_symbols = []
@@ -1219,22 +1099,20 @@ def train_ppo_system():
 
     try:
         print(f"\n{'='*70}")
-        print("🏆 MAXIMUM QUALITY TRAINING STARTED")
+        print("🏆 TRAINING STARTED")
         print(f"{'='*70}")
 
-        for idx, symbol in enumerate(pending_symbols[:MAX_PER_SYMBOL_MODELS]):
-            if symbol not in all_symbols_data:
-                continue
-
+        for idx, symbol in enumerate(pending_symbols):
             symbol_data = all_symbols_data[symbol]
             xgb_info = xgb_metadata[xgb_metadata['symbol'] == symbol] if not xgb_metadata.empty else pd.DataFrame()
             xgb_auc = xgb_info.iloc[0]['auc'] if len(xgb_info) > 0 else 0.65
 
-            print(f"\n📈 Progress: {idx+1}/{len(pending_symbols)} [Pending] | Total: {len(completed_symbols)+idx+1}/{len(top_symbol_list)}")
+            elapsed_total = (datetime.now() - total_start).total_seconds() / 3600
+            print(f"\n📈 [{idx+1}/{len(pending_symbols)}] {symbol} | Elapsed: {elapsed_total:.1f}h")
 
             try:
                 model, stats = train_max_quality(
-                    symbol, symbol_data, xgb_auc, is_retrain,
+                    symbol, symbol_data, xgb_auc, True,
                     sector_engine, xgb_models, agentic, patch_tst
                 )
                 if model is not None:
@@ -1246,10 +1124,10 @@ def train_ppo_system():
         update_last_ppo_train()
 
     except KeyboardInterrupt:
-        print("\n⚠️ Training interrupted — progress saved locally")
+        print("\n⚠️ Interrupted — progress saved")
         hf_uploader.flush()
     except Exception as e:
-        print(f"\n⚠️ Training error: {e}")
+        print(f"\n⚠️ Error: {e}")
         hf_uploader.flush()
 
     total_elapsed = (datetime.now() - total_start).total_seconds() / 60
@@ -1262,32 +1140,22 @@ def train_ppo_system():
             'total_trained': len(trained_symbols) + len(completed_symbols),
             'symbols': trained_symbols + completed_symbols,
             'average_sharpe': sum(s.get('sharpe', 0) for s in all_stats) / len(all_stats) if all_stats else 0,
-            'average_win_rate': sum(s.get('win_rate', 0) for s in all_stats) / len(all_stats) if all_stats else 0
         }, f, indent=2)
 
-    hf_uploader.upload_file_direct(summary_path, "ppo_training_summary.json", "🏁 Training complete")
+    hf_uploader.upload_file_direct(summary_path, "ppo_training_summary.json", "Done")
 
     print(f"\n{'='*70}")
-    print(f"🏦 MAXIMUM QUALITY TRAINING COMPLETE!")
+    print(f"🏦 COMPLETE!")
     print(f"{'='*70}")
-    print(f"   Total Time: {total_elapsed:.1f} min ({total_elapsed/60:.1f} hours)")
-    print(f"   Trained Now: {len(trained_symbols)}")
-    print(f"   Total Trained: {len(trained_symbols) + len(completed_symbols)}")
-    print(f"   Local: {LOCAL_CHECKPOINT_DIR}")
-    print(f"   HF: {HF_DATASET_REPO}/{HF_CHECKPOINT_DIR}")
-
-    if all_stats:
-        avg_sharpe = np.mean([s.get('sharpe', 0) for s in all_stats])
-        avg_win_rate = np.mean([s.get('win_rate', 0) for s in all_stats])
-        print(f"\n📊 AVERAGE METRICS (This Run):")
-        print(f"   Sharpe: {avg_sharpe:.3f} | Win Rate: {avg_win_rate:.1%}")
+    print(f"   Time: {total_elapsed:.1f} min ({total_elapsed/60:.1f}h)")
+    print(f"   Now: {len(trained_symbols)} | Total: {len(trained_symbols) + len(completed_symbols)}")
 
     return trained_symbols + completed_symbols, None
 
 def main():
     try:
         train_ppo_system()
-        print("\n✅ MAXIMUM QUALITY SYSTEM READY FOR PRODUCTION!")
+        print("\n✅ DONE!")
     except Exception as e:
         print(f"\n❌ Failed: {e}")
         import traceback
