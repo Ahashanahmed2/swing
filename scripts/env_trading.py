@@ -4,6 +4,7 @@
 # ✅ No signal dependency — PPO learns entry/exit itself
 # ✅ Auto SL/TP (configurable) for stable training
 # ✅ Volatility-based position sizing
+# ✅ Trade tracking for training metrics
 # ✅ ALL Features Included:
 #    - Tier 1: Market Microstructure + Greeks + Sector Leader
 #    - Tier 2: HMM Regime + GARCH Volatility
@@ -163,7 +164,6 @@ class MarketRegimeHMM:
             return np.zeros(len(returns))
         try:
             features = np.column_stack([returns.fillna(0).values, volumes.fillna(0).values])
-            # Cap for performance
             if len(features) > 2000:
                 features = features[-2000:]
             self.model = hmm.GaussianHMM(n_components=self.n_regimes,
@@ -405,6 +405,7 @@ class MultiSymbolTradingEnv(gym.Env):
     ✅ SIGNAL-FREE: PPO learns entry/exit from raw features
     ✅ Auto SL/TP for stable training
     ✅ Volatility-based position sizing
+    ✅ Trade tracking for metrics
     ✅ ALL systems integrated (Tier 1-4 + RSI Div + S/R)
     """
 
@@ -422,7 +423,7 @@ class MultiSymbolTradingEnv(gym.Env):
         xgb_models=None,
         agentic_loop=None,
         patch_tst=None,
-        # ✅ NEW: SL/TP config
+        # ✅ SL/TP config
         sl_pct=0.02,
         tp_pct=0.04,
         max_position_pct=0.30,
@@ -443,7 +444,7 @@ class MultiSymbolTradingEnv(gym.Env):
         self.total_capital = total_capital
         self.risk_percent = risk_percent
 
-        # ✅ SL/TP and reward shaping
+        # SL/TP and reward shaping
         self.sl_pct = sl_pct
         self.tp_pct = tp_pct
         self.max_position_pct = max_position_pct
@@ -484,13 +485,13 @@ class MultiSymbolTradingEnv(gym.Env):
         # Tier 4: PatchTST
         self.patch_tst = patch_tst
 
-        # ✅ RSI Divergence
+        # RSI Divergence
         self.rsi_div = RSIDivergenceFeatures()
 
-        # ✅ Support/Resistance
+        # Support/Resistance
         self.sr_features = SupportResistanceFeatures()
 
-        # ✅ Sector Engine
+        # Sector Engine
         self.sector_engine = sector_engine
         self.sector_features_enabled = False
         self.sector_feature_dim = 8
@@ -543,6 +544,9 @@ class MultiSymbolTradingEnv(gym.Env):
             dtype=np.float32,
         )
 
+        # ✅ Trade tracking buffer
+        self._last_trades = []
+
     # -------------------------------------------------
     # Tier 1: Microstructure
     # -------------------------------------------------
@@ -590,7 +594,7 @@ class MultiSymbolTradingEnv(gym.Env):
             return np.zeros(self.greek_feature_dim, dtype=np.float32)
 
     # -------------------------------------------------
-    # Tier 2: Regime Features (fit once, cheap inference)
+    # Tier 2: Regime Features
     # -------------------------------------------------
     def _get_regime_features(self, df, idx):
         if idx < 50 or not self.regime_fitted:
@@ -766,6 +770,7 @@ class MultiSymbolTradingEnv(gym.Env):
         self.balance = {s: self.total_capital for s in self.symbols}
         self.position = {s: 0 for s in self.symbols}
         self.entry_price = {s: 0.0 for s in self.symbols}
+        self._last_trades = []              # ✅ Trade tracking buffer reset
         self.sector_returns_cache = None
         self.vix_proxy_cache = None
         self.current_state = 1
@@ -799,7 +804,7 @@ class MultiSymbolTradingEnv(gym.Env):
         return self._get_obs(), {}
 
     # -------------------------------------------------
-    # OBSERVATION (✅ FIXED: mcap added per-symbol, exact dim)
+    # OBSERVATION
     # -------------------------------------------------
     def _get_obs(self):
         obs = []
@@ -832,7 +837,7 @@ class MultiSymbolTradingEnv(gym.Env):
                 o = np.concatenate([o, self._get_rsi_divergence_features(s, current_date)])
                 o = np.concatenate([o, self._get_sr_features(s, current_date, current_close)])
 
-                # ✅ Market cap per-symbol
+                # Market cap per-symbol
                 if 'freeFloatMarketCap' in df.columns:
                     mcap = row.get('freeFloatMarketCap', 0)
                     mcap_norm = np.log1p(float(mcap)) / 10 if pd.notna(mcap) else 0.0
@@ -840,7 +845,7 @@ class MultiSymbolTradingEnv(gym.Env):
                     mcap_norm = 0.0
                 o = np.concatenate([o, np.array([mcap_norm], dtype=np.float32)])
 
-                # ✅ Enforce exact dim
+                # Enforce exact dim
                 o = np.asarray(o, dtype=np.float32).flatten()
                 if len(o) < self.effective_state_dim:
                     o = np.pad(o, (0, self.effective_state_dim - len(o)))
@@ -856,9 +861,12 @@ class MultiSymbolTradingEnv(gym.Env):
         return np.asarray(obs, dtype=np.float32)
 
     # -------------------------------------------------
-    # STEP — ✅ SIGNAL-FREE PURE RL
+    # STEP — ✅ SIGNAL-FREE PURE RL + TRADE TRACKING
     # -------------------------------------------------
     def step(self, actions):
+        # ✅ Reset trade buffer for this step
+        self._last_trades = []
+
         # -------- Parse actions --------
         if np.isscalar(actions):
             actions_list = [int(actions)] * self.n_symbols
@@ -923,6 +931,16 @@ class MultiSymbolTradingEnv(gym.Env):
                     if close_reason == 'sl':
                         reward -= self.sl_penalty
 
+                    # ✅ Record trade for training metrics
+                    self._last_trades.append({
+                        'success': bool(pnl > 0),
+                        'pnl': float(pnl),
+                        'entry_price': float(entry),
+                        'exit_price': float(price),
+                        'exit_reason': str(close_reason),
+                        'symbol': s,
+                    })
+
                     self.position[s] = 0
                     self.entry_price[s] = 0.0
 
@@ -970,7 +988,13 @@ class MultiSymbolTradingEnv(gym.Env):
         self.t += 1
         terminated = all(done_flags)
         truncated = False
-        return self._get_obs(), float(np.sum(rewards)), terminated, truncated, {}
+
+        # ✅ Build info dict with trade tracking
+        info = {
+            'trade_result': self._last_trades[0] if self._last_trades else None,
+            'trades': self._last_trades,
+        }
+        return self._get_obs(), float(np.sum(rewards)), terminated, truncated, info
 
     # -------------------------------------------------
     # RENDER
