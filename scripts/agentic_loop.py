@@ -702,13 +702,28 @@ class AgenticLoop:
             'ensemble_accuracy': ensemble_accuracy
         })
 
+        # ✅ NEW: Calculate correct PnL percentage
+        pnl_pct = trade_result.get('pnl_pct', None)
+        if pnl_pct is None:
+            # Fallback: calculate from prices
+            entry_price = trade_result.get('entry_price', 0)
+            exit_price = trade_result.get('exit_price', 0)
+            if entry_price > 0 and exit_price > 0:
+                pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+            else:
+                pnl_pct = 0.0
+
         # Log feedback
         print(f"\n   📊 Agent Feedback for {symbol}:")
-        print(f"      Trade Result: {'WIN ✅' if was_win else 'LOSS ❌'} (PnL: {pnl:.2%})")
+        # Calculate pnl_pct correctly
+        entry_p = trade_result.get('entry_price', 0)
+        exit_p = trade_result.get('exit_price', 0)
+        pnl_pct = trade_result.get('pnl_pct', ((exit_p - entry_p) / entry_p * 100) if entry_p > 0 else 0)
+        print(f"      Trade Result: {'WIN ✅' if was_win else 'LOSS ❌'} (PnL: {pnl:+.2f} Tk | {pnl_pct:+.2f}%)")
         print(f"      Ensemble Correct: {'✅' if ensemble_was_correct else '❌'}")
         print(f"      Ensemble Accuracy: {ensemble_accuracy:.1%}")
         print(f"      Updating {len(self.agents)} agents...")
-
+        
         # Return updated weights
         return {a.name: a.get_dynamic_weight() for a in self.agents}
 
