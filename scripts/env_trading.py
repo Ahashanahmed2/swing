@@ -2,8 +2,9 @@
 # FINAL VERSION — SIGNAL-FREE PURE RL (50-DIM)
 # ✅ Dynamic SL/TP based on volatility
 # ✅ pnl_pct calculation (fixes AgenticLoop % bug)
+# ✅ ppo_action tracking (for correct ensemble feedback)
 # ✅ Sector files loaded ONCE per env instance
-# ✅ Trade tracking with correct metrics
+# ✅ RSI/SR files cached at class level
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -387,9 +388,9 @@ class MultiSymbolTradingEnv(gym.Env):
 
     ✅ KEY FEATURES:
         - Dynamic SL/TP based on entry volatility
-        - pnl_pct calculation (for AgenticLoop feedback)
+        - pnl_pct calculation
+        - ppo_action tracking (for ensemble feedback)
         - Sector files loaded once per env
-        - Trade tracking with correct metrics
     """
 
     metadata = {"render_modes": ["human"]}
@@ -406,7 +407,7 @@ class MultiSymbolTradingEnv(gym.Env):
         xgb_models=None,
         agentic_loop=None,
         patch_tst=None,
-        # Dynamic SL/TP (auto-adjusted by vol)
+        # Dynamic SL/TP
         sl_vol_mult=2.0,
         tp_vol_mult=4.0,
         min_sl_pct=0.03,
@@ -452,11 +453,9 @@ class MultiSymbolTradingEnv(gym.Env):
         self.n_symbols = len(self.symbols)
         self.max_steps = max(len(df) for df in self.dfs.values())
 
-        # External models
         self.xgb_models = xgb_models or {}
         self.agentic_loop = agentic_loop
 
-        # Tier components
         self.micro = MarketMicrostructure()
         self.leader_detector = SectorLeaderDetector()
         self.sector_leaders = {}
@@ -476,7 +475,6 @@ class MultiSymbolTradingEnv(gym.Env):
         self.rsi_div = RSIDivergenceFeatures()
         self.sr_features = SupportResistanceFeatures()
 
-        # Sector
         self.sector_engine = sector_engine
         self.sector_features_enabled = False
 
@@ -625,7 +623,7 @@ class MultiSymbolTradingEnv(gym.Env):
         return np.asarray(obs, dtype=np.float32)
 
     # -------------------------------------------------
-    # STEP — with pnl_pct calculation
+    # STEP — with ppo_action tracking
     # -------------------------------------------------
     def step(self, actions):
         self._last_trades = []
@@ -683,15 +681,12 @@ class MultiSymbolTradingEnv(gym.Env):
                     shares = self.position[s]
                     pnl = (price - entry) * shares
                     entry_value = entry * shares if shares > 0 else 1e-8
-
-                    # ✅ CORRECT: PnL percent relative to entry value
                     pnl_pct = (pnl / entry_value) * 100.0 if entry_value > 0 else 0.0
 
                     self.balance[s] += shares * price
 
                     risk_amount = self.total_capital * self.risk_percent
                     reward = float(np.tanh(pnl / (risk_amount * 0.5)))
-
                     reward *= self._get_sector_reward_multiplier(s)
 
                     if self.regime_fitted:
@@ -703,16 +698,20 @@ class MultiSymbolTradingEnv(gym.Env):
                     if close_reason == 'tp':
                         reward += self.tp_bonus
 
-                    # ✅ CORRECT trade record with pnl_pct
+                    # ✅ Track PPO action that led to this trade
+                    # For SL/TP, action was 1 (BUY) previously. For signal close, action=2
+                    ppo_action_recorded = action if close_reason == 'signal' else 1
+
                     self._last_trades.append({
                         'success': bool(pnl > 0),
                         'pnl': float(pnl),
-                        'pnl_pct': float(pnl_pct),          # ✅ NEW
+                        'pnl_pct': float(pnl_pct),
                         'entry_price': float(entry),
                         'exit_price': float(price),
                         'exit_reason': str(close_reason),
                         'symbol': s,
                         'shares': int(shares),
+                        'ppo_action': int(ppo_action_recorded),   # ✅ ADD
                     })
 
                     self.position[s] = 0
