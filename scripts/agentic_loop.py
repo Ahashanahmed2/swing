@@ -625,65 +625,65 @@ class AgenticLoop:
         send_telegram_message(message)
 
     def after_trade_feedback(self, trade_result):
-    """
-    Update agents based on trade outcome
-    This is the LEARNING loop!
-    ✅ FIXED: Ensemble correctness based on PPO action, not ensemble score
-    """
-    symbol = trade_result.get('symbol')
-    pnl = trade_result.get('pnl', 0)
-    was_win = pnl > 0
+        """
+        Update agents based on trade outcome
+        This is the LEARNING loop!
+        ✅ FIXED: Ensemble correctness based on PPO action, not ensemble score
+        """
+        symbol = trade_result.get('symbol')
+        pnl = trade_result.get('pnl', 0)
+        was_win = pnl > 0
 
-    # Find the decision that led to this trade
-    recent_decisions = [d for d in self.decision_log if d['symbol'] == symbol]
-    if not recent_decisions:
-        return None
+        # Find the decision that led to this trade
+        recent_decisions = [d for d in self.decision_log if d['symbol'] == symbol]
+        if not recent_decisions:
+            return None
 
-    last_decision = recent_decisions[-1]
-    agent_votes = last_decision.get('agent_votes', {})
-    ensemble_decision = last_decision.get('decision', 'HOLD')
+        last_decision = recent_decisions[-1]
+        agent_votes = last_decision.get('agent_votes', {})
+        ensemble_decision = last_decision.get('decision', 'HOLD')
 
-    # ✅ FIXED: Use PPO action if available (most accurate)
-    ppo_action = trade_result.get('ppo_action', None)
-    pnl_pct = trade_result.get('pnl_pct', 0)
+        # ✅ FIXED: Use PPO action if available (most accurate)
+        ppo_action = trade_result.get('ppo_action', None)
+        pnl_pct = trade_result.get('pnl_pct', 0)
 
-    if ppo_action is not None:
-        # PPO action: 0=HOLD, 1=BUY, 2=SELL
-        if ppo_action == 1:  # BUY
-            ensemble_was_correct = was_win
-        elif ppo_action == 2:  # SELL
-            ensemble_was_correct = not was_win
-        else:  # HOLD (but trade happened — check magnitude)
-            ensemble_was_correct = abs(pnl_pct) < 2.0
-    else:
-        # Fallback: use ensemble decision
-        if ensemble_decision in ['STRONG_BUY', 'BUY']:
-            ensemble_was_correct = was_win
-        elif ensemble_decision in ['STRONG_SELL', 'SELL']:
-            ensemble_was_correct = not was_win
-        else:  # HOLD
-            ensemble_was_correct = abs(pnl_pct) < 2.0
+        if ppo_action is not None:
+            # PPO action: 0=HOLD, 1=BUY, 2=SELL
+            if ppo_action == 1:  # BUY
+                ensemble_was_correct = was_win
+            elif ppo_action == 2:  # SELL
+                ensemble_was_correct = not was_win
+            else:  # HOLD (but trade happened — check magnitude)
+                ensemble_was_correct = abs(pnl_pct) < 2.0
+        else:
+            # Fallback: use ensemble decision
+            if ensemble_decision in ['STRONG_BUY', 'BUY']:
+                ensemble_was_correct = was_win
+            elif ensemble_decision in ['STRONG_SELL', 'SELL']:
+                ensemble_was_correct = not was_win
+            else:  # HOLD
+                ensemble_was_correct = abs(pnl_pct) < 2.0
 
-    self.ensemble_total += 1
-    if ensemble_was_correct:
-        self.ensemble_correct += 1
+        self.ensemble_total += 1
+        if ensemble_was_correct:
+            self.ensemble_correct += 1
 
-    # Update each agent's performance
-    for agent in self.agents:
-        if agent.name in agent_votes:
-            agent_score = agent_votes[agent.name]['score']
+        # Update each agent's performance
+        for agent in self.agents:
+            if agent.name in agent_votes:
+                agent_score = agent_votes[agent.name]['score']
 
-            # Determine if agent was correct
-            if was_win:
-                was_correct = (agent_score > 0.5)
-            else:
-                was_correct = (agent_score <= 0.5)
+                # Determine if agent was correct
+                if was_win:
+                    was_correct = (agent_score > 0.5)
+                else:
+                    was_correct = (agent_score <= 0.5)
 
-            confidence = agent_votes[agent.name]['confidence']
-            agent.update_performance(was_correct, confidence)
+                confidence = agent_votes[agent.name]['confidence']
+                agent.update_performance(was_correct, confidence)
 
-            if agent.name == "Risk":
-                agent.update_history(symbol, not was_win)
+                if agent.name == "Risk":
+                    agent.update_history(symbol, not was_win)
 
     # Update Memory agent
     memory_agent = next((a for a in self.agents if a.name == "Memory"), None)
