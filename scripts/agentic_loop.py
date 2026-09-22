@@ -625,104 +625,112 @@ class AgenticLoop:
         send_telegram_message(message)
 
     def after_trade_feedback(self, trade_result):
-        """
-        Update agents based on trade outcome
-        This is the LEARNING loop!
-        ✅ NEW: Track ensemble performance, optimize weights
-        """
-        symbol = trade_result.get('symbol')
-        pnl = trade_result.get('pnl', 0)
-        was_win = pnl > 0
+    """
+    Update agents based on trade outcome
+    This is the LEARNING loop!
+    ✅ FIXED: Ensemble correctness based on PPO action, not ensemble score
+    """
+    symbol = trade_result.get('symbol')
+    pnl = trade_result.get('pnl', 0)
+    was_win = pnl > 0
 
-        # Find the decision that led to this trade
-        recent_decisions = [d for d in self.decision_log if d['symbol'] == symbol]
-        if not recent_decisions:
-            return None
+    # Find the decision that led to this trade
+    recent_decisions = [d for d in self.decision_log if d['symbol'] == symbol]
+    if not recent_decisions:
+        return None
 
-        last_decision = recent_decisions[-1]
-        agent_votes = last_decision.get('agent_votes', {})
-        
-        # ✅ NEW: Determine if ensemble was correct
-        ensemble_score = last_decision.get('score', 0.5)
-        if was_win:
-            ensemble_was_correct = (ensemble_score > 0.5)
-        else:
-            ensemble_was_correct = (ensemble_score <= 0.5)
-        
-        self.ensemble_total += 1
-        if ensemble_was_correct:
-            self.ensemble_correct += 1
+    last_decision = recent_decisions[-1]
+    agent_votes = last_decision.get('agent_votes', {})
+    ensemble_decision = last_decision.get('decision', 'HOLD')
 
-        # Update each agent's performance
-        for agent in self.agents:
-            if agent.name in agent_votes:
-                agent_score = agent_votes[agent.name]['score']
+    # ✅ FIXED: Use PPO action if available (most accurate)
+    ppo_action = trade_result.get('ppo_action', None)
+    pnl_pct = trade_result.get('pnl_pct', 0)
 
-                # Determine if agent was correct
-                if was_win:
-                    was_correct = (agent_score > 0.5)
-                else:
-                    was_correct = (agent_score <= 0.5)
+    if ppo_action is not None:
+        # PPO action: 0=HOLD, 1=BUY, 2=SELL
+        if ppo_action == 1:  # BUY
+            ensemble_was_correct = was_win
+        elif ppo_action == 2:  # SELL
+            ensemble_was_correct = not was_win
+        else:  # HOLD (but trade happened — check magnitude)
+            ensemble_was_correct = abs(pnl_pct) < 2.0
+    else:
+        # Fallback: use ensemble decision
+        if ensemble_decision in ['STRONG_BUY', 'BUY']:
+            ensemble_was_correct = was_win
+        elif ensemble_decision in ['STRONG_SELL', 'SELL']:
+            ensemble_was_correct = not was_win
+        else:  # HOLD
+            ensemble_was_correct = abs(pnl_pct) < 2.0
 
-                confidence = agent_votes[agent.name]['confidence']
-                agent.update_performance(was_correct, confidence)
-                
-                # ✅ NEW: Update Risk agent's symbol history
-                if agent.name == "Risk":
-                    agent.update_history(symbol, not was_win)
+    self.ensemble_total += 1
+    if ensemble_was_correct:
+        self.ensemble_correct += 1
 
-        # Update Memory agent
-        memory_agent = next((a for a in self.agents if a.name == "Memory"), None)
-        if memory_agent:
-            # Add features to trade result for pattern memory
-            if 'features' not in trade_result:
-                trade_result['features'] = self._get_features_from_trade(trade_result)
-            memory_agent.remember_trade(trade_result)
-        
-        # ✅ NEW: Update Sector agent data
-        sector = trade_result.get('sector', 'Unknown')
-        if sector != 'Unknown':
-            sector_agent = next((a for a in self.agents if a.name == "Sector"), None)
-            if sector_agent:
-                # Update sector performance
-                if sector not in sector_agent.sector_data:
-                    sector_agent.sector_data[sector] = {'wins': 0, 'total': 0}
-                sector_agent.sector_data[sector]['total'] += 1
-                if was_win:
-                    sector_agent.sector_data[sector]['wins'] += 1
+    # Update each agent's performance
+    for agent in self.agents:
+        if agent.name in agent_votes:
+            agent_score = agent_votes[agent.name]['score']
 
-        # ✅ NEW: Log ensemble performance
-        ensemble_accuracy = self.ensemble_correct / self.ensemble_total if self.ensemble_total > 0 else 0.5
-        self.performance_log.append({
-            'timestamp': datetime.now(),
-            'symbol': symbol,
-            'was_win': was_win,
-            'pnl': pnl,
-            'ensemble_correct': ensemble_was_correct,
-            'ensemble_accuracy': ensemble_accuracy
-        })
-
-        # ✅ NEW: Calculate correct PnL percentage
-        pnl_pct = trade_result.get('pnl_pct', None)
-        if pnl_pct is None:
-            # Fallback: calculate from prices
-            entry_price = trade_result.get('entry_price', 0)
-            exit_price = trade_result.get('exit_price', 0)
-            if entry_price > 0 and exit_price > 0:
-                pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+            # Determine if agent was correct
+            if was_win:
+                was_correct = (agent_score > 0.5)
             else:
-                pnl_pct = 0.0
+                was_correct = (agent_score <= 0.5)
 
-        # Log feedback
-        print(f"\n   📊 Agent Feedback for {symbol}:")
-        
-        print(f"      Trade Result: {'WIN ✅' if was_win else 'LOSS ❌'} (PnL: {pnl:+.2f} Tk | {pnl_pct:+.2f}%)")
-        print(f"      Ensemble Correct: {'✅' if ensemble_was_correct else '❌'}")
-        print(f"      Ensemble Accuracy: {ensemble_accuracy:.1%}")
-        print(f"      Updating {len(self.agents)} agents...")
-        
-        # Return updated weights
-        return {a.name: a.get_dynamic_weight() for a in self.agents}
+            confidence = agent_votes[agent.name]['confidence']
+            agent.update_performance(was_correct, confidence)
+
+            if agent.name == "Risk":
+                agent.update_history(symbol, not was_win)
+
+    # Update Memory agent
+    memory_agent = next((a for a in self.agents if a.name == "Memory"), None)
+    if memory_agent:
+        if 'features' not in trade_result:
+            trade_result['features'] = self._get_features_from_trade(trade_result)
+        memory_agent.remember_trade(trade_result)
+
+    # Update Sector agent data
+    sector = trade_result.get('sector', 'Unknown')
+    if sector != 'Unknown':
+        sector_agent = next((a for a in self.agents if a.name == "Sector"), None)
+        if sector_agent:
+            if sector not in sector_agent.sector_data:
+                sector_agent.sector_data[sector] = {'wins': 0, 'total': 0}
+            sector_agent.sector_data[sector]['total'] += 1
+            if was_win:
+                sector_agent.sector_data[sector]['wins'] += 1
+
+    # Log ensemble performance
+    ensemble_accuracy = self.ensemble_correct / self.ensemble_total if self.ensemble_total > 0 else 0.5
+    self.performance_log.append({
+        'timestamp': datetime.now(),
+        'symbol': symbol,
+        'was_win': was_win,
+        'pnl': pnl,
+        'pnl_pct': pnl_pct,
+        'ppo_action': ppo_action,
+        'ensemble_correct': ensemble_was_correct,
+        'ensemble_accuracy': ensemble_accuracy
+    })
+
+    # Calculate correct PnL percentage
+    if pnl_pct == 0:
+        entry_price = trade_result.get('entry_price', 0)
+        exit_price = trade_result.get('exit_price', 0)
+        if entry_price > 0 and exit_price > 0:
+            pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+
+    # Log feedback
+    print(f"\n   📊 Agent Feedback for {symbol}:")
+    print(f"      Trade Result: {'WIN ✅' if was_win else 'LOSS ❌'} (PnL: {pnl:+.2f} Tk | {pnl_pct:+.2f}%)")
+    print(f"      Ensemble Correct: {'✅' if ensemble_was_correct else '❌'}")
+    print(f"      Ensemble Accuracy: {ensemble_accuracy:.1%}")
+    print(f"      Updating {len(self.agents)} agents...")
+
+    return {a.name: a.get_dynamic_weight() for a in self.agents}
 
     def _get_features(self, symbol_data):
         """Extract features from symbol data for XGBoost"""
