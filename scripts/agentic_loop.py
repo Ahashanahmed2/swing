@@ -715,10 +715,7 @@ class AgenticLoop:
 
         # Log feedback
         print(f"\n   📊 Agent Feedback for {symbol}:")
-        # Calculate pnl_pct correctly
-        entry_p = trade_result.get('entry_price', 0)
-        exit_p = trade_result.get('exit_price', 0)
-        pnl_pct = trade_result.get('pnl_pct', ((exit_p - entry_p) / entry_p * 100) if entry_p > 0 else 0)
+        
         print(f"      Trade Result: {'WIN ✅' if was_win else 'LOSS ❌'} (PnL: {pnl:+.2f} Tk | {pnl_pct:+.2f}%)")
         print(f"      Ensemble Correct: {'✅' if ensemble_was_correct else '❌'}")
         print(f"      Ensemble Accuracy: {ensemble_accuracy:.1%}")
