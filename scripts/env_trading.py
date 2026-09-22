@@ -1,11 +1,9 @@
 # ================== env_trading.py ==================
 # FINAL VERSION — SIGNAL-FREE PURE RL (50-DIM)
-# ✅ Dynamic SL/TP based on volatility (adaptive)
-# ✅ Reduced SL penalty (0.2 → 0.05) + TP bonus
-# ✅ Sector files loaded ONLY ONCE per env instance
-# ✅ RSI/SR files cached at class level
-# ✅ Trade tracking for metrics
-# ✅ Patience for slow learning
+# ✅ Dynamic SL/TP based on volatility
+# ✅ pnl_pct calculation (fixes AgenticLoop % bug)
+# ✅ Sector files loaded ONCE per env instance
+# ✅ Trade tracking with correct metrics
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -384,14 +382,14 @@ class SupportResistanceFeatures:
 
 class MultiSymbolTradingEnv(gym.Env):
     """
-    Multi-symbol trading environment for PPO.
-    Action per symbol: 0=HOLD, 1=BUY, 2=SELL
+    Signal-free pure RL environment.
+    Action: 0=HOLD, 1=BUY, 2=SELL
 
-    ✅ KEY FIXES:
+    ✅ KEY FEATURES:
         - Dynamic SL/TP based on entry volatility
-        - Small SL penalty, TP bonus
-        - Sector loaded once per env
-        - Patience for slow learning
+        - pnl_pct calculation (for AgenticLoop feedback)
+        - Sector files loaded once per env
+        - Trade tracking with correct metrics
     """
 
     metadata = {"render_modes": ["human"]}
@@ -408,16 +406,13 @@ class MultiSymbolTradingEnv(gym.Env):
         xgb_models=None,
         agentic_loop=None,
         patch_tst=None,
-        # Default SL/TP (will be overridden by dynamic)
-        sl_pct=0.04,
-        tp_pct=0.08,
-        # Dynamic SL/TP multipliers (relative to entry vol)
-        sl_vol_mult=2.0,       # SL = 2×entry_vol
-        tp_vol_mult=4.0,       # TP = 4×entry_vol (2:1 R:R)
-        min_sl_pct=0.03,       # min 3% SL
-        max_sl_pct=0.10,       # max 10% SL
-        min_tp_pct=0.06,       # min 6% TP
-        max_tp_pct=0.20,       # max 20% TP
+        # Dynamic SL/TP (auto-adjusted by vol)
+        sl_vol_mult=2.0,
+        tp_vol_mult=4.0,
+        min_sl_pct=0.03,
+        max_sl_pct=0.10,
+        min_tp_pct=0.06,
+        max_tp_pct=0.20,
         # Reward shaping
         max_position_pct=0.30,
         hold_penalty=0.0001,
@@ -439,8 +434,6 @@ class MultiSymbolTradingEnv(gym.Env):
         self.risk_percent = risk_percent
 
         # Dynamic SL/TP
-        self.sl_pct = sl_pct
-        self.tp_pct = tp_pct
         self.sl_vol_mult = sl_vol_mult
         self.tp_vol_mult = tp_vol_mult
         self.min_sl_pct = min_sl_pct
@@ -510,103 +503,6 @@ class MultiSymbolTradingEnv(gym.Env):
         self._entry_vol = {}
 
     # -------------------------------------------------
-    # Tier 1: Microstructure
-    # -------------------------------------------------
-    def _get_microstructure_features(self, df, idx):
-        if idx < 20:
-            return np.zeros(6, dtype=np.float32)
-        try:
-            df_slice = df.iloc[:idx+1].copy()
-            micro_df = self.micro.compute_all(df_slice)
-            last_row = micro_df.iloc[-1]
-            return np.array([
-                last_row['ofi'], last_row['vwap_dev'], last_row['spread_z'],
-                last_row['illiq'], last_row['turnover_ratio'], last_row['bounce']
-            ], dtype=np.float32)
-        except:
-            return np.zeros(6, dtype=np.float32)
-
-    # -------------------------------------------------
-    # Tier 1: Greeks
-    # -------------------------------------------------
-    def _get_greek_features(self, df, idx):
-        if idx < 20:
-            return np.zeros(3, dtype=np.float32)
-        try:
-            df_slice = df.iloc[:idx+1]
-            if self.sector_returns_cache is None:
-                combined = pd.concat(self.dfs.values(), ignore_index=True)
-                if 'date' in combined.columns:
-                    self.sector_returns_cache = combined.groupby('date')['close'].mean().pct_change()
-                else:
-                    self.sector_returns_cache = combined['close'].pct_change()
-            if self.vix_proxy_cache is None:
-                self.vix_proxy_cache = df_slice['close'].pct_change().rolling(20).std()
-
-            delta = self.greeks.delta(df_slice, self.sector_returns_cache)
-            gamma = self.greeks.gamma(delta)
-            vega = self.greeks.vega(df_slice, self.vix_proxy_cache)
-
-            return np.array([
-                delta.iloc[-1] if not delta.empty else 1.0,
-                gamma.iloc[-1] if not gamma.empty else 0.0,
-                vega.iloc[-1] if not vega.empty else 0.0
-            ], dtype=np.float32)
-        except:
-            return np.zeros(3, dtype=np.float32)
-
-    # -------------------------------------------------
-    # Tier 2: Regime
-    # -------------------------------------------------
-    def _update_regime_state(self, df, idx):
-        if idx < 50 or not self.regime_fitted:
-            return
-        try:
-            df_slice = df.iloc[:idx+1]
-            returns = df_slice['close'].pct_change().fillna(0)
-            volumes = df_slice['volume'].fillna(0)
-            self.current_state = self.regime_model.predict(returns, volumes)
-            self.current_regime = self.regime_model.regime_map.get(self.current_state, 'SIDEWAYS')
-        except:
-            pass
-
-    # -------------------------------------------------
-    # Sector leaders
-    # -------------------------------------------------
-    def _detect_sector_leaders(self):
-        if not self.sector_features_enabled or self.sector_engine is None:
-            return
-        try:
-            combined = pd.concat(self.dfs.values(), ignore_index=True)
-            sectors = self.sector_engine.get_all_sectors()
-            for sector in sectors:
-                sector_symbols = self.sector_engine.get_symbols_in_sector(sector)
-                sector_data = combined[combined['symbol'].isin(sector_symbols)]
-                if len(sector_data) > 50:
-                    leader = self.leader_detector.detect_leader(sector_data)
-                    if leader:
-                        self.sector_leaders[sector] = leader
-        except:
-            pass
-
-    # -------------------------------------------------
-    # Portfolio weights
-    # -------------------------------------------------
-    def _calculate_portfolio_weights(self):
-        try:
-            returns_dict = {}
-            for s in self.symbols:
-                df = self.dfs[s]
-                if len(df) > 20:
-                    returns_dict[s] = df['close'].pct_change().dropna()
-            if len(returns_dict) > 1:
-                returns_df = pd.DataFrame(returns_dict).dropna()
-                if len(returns_df) > 20:
-                    self.portfolio_weights = self.optimizer.risk_parity_weights(returns_df)
-        except:
-            self.portfolio_weights = None
-
-    # -------------------------------------------------
     # Sector reward multiplier
     # -------------------------------------------------
     def _get_sector_reward_multiplier(self, symbol):
@@ -621,6 +517,47 @@ class MultiSymbolTradingEnv(gym.Env):
             return 1.0
         except:
             return 1.0
+
+    def _detect_sector_leaders(self):
+        if not self.sector_features_enabled or self.sector_engine is None:
+            return
+        try:
+            combined = pd.concat(self.dfs.values(), ignore_index=True)
+            for sector in self.sector_engine.get_all_sectors():
+                sector_symbols = self.sector_engine.get_symbols_in_sector(sector)
+                sector_data = combined[combined['symbol'].isin(sector_symbols)]
+                if len(sector_data) > 50:
+                    leader = self.leader_detector.detect_leader(sector_data)
+                    if leader:
+                        self.sector_leaders[sector] = leader
+        except:
+            pass
+
+    def _calculate_portfolio_weights(self):
+        try:
+            returns_dict = {}
+            for s in self.symbols:
+                df = self.dfs[s]
+                if len(df) > 20:
+                    returns_dict[s] = df['close'].pct_change().dropna()
+            if len(returns_dict) > 1:
+                returns_df = pd.DataFrame(returns_dict).dropna()
+                if len(returns_df) > 20:
+                    self.portfolio_weights = self.optimizer.risk_parity_weights(returns_df)
+        except:
+            self.portfolio_weights = None
+
+    def _update_regime_state(self, df, idx):
+        if idx < 50 or not self.regime_fitted:
+            return
+        try:
+            df_slice = df.iloc[:idx+1]
+            returns = df_slice['close'].pct_change().fillna(0)
+            volumes = df_slice['volume'].fillna(0)
+            self.current_state = self.regime_model.predict(returns, volumes)
+            self.current_regime = self.regime_model.regime_map.get(self.current_state, 'SIDEWAYS')
+        except:
+            pass
 
     # -------------------------------------------------
     # RESET
@@ -685,11 +622,10 @@ class MultiSymbolTradingEnv(gym.Env):
             else:
                 o = np.zeros(self.effective_state_dim, dtype=np.float32)
             obs.append(o)
-
         return np.asarray(obs, dtype=np.float32)
 
     # -------------------------------------------------
-    # STEP — dynamic SL/TP
+    # STEP — with pnl_pct calculation
     # -------------------------------------------------
     def step(self, actions):
         self._last_trades = []
@@ -723,7 +659,6 @@ class MultiSymbolTradingEnv(gym.Env):
             if self.position[s] > 0:
                 entry = self.entry_price[s]
 
-                # Dynamic SL/TP from entry vol
                 vol = self._entry_vol.get(s, 0.02)
                 dyn_sl = float(np.clip(vol * self.sl_vol_mult, self.min_sl_pct, self.max_sl_pct))
                 dyn_tp = float(np.clip(vol * self.tp_vol_mult, self.min_tp_pct, self.max_tp_pct))
@@ -745,8 +680,14 @@ class MultiSymbolTradingEnv(gym.Env):
                     close_reason = 'signal'
 
                 if should_close:
-                    pnl = (price - entry) * self.position[s]
-                    self.balance[s] += self.position[s] * price
+                    shares = self.position[s]
+                    pnl = (price - entry) * shares
+                    entry_value = entry * shares if shares > 0 else 1e-8
+
+                    # ✅ CORRECT: PnL percent relative to entry value
+                    pnl_pct = (pnl / entry_value) * 100.0 if entry_value > 0 else 0.0
+
+                    self.balance[s] += shares * price
 
                     risk_amount = self.total_capital * self.risk_percent
                     reward = float(np.tanh(pnl / (risk_amount * 0.5)))
@@ -762,13 +703,16 @@ class MultiSymbolTradingEnv(gym.Env):
                     if close_reason == 'tp':
                         reward += self.tp_bonus
 
+                    # ✅ CORRECT trade record with pnl_pct
                     self._last_trades.append({
                         'success': bool(pnl > 0),
                         'pnl': float(pnl),
+                        'pnl_pct': float(pnl_pct),          # ✅ NEW
                         'entry_price': float(entry),
                         'exit_price': float(price),
                         'exit_reason': str(close_reason),
                         'symbol': s,
+                        'shares': int(shares),
                     })
 
                     self.position[s] = 0
