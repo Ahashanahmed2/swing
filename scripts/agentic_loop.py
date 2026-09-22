@@ -1,4 +1,4 @@
-া# agentic_loop.py - Multi-Agent Voting System for Trading (with Sector Features)
+# agentic_loop.py - Multi-Agent Voting System for Trading (with Sector Features)
 # This integrates with your existing XGBoost + PPO system
 # ✅ NEW: Sector Agent, Ensemble Weight Optimization, Performance Tracking, Telegram Notifications
 
