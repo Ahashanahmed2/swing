@@ -1,10 +1,10 @@
 # ================== ppo_train.py ==================
 # HEDGE FUND LEVEL — MAX QUALITY PPO TRAINING
+# ✅ pnl_pct propagation (AgenticLoop feedback correct)
+# ✅ MistakeLearner loss_percent fixed
 # ✅ Train ALL symbols (400+)
-# ✅ Slow learning OK (conservative LR, no early stop)
-# ✅ HF upload batches every 50 files
-# ✅ Resume support
-# ✅ DummyVecEnv 4-tuple handling
+# ✅ Slow learning (no early stop)
+# ✅ HF upload + Resume
 
 import os
 import sys
@@ -75,14 +75,30 @@ except ImportError:
     print("⚠️ HuggingFace Hub not available")
 
 # =========================================================
-# HF + LOCAL CHECKPOINT
+# SAFE DIRECTORY CREATION (handles stray files)
 # =========================================================
+
+def safe_mkdir(p):
+    """Create dir; if a stray file exists with same name, delete it."""
+    p = Path(p)
+    if p.exists() and not p.is_dir():
+        print(f"⚠️ Removing stray file: {p}")
+        p.unlink()
+    p.mkdir(parents=True, exist_ok=True)
 
 HF_DATASET_REPO = "ahashanahmed/csv"
 HF_CHECKPOINT_DIR = "checkpoints"
-LOCAL_CHECKPOINT_DIR = Path("./csv/ppo_checkpoints")
-LOCAL_CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
+# Use consistent root
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent if SCRIPT_DIR.name == "scripts" else SCRIPT_DIR
+
+LOCAL_CHECKPOINT_DIR = PROJECT_ROOT / "csv" / "ppo_checkpoints"
+safe_mkdir(LOCAL_CHECKPOINT_DIR)
+
+# =========================================================
+# HF Uploader
+# =========================================================
 
 class HFCheckpointUploader:
     def __init__(self, repo_id=HF_DATASET_REPO):
@@ -191,7 +207,7 @@ class LocalCheckpointManager:
 
     def save_model_checkpoint(self, symbol, model, metrics, step, ensemble_idx=None, is_best=False):
         symbol_dir = self.base_dir / symbol
-        symbol_dir.mkdir(parents=True, exist_ok=True)
+        safe_mkdir(symbol_dir)
 
         if is_best:
             model_name = f"{symbol}_best"
@@ -254,7 +270,7 @@ class LocalCheckpointManager:
 
     def get_latest_checkpoint(self, symbol):
         symbol_dir = self.base_dir / symbol
-        if not symbol_dir.exists():
+        if not symbol_dir.exists() or not symbol_dir.is_dir():
             return None
         checkpoints = list(symbol_dir.glob(f"{symbol}_step*.zip"))
         if not checkpoints:
@@ -288,7 +304,7 @@ def get_hf_uploader():
 # PATHS
 # =========================================================
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = PROJECT_ROOT
 CSV_MARKET = BASE_DIR / "csv" / "mongodb.csv"
 XGB_MODEL_DIR = BASE_DIR / "csv" / "xgboost"
 PPO_MODEL_DIR = BASE_DIR / "csv" / "ppo_models"
@@ -299,9 +315,12 @@ MODEL_METADATA = BASE_DIR / "csv" / "model_metadata.csv"
 LAST_PPO_TRAIN = BASE_DIR / "csv" / "last_ppo_train.txt"
 MISTAKES_FILE = BASE_DIR / "csv" / "trading_mistakes.csv"
 
-os.makedirs(PPO_MODEL_DIR, exist_ok=True)
-os.makedirs(PPO_SYMBOL_DIR, exist_ok=True)
-os.makedirs(PPO_ENSEMBLE_DIR, exist_ok=True)
+safe_mkdir(PPO_MODEL_DIR)
+safe_mkdir(PPO_SYMBOL_DIR)
+safe_mkdir(PPO_ENSEMBLE_DIR)
+
+print(f"📁 Base dir: {BASE_DIR}")
+print(f"📁 PPO dir:  {PPO_MODEL_DIR}")
 
 # =========================================================
 # CONFIG — TRAIN ALL SYMBOLS
@@ -313,15 +332,15 @@ RISK_PERCENT = 0.01
 PPO_RETRAIN_INTERVAL = 7
 
 XGB_AUC_THRESHOLD_FOR_PPO = 0.50
-MAX_PER_SYMBOL_MODELS = 10000   # ✅ effectively unlimited (all 400+)
+MAX_PER_SYMBOL_MODELS = 10000
 
-TRAIN_RATIO = 0.80       # ✅ 65% → 80% (small data friendly)
-VALIDATION_RATIO = 0.10  # ✅ 15% → 10%
-TEST_RATIO = 0.10        # ✅ 20% → 10%
+TRAIN_RATIO = 0.80
+VALIDATION_RATIO = 0.10
+TEST_RATIO = 0.10
 
-EARLY_STOPPING_PATIENCE = 999   # ✅ effectively disabled
-EVAL_FREQ = 10000               # ✅ rarely evaluate
-ENABLE_EARLY_STOP = False       # ✅ MASTER SWITCH
+EARLY_STOPPING_PATIENCE = 999
+EVAL_FREQ = 10000
+ENABLE_EARLY_STOP = False
 
 ENSEMBLE_SIZE = 5
 
@@ -339,7 +358,7 @@ try:
 except ImportError:
     MARKET_COLS = DEFAULT_MARKET_COLS
 
-STATE_DIM = len(MARKET_COLS) * WINDOW  # = 50
+STATE_DIM = len(MARKET_COLS) * WINDOW
 
 PPO_CONFIG = {
     'n_steps': 2048,
@@ -355,7 +374,6 @@ PPO_CONFIG = {
     'target_kl': 0.03,
 }
 
-# ✅ Slow, safe learning (user prefers patience)
 PPO_PER_SYMBOL_CONFIG = {
     'high_quality': {
         'n_steps': 2048, 'batch_size': 256, 'learning_rate': 8e-5,
@@ -372,7 +390,7 @@ PPO_PER_SYMBOL_CONFIG = {
 }
 
 # =========================================================
-# AGENTIC LOOP WRAPPER
+# AGENTIC LOOP
 # =========================================================
 
 class AgenticLoopWrapper:
@@ -441,6 +459,7 @@ def get_agentic_loop():
 # =========================================================
 
 def safe_extract_trade_result(info):
+    """Extract trade_result from env info dict, including pnl_pct."""
     if isinstance(info, list) and len(info) > 0:
         info = info[0]
     if not isinstance(info, dict):
@@ -451,13 +470,14 @@ def safe_extract_trade_result(info):
     return {
         'success': trade_result.get('success', False),
         'pnl': trade_result.get('pnl', 0.0),
+        'pnl_pct': trade_result.get('pnl_pct', 0.0),        # ✅ NEW
         'entry_price': trade_result.get('entry_price', 0.0),
         'exit_price': trade_result.get('exit_price', 0.0),
-        'exit_reason': trade_result.get('exit_reason', 'unknown')
+        'exit_reason': trade_result.get('exit_reason', 'unknown'),
+        'shares': trade_result.get('shares', 0),
     }
 
 def parse_vecenv_step(step_result):
-    """Parse DummyVecEnv 4-tuple: (obs, rewards, dones, infos)"""
     obs = step_result[0]
     reward_raw = step_result[1] if len(step_result) > 1 else 0.0
     dones_raw = step_result[2] if len(step_result) > 2 else True
@@ -494,7 +514,7 @@ def ensure_vecenv_action(action):
     return action
 
 # =========================================================
-# MISTAKE LEARNER
+# MISTAKE LEARNER (FIXED)
 # =========================================================
 
 class MistakeLearner:
@@ -510,13 +530,29 @@ class MistakeLearner:
         except:
             return []
 
-    def record_mistake(self, symbol, entry_price, exit_price, pnl, reason):
+    def record_mistake(self, symbol, entry_price, exit_price, pnl,
+                       reason, pnl_pct=None):
+        """
+        ✅ FIXED: Use pnl_pct if provided, else compute from prices.
+        """
         try:
-            loss_percent = abs(pnl) / entry_price * 100 if entry_price > 0 else 0
+            # Prefer pnl_pct (already correct %)
+            if pnl_pct is not None and pnl_pct != 0:
+                loss_percent = abs(pnl_pct)
+            elif entry_price > 0 and exit_price > 0:
+                # Price-change ratio
+                loss_percent = abs(exit_price - entry_price) / entry_price * 100
+            else:
+                loss_percent = 0
+
             mistake = {
-                'symbol': str(symbol), 'entry_price': float(entry_price),
-                'exit_price': float(exit_price), 'pnl': float(pnl),
-                'loss_percent': round(loss_percent, 2), 'reason': str(reason),
+                'symbol': str(symbol),
+                'entry_price': float(entry_price),
+                'exit_price': float(exit_price),
+                'pnl': float(pnl),
+                'pnl_pct': float(pnl_pct) if pnl_pct is not None else 0.0,   # ✅ NEW
+                'loss_percent': round(loss_percent, 2),
+                'reason': str(reason),
                 'date': datetime.now().strftime('%Y-%m-%d')
             }
             self.mistakes.append(mistake)
@@ -543,11 +579,11 @@ if SB3_AVAILABLE:
             self.best_mean_reward = -np.inf
             self.no_improvement_count = 0
             self.eval_freq = EVAL_FREQ
-            self.enabled = enabled   # ✅ master switch
+            self.enabled = enabled
 
         def _on_step(self):
             if not self.enabled:
-                return True   # ✅ skip entirely if disabled
+                return True
             if self.n_calls % self.eval_freq == 0:
                 mean_reward = self._evaluate()
                 if mean_reward > self.best_mean_reward + self.min_delta:
@@ -642,10 +678,6 @@ def create_multi_symbol_env(symbol_dfs, sector_engine=None, xgb_models=None,
         print(f"   ⚠️ Error creating env: {e}")
         return None
 
-# =========================================================
-# BUILD OBSERVATION (50-dim)
-# =========================================================
-
 def build_observation(df, idx):
     try:
         available_cols = [col for col in MARKET_COLS if col in df.columns]
@@ -682,7 +714,6 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
 
     mistake_learner = MistakeLearner()
 
-    # Agent consensus
     if AGENTIC_LOOP_CONFIG['enabled'] and agentic_loop and len(symbol_data) > 20:
         try:
             volatility = symbol_data['close'].pct_change().std() * np.sqrt(252)
@@ -694,7 +725,6 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
         except:
             pass
 
-    # Data Split
     total_len = len(symbol_data)
     train_end = int(total_len * TRAIN_RATIO)
     val_end = int(total_len * (TRAIN_RATIO + VALIDATION_RATIO))
@@ -704,7 +734,6 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
 
     print(f"\n   📊 Split: Train={len(train_data)} | Val={len(val_data)} | Test={len(test_data)}")
 
-    # Config
     if xgb_auc >= 0.85:
         config = PPO_PER_SYMBOL_CONFIG['high_quality']; quality = 'HIGH'
     elif xgb_auc >= 0.70:
@@ -714,7 +743,6 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
 
     print(f"   🎚️ Quality: {quality} | Timesteps: {config['timesteps']:,}")
 
-    # Resume
     last_step = local_ckpt.get_last_step(symbol)
     last_ensemble = local_ckpt.get_last_ensemble(symbol)
     if last_step > 0:
@@ -753,7 +781,6 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
                 'seed': 42 + ensemble_idx
             })
 
-            # Resume model
             resume_step = 0
             if ensemble_idx == start_ensemble and last_step > 0:
                 checkpoint_path = local_ckpt.get_latest_checkpoint(symbol)
@@ -766,12 +793,11 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
             else:
                 model = PPO("MlpPolicy", train_env, **ppo_config, verbose=0)
 
-            # ✅ Early stop disabled
             early_stop = EarlyStoppingCallback(
                 val_env,
                 patience=EARLY_STOPPING_PATIENCE,
                 verbose=0,
-                enabled=ENABLE_EARLY_STOP    # False
+                enabled=ENABLE_EARLY_STOP
             )
 
             remaining_steps = config['timesteps'] - resume_step
@@ -824,13 +850,17 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
                             entry_price=trade_result.get('entry_price', 0),
                             exit_price=trade_result.get('exit_price', 0),
                             pnl=trade_result.get('pnl', 0),
-                            reason='validation_loss'
+                            reason='validation_loss',
+                            pnl_pct=trade_result.get('pnl_pct', None)   # ✅ pass
                         )
                     if AGENTIC_LOOP_CONFIG['enabled'] and agentic_loop:
+                        # ✅ CORRECT: pass pnl_pct too
                         agentic_loop.record_trade_feedback({
                             'symbol': symbol,
                             'pnl': trade_result.get('pnl', 0),
-                            'success': trade_result.get('success', False)
+                            'pnl_pct': trade_result.get('pnl_pct', 0),   # ✅ NEW
+                            'success': trade_result.get('success', False),
+                            'exit_reason': trade_result.get('exit_reason', 'unknown')
                         })
 
             returns_array = np.array(rewards_list) if rewards_list else np.array([0.0])
@@ -860,7 +890,6 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
         local_ckpt.mark_failed(symbol, "No models trained")
         return None, {}
 
-    # Weighted Ensemble
     if len(ensemble_models) > 1:
         sharpe_values = np.array([max(0.01, s['sharpe']) for s in ensemble_stats])
         weights = sharpe_values / sharpe_values.sum()
@@ -872,7 +901,6 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
         weights = np.array([1.0])
         final_model = PPO.load(ensemble_models[0], device="cpu")
 
-    # ---- FINAL TEST ----
     print(f"\n   🧪 FINAL TEST")
 
     try:
@@ -910,7 +938,9 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
                     agentic_loop.record_trade_feedback({
                         'symbol': symbol,
                         'pnl': trade_result.get('pnl', 0),
-                        'success': trade_result.get('success', False)
+                        'pnl_pct': trade_result.get('pnl_pct', 0),   # ✅ NEW
+                        'success': trade_result.get('success', False),
+                        'exit_reason': trade_result.get('exit_reason', 'unknown')
                     })
 
         returns_array = np.array(rewards_list) if rewards_list else np.array([0.0])
@@ -931,7 +961,8 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
                     entry_price=trade.get('entry_price', 0),
                     exit_price=trade.get('exit_price', 0),
                     pnl=trade.get('pnl', 0),
-                    reason='test_loss'
+                    reason='test_loss',
+                    pnl_pct=trade.get('pnl_pct', None)   # ✅ pass
                 )
 
         quality_score = min(100, (final_sharpe * 20) + (win_rate * 50) + (min(profit_factor, 5) * 10))
@@ -948,7 +979,6 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
         print(f"   Win: {win_rate:.1%} ({profitable}/{total_trades}) | PF: {profit_factor:.2f}")
         print(f"   Quality: {quality_score:.1f}/100")
 
-        # Save best
         if isinstance(final_model, EnsemblePPO) and len(ensemble_models) > 0:
             model_for_save = PPO.load(str(ensemble_models[0]), device="cpu")
         else:
@@ -1060,7 +1090,6 @@ def train_ppo_system():
 
     xgb_metadata = load_xgb_metadata()
 
-    # ✅ ALL symbols (no 50 limit)
     if not xgb_metadata.empty:
         top_symbols = xgb_metadata[xgb_metadata['auc'] >= XGB_AUC_THRESHOLD_FOR_PPO].head(MAX_PER_SYMBOL_MODELS)
         top_symbol_list = top_symbols['symbol'].tolist()
@@ -1071,16 +1100,14 @@ def train_ppo_system():
     all_symbols_data = {}
     for symbol in df['symbol'].unique():
         symbol_df = df[df['symbol'] == symbol].reset_index(drop=True)
-        if len(symbol_df) >= WINDOW + 50:  # ✅ lowered from 100 to 50
+        if len(symbol_df) >= WINDOW + 50:
             all_symbols_data[symbol] = symbol_df
     print(f"   ✅ {len(all_symbols_data)} symbols with sufficient data")
 
-    # Fallback if XGB filter empty
     if not top_symbol_list:
         top_symbol_list = list(all_symbols_data.keys())
         print(f"   ⚠️ Fallback: using ALL {len(top_symbol_list)} symbols")
 
-    # Filter to available
     top_symbol_list = [s for s in top_symbol_list if s in all_symbols_data]
     print(f"   🎯 Final list: {len(top_symbol_list)} symbols to train")
 
