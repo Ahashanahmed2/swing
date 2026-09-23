@@ -950,9 +950,13 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
         total_trades = len(test_trades)
         win_rate = profitable / total_trades if total_trades > 0 else 0
 
+        # ✅ FIXED: Profit Factor = TOTAL wins / TOTAL losses (standard definition)
         avg_win = np.mean([t['pnl'] for t in test_trades if t.get('success', False)]) if profitable > 0 else 0
         avg_loss = np.mean([abs(t['pnl']) for t in test_trades if not t.get('success', False)]) if (total_trades - profitable) > 0 else 0
-        profit_factor = avg_win / (avg_loss + 1e-8) if avg_loss > 0 else float('inf')
+
+        total_wins = sum(t['pnl'] for t in test_trades if t.get('success', False))
+        total_losses = sum(abs(t['pnl']) for t in test_trades if not t.get('success', False))
+        profit_factor = total_wins / (total_losses + 1e-8) if total_losses > 0 else float('inf')
 
         for trade in test_trades:
             if not trade.get('success', False):
