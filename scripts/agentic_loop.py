@@ -632,7 +632,12 @@ class AgenticLoop:
         """
         symbol = trade_result.get('symbol')
         pnl = trade_result.get('pnl', 0)
-        was_win = pnl > 0
+        if abs(pnl) < 0.01:  # ✅ Treat tiny as breakeven
+            was_win = None   # or skip entirely
+        elif pnl > 0:
+            was_win = True
+        else:
+            was_win = False
 
         # Find the decision that led to this trade
         recent_decisions = [d for d in self.decision_log if d['symbol'] == symbol]
