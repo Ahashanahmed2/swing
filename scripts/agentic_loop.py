@@ -653,13 +653,14 @@ class AgenticLoop:
         pnl_pct = trade_result.get('pnl_pct', 0)
 
         if ppo_action is not None:
-            # PPO action: 0=HOLD, 1=BUY, 2=SELL
-            if ppo_action == 1:  # BUY
-                ensemble_was_correct = was_win
-            elif ppo_action == 2:  # SELL
-                ensemble_was_correct = not was_win
-            else:  # HOLD (but trade happened — check magnitude)
-                ensemble_was_correct = abs(pnl_pct) < 2.0
+        # ✅ FIXED: Environment is LONG-ONLY. SELL = close long.
+        # So both BUY (open) and SELL (close) should be evaluated by PnL.
+        # Action 0 = HOLD (no trade should happen — but if it did, check magnitude)
+        if ppo_action in [1, 2]:  # BUY (open) or SELL (close) both = active trading
+            ensemble_was_correct = was_win
+        else:  # HOLD (no trade should happen)
+            # If trade happened with HOLD action, check if movement was small
+            ensemble_was_correct = abs(pnl_pct) < 2.0
         else:
             # Fallback: use ensemble decision
             if ensemble_decision in ['STRONG_BUY', 'BUY']:
