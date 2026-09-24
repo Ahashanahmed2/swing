@@ -606,22 +606,10 @@ class AgenticLoop:
 
         last_decision = recent_decisions[-1]
         agent_votes = last_decision.get('agent_votes', {})
-        ensemble_decision = last_decision.get('decision', 'HOLD')
-
-        ppo_action = trade_result.get('ppo_action', None)
-
-        # ✅ FIX 2: LONG-only environment — SELL = close long (not short open)
-        # So both BUY (1) and SELL (2) = active trade → evaluate by PnL
-        if ppo_action is not None:
-            if ppo_action in [1, 2]:  # BUY (open) or SELL (close) = active trade
-                ensemble_was_correct = was_win
-            else:  # HOLD
-                ensemble_was_correct = abs(pnl_pct) < 2.0
-        else:
-            if ensemble_decision in ['STRONG_BUY', 'BUY', 'STRONG_SELL', 'SELL']:
-                ensemble_was_correct = was_win
-            else:
-                ensemble_was_correct = abs(pnl_pct) < 2.0
+        # ✅ SIMPLEST: evaluate by PnL outcome only
+        # WIN → correct, LOSS → incorrect
+        # Breakeven already handled above (return None)
+        ensemble_was_correct = was_win
 
         self.ensemble_total += 1
         if ensemble_was_correct:
