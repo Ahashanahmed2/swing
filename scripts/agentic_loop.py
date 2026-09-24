@@ -598,7 +598,7 @@ class AgenticLoop:
             return None
 
         was_win = pnl > 0
-
+        ppo_action = trade_result.get('ppo_action', None)
         # Find the decision that led to this trade
         recent_decisions = [d for d in self.decision_log if d['symbol'] == symbol]
         if not recent_decisions:
