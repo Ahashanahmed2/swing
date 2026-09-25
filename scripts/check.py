@@ -1,4 +1,4 @@
-# debug_ltp.py
+# debug_ltp.py — v2
 import requests, re, json
 from bs4 import BeautifulSoup
 import urllib3
@@ -17,7 +17,9 @@ s.headers.update({
 r = s.get(URL, timeout=20)
 html = r.text
 
-print("=" * 60)
+print("=" * 70)
+print("BASIC CHECKS")
+print("=" * 70)
 print("HTTP status:", r.status_code)
 print("HTML length:", len(html))
 print("Has '<table':", '<table' in html)
@@ -27,12 +29,13 @@ print("Has 'Market closed':", 'Market closed' in html)
 print("Has 'Market open':", 'Market open' in html)
 print("Has 'tickerInitial':", 'tickerInitial' in html)
 print("Has '__next_f':", '__next_f' in html)
-print("=" * 60)
 
 # ─────────────────────────────────────────────
-# Method 1: HTML টেবিল
+# METHOD 1: HTML টেবিল
 # ─────────────────────────────────────────────
-print("\n### METHOD 1: HTML <table> parse")
+print("\n" + "=" * 70)
+print("METHOD 1: HTML <table> parse")
+print("=" * 70)
 soup = BeautifulSoup(html, 'html.parser')
 tables = soup.find_all('table')
 print(f"Tables found: {len(tables)}")
@@ -66,34 +69,62 @@ if method1_data:
 
 
 # ─────────────────────────────────────────────
-# Method 2: tickerInitial JSON
+# METHOD 2: tickerInitial JSON — full entries
 # ─────────────────────────────────────────────
-print("\n### METHOD 2: tickerInitial JSON")
+print("\n" + "=" * 70)
+print("METHOD 2: tickerInitial JSON — FULL DATA")
+print("=" * 70)
 method2_data = {}
+method2_entries = []
+
 idx = html.find('tickerInitial')
 print(f"tickerInitial index: {idx}")
+
 if idx > -1:
-    print(f"Context (±100): ...{html[max(0,idx-50):idx+200]}...")
+    # Context দেখি
+    print(f"\nContext (±50 to +250):")
+    print(html[max(0, idx - 50): idx + 250])
+    print()
 
 try:
-    # ["tickerInitial":[{...},{...}],"alerts":...]
     m = re.search(r'"tickerInitial"\s*:\s*(\[[^\]]*\])', html)
     if not m:
-        # backup: \u0022 এ escaped হলে
         m = re.search(r'tickerInitial.{0,5}?(\[\{.*?\}\])', html)
+
     if m:
         raw = m.group(1)
-        # Next.js-এ \u003c, \u0026 থাকতে পারে — unicode_escape দিয়ে decode
         try:
             raw_decoded = raw.encode('utf-8').decode('unicode_escape')
         except Exception:
             raw_decoded = raw
+
         try:
             tickers = json.loads(raw_decoded)
+            print(f"✅ Parsed {len(tickers)} ticker entries")
         except Exception as e:
-            print(f"   JSON parse error: {e}")
+            print(f"❌ JSON parse error: {e}")
             tickers = []
-        print(f"   Parsed tickers: {len(tickers)}")
+
+        # প্রতিটি entry-এর কী কী ফিল্ড আছে তা দেখি
+        if tickers:
+            print(f"\n📋 ALL FIELDS present in first entry:")
+            print(json.dumps(tickers[0], indent=2, ensure_ascii=False))
+
+            print(f"\n📋 First 10 entries (raw):")
+            for i, t in enumerate(tickers[:10]):
+                print(f"  {i+1}. {t}")
+
+            print(f"\n📋 Last 5 entries (raw):")
+            for i, t in enumerate(tickers[-5:]):
+                print(f"  {len(tickers)-5+i+1}. {t}")
+
+        # সব entry-এর key গুলো collect করি — কোন ফিল্ড আছে বুঝতে
+        all_keys = set()
+        for t in tickers:
+            all_keys.update(t.keys())
+        print(f"\n🔑 All distinct keys across entries: {sorted(all_keys)}")
+
+        # LTP extract
         for t in tickers:
             sym = t.get('code')
             price = t.get('price')
@@ -103,84 +134,78 @@ try:
                 ltp = float(str(price).replace(',', ''))
                 if 0 < ltp < 50000:
                     method2_data[sym.upper().strip()] = ltp
+                    method2_entries.append({
+                        'symbol': sym.upper().strip(),
+                        'ltp': ltp,
+                        'change': t.get('change'),
+                        'delta': t.get('delta'),
+                    })
             except (ValueError, TypeError):
                 continue
+
+        print(f"\n✅ Extracted {len(method2_data)} symbols with LTP")
+        print(f"\n📊 Sample with all fields (first 5):")
+        for e in method2_entries[:5]:
+            print(f"  {e}")
+
+        print(f"\n📊 Sample with all fields (last 5):")
+        for e in method2_entries[-5:]:
+            print(f"  {e}")
+
+        # Any entries with high/low/volume?
+        fields_with_hlv = [t for t in tickers if any(k in t for k in ['high', 'low', 'volume', 'value', 'trades'])]
+        print(f"\n🔍 Entries containing high/low/volume/etc: {len(fields_with_hlv)}")
+        if fields_with_hlv:
+            print(f"   Example: {fields_with_hlv[0]}")
+
     else:
-        print("   Regex didn't match tickerInitial")
+        print("❌ Regex didn't match tickerInitial")
+
 except Exception as e:
-    print(f"   Method 2 error: {e}")
-
-print(f"→ Method 2 symbols: {len(method2_data)}")
-if method2_data:
-    print(f"   Sample: {list(method2_data.items())[:5]}")
+    print(f"❌ Method 2 error: {e}")
 
 
 # ─────────────────────────────────────────────
-# Method 3: Raw regex — escaped টেবিল row থেকে
+# METHOD 3: __next_f থেকে সমস্ত JSON-like data খুঁজি
 # ─────────────────────────────────────────────
-print("\n### METHOD 3: Regex on raw HTML")
-method3_data = {}
-# দুটো pattern try — escaped এবং non-escaped
-patterns = [
-    # non-escaped: >SYMBOL</a></td><td ...>LTP<
-    re.compile(r'>([A-Z0-9&\-\.\(\)]+)</a>\s*</td>\s*<td[^>]*>\s*([\d,]+\.\d+)\s*<'),
-    # escaped: \u003eSYMBOL\u003c/a\u003e...\u003c
-    re.compile(r'\\u003e([A-Z0-9&\-\.\(\)]+)\\u003c/a\\u003e[^<]{0,200}?([\d,]+\.\d+)'),
-    # /company/SYMBOL">SYMBOL  pattern
-    re.compile(r'/company/([A-Z0-9&\-\.\(\)]+)"[^>]*>\s*([A-Z0-9&\-\.\(\)]+)\s*<[^>]*>[^<]*<[^>]*>\s*([\d,]+\.\d+)'),
+print("\n" + "=" * 70)
+print("METHOD 3: Searching for other JSON arrays in __next_f")
+print("=" * 70)
+
+# সব সম্ভাব্য data array-র নাম যা Next.js SSR-এ আসে
+candidates = [
+    'tickerInitial', 'latestSharePrice', 'boardData', 'sharePrice',
+    'initialData', 'tableData', 'marketData', 'rows', 'data',
+    'latest_price', 'share_price', 'instruments'
 ]
-for i, pat in enumerate(patterns):
-    hits = pat.findall(html)
-    print(f"   Pattern {i}: {len(hits)} matches")
-    if hits:
-        print(f"     First 3: {hits[:3]}")
-
-# pattern 0 → (symbol, ltp)
-for sym, ltp_s in patterns[0].findall(html):
-    try:
-        ltp = float(ltp_s.replace(',', ''))
-        if 0 < ltp < 50000:
-            method3_data[sym.upper().strip()] = ltp
-    except ValueError:
-        continue
-print(f"→ Method 3 symbols: {len(method3_data)}")
+for name in candidates:
+    pattern = rf'"{name}"\s*:\s*(\[[^\]]*\])'
+    m = re.search(pattern, html)
+    if m:
+        try:
+            raw = m.group(1).encode('utf-8').decode('unicode_escape')
+            arr = json.loads(raw)
+            print(f"✅ '{name}' found: {len(arr)} entries")
+            if arr and isinstance(arr[0], dict):
+                print(f"   Keys: {list(arr[0].keys())}")
+                print(f"   First: {arr[0]}")
+        except Exception as e:
+            print(f"⚠️ '{name}' matched but parse failed: {e}")
 
 
 # ─────────────────────────────────────────────
-# Summary
+# SUMMARY
 # ─────────────────────────────────────────────
-print("\n" + "=" * 60)
+print("\n" + "=" * 70)
 print("SUMMARY")
-print("=" * 60)
-print(f"Method 1 (HTML table):      {len(method1_data)} symbols")
-print(f"Method 2 (tickerInitial):   {len(method2_data)} symbols")
-print(f"Method 3 (regex escaped):   {len(method3_data)} symbols")
+print("=" * 70)
+print(f"Method 1 (HTML table):       {len(method1_data)} symbols")
+print(f"Method 2 (tickerInitial):    {len(method2_data)} symbols")
+print(f"Entries with full fields:    {len(method2_entries)}")
 
-best = max([method1_data, method2_data, method3_data], key=len)
-print(f"\n✅ BEST method: {len(best)} symbols")
-if best:
-    print(f"   Sample entries: {list(best.items())[:5]}")
-
-
-# ─────────────────────────────────────────────
-# HTML snippet around "TRADING CODE"
-# ─────────────────────────────────────────────
-print("\n" + "=" * 60)
-print("HTML CONTEXT around 'TRADING CODE'")
-print("=" * 60)
-tc_idx = html.find('TRADING CODE')
-if tc_idx > -1:
-    print(f"Index: {tc_idx}")
-    print(html[max(0, tc_idx - 300): tc_idx + 800])
-else:
-    print("Not found")
-
-print("\n" + "=" * 60)
-print("HTML CONTEXT around '1JANATAMF'")
-print("=" * 60)
-jt_idx = html.find('1JANATAMF')
-if jt_idx > -1:
-    print(f"Index: {jt_idx}")
-    print(html[max(0, jt_idx - 300): jt_idx + 800])
-else:
-    print("Not found")
+if method2_entries:
+    print(f"\n✅ BEST DATA SOURCE: tickerInitial")
+    print(f"   Fields available per symbol: {list(method2_entries[0].keys())}")
+    print(f"\n   Full first 5 entries:")
+    for e in method2_entries[:5]:
+        print(f"     {e}")
