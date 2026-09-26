@@ -1,96 +1,85 @@
-# debug_new_dse.py
-import requests, re, json
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+// debug-enrich.js
+const axios = require('axios');
+const cheerio = require('cheerio');
+const https = require('https');
 
-URL = "https://new.dsebd.org/markets/latest-share-price"
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+axios.defaults.httpsAgent = new https.Agent({ rejectUnauthorized: false, timeout: 30000 });
+axios.defaults.timeout = 30000;
+axios.defaults.headers.common['User-Agent'] =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
-# === TEST 1: Simple request ===
-print("=" * 70)
-print("TEST 1: simple requests.get")
-print("=" * 70)
-try:
-    r = requests.get(URL, timeout=20, verify=False)
-    print(f"Status: {r.status_code}")
-    print(f"Length: {len(r.text)}")
-    print(f"Server header: {r.headers.get('Server')}")
-    print(f"CF-Ray: {r.headers.get('CF-Ray')}")
-    print(f"Content-Type: {r.headers.get('Content-Type')}")
-    print(f"First 500 chars:\n{r.text[:500]}")
-    if 'tickerInitial' in r.text:
-        print("✅ tickerInitial FOUND")
-    else:
-        print("❌ tickerInitial NOT found")
-    if '<table' in r.text:
-        print("✅ <table> FOUND")
-    if 'TRADING CODE' in r.text:
-        print("✅ 'TRADING CODE' FOUND")
-    if 'Market closed' in r.text or 'Market open' in r.text:
-        print("✅ Market status text FOUND")
-    # Header time regex
-    m = re.search(r'On\s+(\w+ \d{1,2}, \d{4})\s+at\s+(\d{1,2}:\d{2}\s*[AP]M)', r.text)
-    print(f"Header time regex match: {m.group(0) if m else '❌ none'}")
-except Exception as e:
-    print(f"❌ Error: {type(e).__name__}: {e}")
+const BASE = 'https://new.dsebd.org';
+const TEST_SYMBOL = 'AAMRATECH';
 
-# === TEST 2: With browser-like headers ===
-print("\n" + "=" * 70)
-print("TEST 2: requests with full browser headers")
-print("=" * 70)
-headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-                  '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,'
-              'image/webp,image/apng,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-    'Upgrade-Insecure-Requests': '1',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'none',
-    'Sec-Fetch-User': '?1',
-    'Cache-Control': 'max-age=0',
-}
-try:
-    s = requests.Session()
-    s.verify = False
-    r = s.get(URL, headers=headers, timeout=20)
-    print(f"Status: {r.status_code}")
-    print(f"Length: {len(r.text)}")
-    print(f"tickerInitial: {'✅' if 'tickerInitial' in r.text else '❌'}")
-    print(f"<table>:       {'✅' if '<table' in r.text else '❌'}")
-    print(f"TRADING CODE:  {'✅' if 'TRADING CODE' in r.text else '❌'}")
-    # Data dump (for inspection)
-    print("\n--- First 2000 chars ---")
-    print(r.text[:2000])
-except Exception as e:
-    print(f"❌ Error: {type(e).__name__}: {e}")
+(async () => {
+  // ==== 1. market-depth ====
+  console.log('\n==== 1. /market-depth ====');
+  try {
+    const url = `${BASE}/market-depth?instrument=${TEST_SYMBOL}`;
+    const { data: html, status } = await axios.get(url);
+    console.log(`HTTP ${status}, length=${html.length}`);
+    console.log(`Has "Price Statistics": ${html.includes('Price Statistics')}`);
+    console.log(`Has "Open Price": ${html.includes('Open Price')}`);
 
+    // Look for the "Open Price" context
+    const idx = html.indexOf('Open Price');
+    if (idx > -1) {
+      console.log('Context:', html.substring(idx - 100, idx + 200).replace(/\s+/g, ' '));
+    }
 
-# === TEST 3: curl_cffi (if installed) ===
-print("\n" + "=" * 70)
-print("TEST 3: curl_cffi impersonate chrome")
-print("=" * 70)
-try:
-    from curl_cffi import requests as cf_requests
-    r = cf_requests.get(URL, impersonate="chrome120", timeout=20)
-    print(f"Status: {r.status_code}")
-    print(f"Length: {len(r.text)}")
-    print(f"tickerInitial: {'✅' if 'tickerInitial' in r.text else '❌'}")
-    print(f"<table>:       {'✅' if '<table' in r.text else '❌'}")
-    print(f"TRADING CODE:  {'✅' if 'TRADING CODE' in r.text else '❌'}")
-    m = re.search(r'On\s+(\w+ \d{1,2}, \d{4})\s+at\s+(\d{1,2}:\d{2}\s*[AP]M)', r.text)
-    print(f"Header time: {m.group(0) if m else '❌'}")
-    # tickerInitial context
-    idx = r.text.find('tickerInitial')
-    if idx > -1:
-        print(f"\ntickerInitial context:\n{r.text[idx:idx+400]}")
-    # Table context
-    idx2 = r.text.find('TRADING CODE')
-    if idx2 > -1:
-        print(f"\nTRADING CODE context:\n{r.text[max(0,idx2-200):idx2+800]}")
-except ImportError:
-    print("⚠️ curl_cffi not installed. Install: pip install curl_cffi")
-except Exception as e:
-    print(f"❌ Error: {type(e).__name__}: {e}")
+    const $ = cheerio.load(html);
+    const stats = {};
+    $('div').each((_, div) => {
+      const $div = $(div);
+      if ($div.children().first().text().trim() !== 'Price Statistics') return;
+      $div.find('div.flex.items-center.justify-between').each((_, row) => {
+        const label = $(row).find('span').first().text().trim();
+        const value = $(row).find('span').last().text().trim();
+        if (label && value) stats[label] = value;
+      });
+    });
+    console.log('Parsed stats:', JSON.stringify(stats, null, 2));
+  } catch (e) {
+    console.error('❌ market-depth error:', e.message);
+  }
+
+  // ==== 2. company page ====
+  console.log('\n==== 2. /company ====');
+  try {
+    const url = `${BASE}/company/${TEST_SYMBOL}`;
+    const { data: html, status } = await axios.get(url);
+    console.log(`HTTP ${status}, length=${html.length}`);
+    console.log(`Has "Key statistics": ${html.includes('Key statistics')}`);
+    console.log(`Has "Market cap": ${html.includes('Market cap')}`);
+    console.log(`Has "Opening price": ${html.includes('Opening price')}`);
+
+    const idx = html.indexOf('Key statistics');
+    if (idx > -1) {
+      console.log('Context:', html.substring(idx, idx + 600).replace(/\s+/g, ' '));
+    }
+
+    const $ = cheerio.load(html);
+    let keyStatsFound = false;
+    $('div').each((_, div) => {
+      const $div = $(div);
+      if ($div.children().first().text().trim() !== 'Key statistics') return;
+      keyStatsFound = true;
+      console.log('✅ Found "Key statistics" div');
+      const cards = $div.find('div.p-3.rounded-xl');
+      console.log(`   Cards with .p-3.rounded-xl: ${cards.length}`);
+      cards.each((_, card) => {
+        const $card = $(card);
+        const label = $card.find('div').first().text().trim();
+        const value = $card.children().last().text().trim();
+        console.log(`   - ${label}: ${value}`);
+      });
+    });
+    if (!keyStatsFound) {
+      console.log('❌ No "Key statistics" div found via cheerio');
+    }
+  } catch (e) {
+    console.error('❌ company error:', e.message);
+  }
+})();
