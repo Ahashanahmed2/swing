@@ -11,7 +11,7 @@ import os
 scripts = [
     
     #"scripts/dse_scraper.py",no
-    "scripts/date_check.py",
+    #"scripts/date_check.py",
     "scripts/hf_download.py",
     
     "scripts/mongodb.py",
