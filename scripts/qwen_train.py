@@ -1,13 +1,13 @@
 # ================== scripts/qwen_train.py ==================
-# Qwen Trainer with XGBoost + PPO Integration
-# ✅ Qwen2.5-0.5B base model
+# Qwen3 Trainer with XGBoost + PPO Integration
+# ✅ Qwen3-0.6B base model (upgraded from Qwen2.5-0.5B)
 # ✅ CHECKPOINT + FINAL MODEL SAVE TO HF DATASET REPO: ahashanahmed/csv/
-# ✅ Qwen-specific HF paths: qwen_checkpoints/qwen_checkpoint-N
+# ✅ Qwen3-specific HF paths: qwen3_checkpoints/qwen3_checkpoint-N
 # ✅ ALL LOCAL DATA FROM ./csv/
 # ✅ TELEGRAM NOTIFICATIONS ADDED
 # ✅ WEEKLY & MONTHLY RETRAINING FIXED
 # ✅ MODE EXPLANATION ADDED FOR BOT OUTPUT
-# ✅ LOCAL-ONLY CHECKPOINT RESUME: ./csv/qwen_checkpoints/qwen_checkpoint-N/
+# ✅ LOCAL-ONLY CHECKPOINT RESUME: ./csv/qwen3_checkpoints/qwen3_checkpoint-N/
 
 import os
 import torch
@@ -77,7 +77,7 @@ def send_telegram_message(message, token=None, chat_id=None):
         print(f"⚠️ Telegram send failed: {e}")
 
 # =========================================================
-# CONFIGURATION - QWEN ULTIMATE TRAINING
+# CONFIGURATION - QWEN3 ULTIMATE TRAINING
 # =========================================================
 
 # Batch configuration for incremental training
@@ -88,16 +88,16 @@ MAX_SYMBOLS_PER_BATCH = 40
 # ✅ SINGLE REPOSITORY CONFIGURATION
 HF_DATASET_REPO = "ahashanahmed/csv"
 
-# ✅ QWEN MODEL
-BASE_MODEL = "Qwen/Qwen2.5-0.5B"             # ← Qwen 0.5B
-LLM_MODEL_DIR = "./csv/llm_model_qwen"       # ← Qwen local dir
+# ✅ QWEN3 MODEL
+BASE_MODEL = "Qwen/Qwen3-0.6B"                    # ← Qwen3-0.6B (upgraded)
+LLM_MODEL_DIR = "./csv/llm_model_qwen3"           # ← Qwen3 local dir
 
-# ✅ QWEN CHECKPOINT HF PATHS (upload only)
-QWEN_HF_CHECKPOINT_PREFIX = "qwen_checkpoints/qwen_checkpoint-"   # HF upload path
-QWEN_FINAL_MODEL_PREFIX = "final_model_qwen"                       # HF final path
+# ✅ QWEN3 CHECKPOINT HF PATHS (upload only)
+QWEN3_HF_CHECKPOINT_PREFIX = "qwen3_checkpoints/qwen3_checkpoint-"   # HF upload path
+QWEN3_FINAL_MODEL_PREFIX = "final_model_qwen3"                         # HF final path
 
 # ✅ LOCAL CHECKPOINT DIR (resume from here)
-QWEN_LOCAL_CHECKPOINT_DIR = "./csv/qwen_checkpoints"               # ← resume from local
+QWEN3_LOCAL_CHECKPOINT_DIR = "./csv/qwen3_checkpoints"                 # ← resume from local
 
 # ✅ ALL LOCAL PATHS UPDATED TO ./csv/
 TRACKING_FILE = "./csv/trained_symbols.json"
@@ -133,16 +133,23 @@ VALIDATION_SPLIT_RATIO = 0.15
 # Training mode flags
 FORCE_RETRAIN = False
 
-# ✅ LoRA config for Qwen2.5
+# ✅ LoRA config for Qwen3-0.6B
 LORA_CONFIG = {
-    'r': 64,
-    'lora_alpha': 128,
+    'r': 32,                     # ← Qwen3-এ 32 যথেষ্ট (smaller model)
+    'lora_alpha': 64,
     'target_modules': [
         'q_proj', 'k_proj', 'v_proj', 'o_proj',
         'gate_proj', 'up_proj', 'down_proj'
     ],
     'lora_dropout': 0.05,
     'bias': 'none',
+}
+
+# ✅ Qwen3-specific load config
+QWEN3_LOAD_KWARGS = {
+    'trust_remote_code': True,   # ← Qwen3 এর জন্য REQUIRED
+    'torch_dtype': torch.float32,
+    'low_cpu_mem_usage': True,
 }
 
 # Label patterns for extraction
@@ -197,7 +204,7 @@ GRAD_ACCUM_CONFIG = {
 # MODE EXPLANATION DICTIONARY (FOR BOT OUTPUT)
 # =========================================================
 MODE_EXPLANATION = {
-    "first_train": "🎯 FIRST TIME TRAINING (Qwen - Base Model)",
+    "first_train": "🎯 FIRST TIME TRAINING (Qwen3-0.6B - Base Model)",
     "incremental": "⚙️ INCREMENTAL TRAINING (New symbols added - Regular batch training)",
     "weekly_finetune": "🔄 WEEKLY FINE-TUNE (Every 7 days - Retraining on existing symbols)",
     "consolidate": "📈 MONTHLY RE-TUNE (Every 30 days - Full consolidation training)",
@@ -213,11 +220,11 @@ MODE_SHORT_EXPLANATION = {
 }
 
 # =========================================================
-# HF UPLOADER (QWEN CHECKPOINT + FINAL MODEL)
+# HF UPLOADER (QWEN3 CHECKPOINT + FINAL MODEL)
 # =========================================================
 
 class HFUploader:
-    """Upload Qwen checkpoints and final model to HF Dataset Repository"""
+    """Upload Qwen3 checkpoints and final model to HF Dataset Repository"""
     
     def __init__(self, repo_id=HF_DATASET_REPO):
         self.repo_id = repo_id
@@ -237,48 +244,47 @@ class HFUploader:
                 self.api = None
     
     def upload_checkpoint(self, checkpoint_path, step_num):
-        """✅ Upload Qwen checkpoint to HF (qwen_checkpoints/qwen_checkpoint-N)"""
+        """✅ Upload Qwen3 checkpoint to HF (qwen3_checkpoints/qwen3_checkpoint-N)"""
         if self.api is None:
             print("   ⚠️ HF API not available, skipping checkpoint upload")
             return False
         
         try:
-            # ✅ Qwen-specific path (matches qwen_download.py)
-            repo_path = f"{QWEN_HF_CHECKPOINT_PREFIX}{step_num}"
+            repo_path = f"{QWEN3_HF_CHECKPOINT_PREFIX}{step_num}"
             
             self.api.upload_folder(
                 folder_path=checkpoint_path,
                 path_in_repo=repo_path,
                 repo_id=self.repo_id,
                 repo_type="dataset",
-                commit_message=f"🤖 Qwen checkpoint {step_num} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                commit_message=f"🤖 Qwen3 checkpoint {step_num} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             )
-            print(f"   📤 Qwen checkpoint {step_num} → {self.repo_id}/{repo_path}")
+            print(f"   📤 Qwen3 checkpoint {step_num} → {self.repo_id}/{repo_path}")
             return True
         except Exception as e:
-            print(f"   ⚠️ Qwen checkpoint upload failed: {e}")
+            print(f"   ⚠️ Qwen3 checkpoint upload failed: {e}")
             return False
     
     def upload_final_model(self, model_path, mode):
-        """✅ Upload Qwen final model (final_model_qwen/{mode})"""
+        """✅ Upload Qwen3 final model (final_model_qwen3/{mode})"""
         if self.api is None:
             print("   ⚠️ HF API not available, skipping final model upload")
             return False
         
         try:
-            repo_path = f"{QWEN_FINAL_MODEL_PREFIX}/{mode}"
+            repo_path = f"{QWEN3_FINAL_MODEL_PREFIX}/{mode}"
             
             self.api.upload_folder(
                 folder_path=model_path,
                 path_in_repo=repo_path,
                 repo_id=self.repo_id,
                 repo_type="dataset",
-                commit_message=f"🤖 Qwen Final Model ({mode}) - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                commit_message=f"🤖 Qwen3 Final Model ({mode}) - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             )
-            print(f"   📤 Qwen final model → {self.repo_id}/{repo_path}/")
+            print(f"   📤 Qwen3 final model → {self.repo_id}/{repo_path}/")
             return True
         except Exception as e:
-            print(f"   ⚠️ Qwen final model upload failed: {e}")
+            print(f"   ⚠️ Qwen3 final model upload failed: {e}")
             return False
     
     def upload_tracking_files(self):
@@ -463,7 +469,7 @@ class BatchManager:
 # =========================================================
 
 class XGBoostPPOIntegrator:
-    """Integrate XGBoost and PPO models with Qwen training"""
+    """Integrate XGBoost and PPO models with Qwen3 training"""
 
     def __init__(self):
         self.xgb_models = {}
@@ -719,14 +725,14 @@ Timeframe: Short-term
 
 
 # =========================================================
-# AUTO QWEN TRAINER CLASS
+# AUTO QWEN3 TRAINER CLASS
 # =========================================================
 
-class AutoQwenTrainer:
+class AutoQwen3Trainer:
     def __init__(self):
         os.makedirs("./csv", exist_ok=True)
         os.makedirs(LLM_MODEL_DIR, exist_ok=True)
-        os.makedirs(QWEN_LOCAL_CHECKPOINT_DIR, exist_ok=True)
+        os.makedirs(QWEN3_LOCAL_CHECKPOINT_DIR, exist_ok=True)
         os.makedirs(AGENTIC_LOOP_LOG_DIR, exist_ok=True)
         
         self.trained_symbols = self.load_trained_symbols()
@@ -930,10 +936,10 @@ class AutoQwenTrainer:
         return train_texts, example_weights
 
     def load_model_with_lora(self):
-        """✅ Load Qwen model + apply LoRA"""
-        print("\n🏗️ Loading Qwen model...")
+        """✅ Load Qwen3 model + apply LoRA"""
+        print("\n🏗️ Loading Qwen3 model...")
         
-        # ✅ Check local Qwen exists
+        # ✅ Check local Qwen3 exists
         local_valid = (
             os.path.exists(LLM_MODEL_DIR) and 
             os.path.exists(os.path.join(LLM_MODEL_DIR, "config.json"))
@@ -941,28 +947,36 @@ class AutoQwenTrainer:
         
         if local_valid:
             try:
-                print(f"   Loading local Qwen from {LLM_MODEL_DIR}...")
+                print(f"   Loading local Qwen3 from {LLM_MODEL_DIR}...")
                 self.model = AutoModelForCausalLM.from_pretrained(
                     LLM_MODEL_DIR,
+                    trust_remote_code=True,           # ← Qwen3 REQUIRED
                     torch_dtype=torch.float32,
                     low_cpu_mem_usage=True,
                 )
-                self.tokenizer = AutoTokenizer.from_pretrained(LLM_MODEL_DIR)
-                print("   ✅ Qwen loaded from local")
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    LLM_MODEL_DIR,
+                    trust_remote_code=True,           # ← Qwen3 REQUIRED
+                )
+                print("   ✅ Qwen3 loaded from local")
             except Exception as e:
                 print(f"   ⚠️ Local load failed: {e}")
                 self.model = None
         
-        # Fallback: download base Qwen
+        # Fallback: download base Qwen3
         if self.model is None:
-            print(f"   📥 Downloading base Qwen: {BASE_MODEL}")
+            print(f"   📥 Downloading base Qwen3: {BASE_MODEL}")
             self.model = AutoModelForCausalLM.from_pretrained(
                 BASE_MODEL, 
+                trust_remote_code=True,
                 torch_dtype=torch.float32, 
                 low_cpu_mem_usage=True
             )
-            self.tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
-            print("   ✅ Base Qwen loaded")
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                BASE_MODEL,
+                trust_remote_code=True,
+            )
+            print("   ✅ Base Qwen3 loaded")
 
         # Apply LoRA
         if LORA_AVAILABLE:
@@ -973,8 +987,8 @@ class AutoQwenTrainer:
         self._post_load_setup()
 
     def _post_load_setup(self):
-        """✅ Qwen-friendly setup"""
-        # Qwen has pad_token, but check anyway
+        """✅ Qwen3-friendly setup"""
+        # Qwen3 has pad_token, but check anyway
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         if self.model.config.pad_token_id is None:
@@ -996,7 +1010,7 @@ class AutoQwenTrainer:
         try:
             with open(status_file, 'w') as f:
                 json.dump({
-                    'model': 'qwen',
+                    'model': 'qwen3',
                     'mode': mode,
                     'mode_description': MODE_EXPLANATION.get(mode, mode.upper()),
                     'mode_short': MODE_SHORT_EXPLANATION.get(mode, mode.upper()),
@@ -1016,7 +1030,7 @@ class AutoQwenTrainer:
         mode_short = MODE_SHORT_EXPLANATION.get(mode, mode.upper())
         
         start_msg = f"""
-🚀 <b>Qwen Training Started</b>
+🚀 <b>Qwen3 Training Started</b>
 📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
 🎯 Mode: {mode.upper()} - {mode_explanation}
 📚 Symbols: {len(symbols_batch) if symbols_batch else 'ALL'}
@@ -1025,7 +1039,7 @@ class AutoQwenTrainer:
         send_telegram_message(start_msg, self.telegram_token, self.telegram_chat_id)
 
         print(f"\n{'='*60}")
-        print(f"🎯 QWEN TRAINING MODE: {mode.upper()}")
+        print(f"🎯 QWEN3 TRAINING MODE: {mode.upper()}")
         print(f"🔍 MODE EXPLANATION: {mode_explanation}")
         if symbols_batch:
             print(f"📚 Symbols in this batch: {len(symbols_batch)}")
@@ -1061,7 +1075,7 @@ class AutoQwenTrainer:
         batch_size = BATCH_SIZE_CONFIG.get(mode, 1)
         grad_accum = GRAD_ACCUM_CONFIG.get(mode, 16)
 
-        print(f"\n⚙️ Qwen Training Config:")
+        print(f"\n⚙️ Qwen3 Training Config:")
         print(f"   Model: {BASE_MODEL}")
         print(f"   Epochs: {num_epochs}")
         print(f"   Learning Rate: {learning_rate}")
@@ -1076,16 +1090,16 @@ class AutoQwenTrainer:
     
         # =========================================================
         # ✅ LOCAL CHECKPOINT RESUME (NO HF DOWNLOAD)
-        #    Looks in: ./csv/qwen_checkpoints/qwen_checkpoint-N/
+        #    Looks in: ./csv/qwen3_checkpoints/qwen3_checkpoint-N/
         # =========================================================
         last_checkpoint = None
         
-        print(f"   🔍 Scanning local checkpoints in: {QWEN_LOCAL_CHECKPOINT_DIR}")
+        print(f"   🔍 Scanning local checkpoints in: {QWEN3_LOCAL_CHECKPOINT_DIR}")
         
         # Check both naming patterns for compatibility
         local_patterns = [
-            os.path.join(QWEN_LOCAL_CHECKPOINT_DIR, "qwen_checkpoint-*"),
-            os.path.join(QWEN_LOCAL_CHECKPOINT_DIR, "checkpoint-*"),
+            os.path.join(QWEN3_LOCAL_CHECKPOINT_DIR, "qwen3_checkpoint-*"),
+            os.path.join(QWEN3_LOCAL_CHECKPOINT_DIR, "checkpoint-*"),
         ]
         
         all_local_ckpts = []
@@ -1107,7 +1121,7 @@ class AutoQwenTrainer:
 
         if last_checkpoint:
             send_telegram_message(
-                f"🔄 <b>Resuming Qwen from LOCAL</b>\n📂 {last_checkpoint}\n🎯 Mode: {mode.upper()}",
+                f"🔄 <b>Resuming Qwen3 from LOCAL</b>\n📂 {last_checkpoint}\n🎯 Mode: {mode.upper()}",
                 self.telegram_token, self.telegram_chat_id
             )
             
@@ -1160,16 +1174,16 @@ class AutoQwenTrainer:
                 if state.is_world_process_zero:
                     checkpoint_dir = os.path.join(args.output_dir, f"checkpoint-{state.global_step}")
                     if os.path.exists(checkpoint_dir):
-                        print(f"\n   📤 Uploading Qwen checkpoint {state.global_step} to HF...")
+                        print(f"\n   📤 Uploading Qwen3 checkpoint {state.global_step} to HF...")
                         self.hf_uploader.upload_checkpoint(checkpoint_dir, state.global_step)
                         self.hf_uploader.upload_tracking_files()
                         
-                        # ✅ Also copy to local qwen_checkpoints/ dir for resume
+                        # ✅ Also copy to local qwen3_checkpoints/ dir for resume
                         try:
                             import shutil
                             local_ckpt_target = os.path.join(
-                                QWEN_LOCAL_CHECKPOINT_DIR,
-                                f"qwen_checkpoint-{state.global_step}"
+                                QWEN3_LOCAL_CHECKPOINT_DIR,
+                                f"qwen3_checkpoint-{state.global_step}"
                             )
                             if not os.path.exists(local_ckpt_target):
                                 shutil.copytree(checkpoint_dir, local_ckpt_target)
@@ -1185,15 +1199,15 @@ class AutoQwenTrainer:
     
         trainer.add_callback(CustomHFCallback(self.hf_uploader))
 
-        print("\n🏋️ Starting Qwen Training...")
-        print(f"   📂 Local checkpoints: {QWEN_LOCAL_CHECKPOINT_DIR}")
-        print(f"   📤 HF checkpoints → {HF_DATASET_REPO}/{QWEN_HF_CHECKPOINT_PREFIX}*")
+        print("\n🏋️ Starting Qwen3 Training...")
+        print(f"   📂 Local checkpoints: {QWEN3_LOCAL_CHECKPOINT_DIR}")
+        print(f"   📤 HF checkpoints → {HF_DATASET_REPO}/{QWEN3_HF_CHECKPOINT_PREFIX}*")
         
         try:
             trainer.train(resume_from_checkpoint=last_checkpoint)
         except Exception as e:
             error_msg = f"""
-⚠️ <b>Qwen Training Error</b>
+⚠️ <b>Qwen3 Training Error</b>
 📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
 🎯 Mode: {mode.upper()}
 ❌ Error: {str(e)[:200]}
@@ -1201,24 +1215,24 @@ class AutoQwenTrainer:
             send_telegram_message(error_msg, self.telegram_token, self.telegram_chat_id)
             raise
         
-        print("\n✅ Qwen training completed!")
+        print("\n✅ Qwen3 training completed!")
 
         if symbols_batch and hasattr(self, 'agentic_loop') and self.agentic_loop is not None:
             batch_num = self.batch_manager.current_batch_index if self.batch_manager.current_batch_index > 0 else 1
             self._update_agentic_loop_after_batch(batch_num, symbols_batch, eval_loss=0.5)
 
-        # ✅ Merge LoRA + save full Qwen model
+        # ✅ Merge LoRA + save full Qwen3 model
         try:
             if LORA_AVAILABLE and hasattr(self.model, 'merge_and_unload'):
-                print("🔄 Merging LoRA into Qwen base...")
+                print("🔄 Merging LoRA into Qwen3 base...")
                 merged_model = self.model.merge_and_unload()
                 merged_model.save_pretrained(LLM_MODEL_DIR)
                 self.tokenizer.save_pretrained(LLM_MODEL_DIR)
-                print(f"✅ Merged Qwen saved to {LLM_MODEL_DIR}")
+                print(f"✅ Merged Qwen3 saved to {LLM_MODEL_DIR}")
             else:
                 self.model.save_pretrained(LLM_MODEL_DIR)
                 self.tokenizer.save_pretrained(LLM_MODEL_DIR)
-                print(f"💾 Qwen saved to {LLM_MODEL_DIR}")
+                print(f"💾 Qwen3 saved to {LLM_MODEL_DIR}")
         except Exception as e:
             print(f"⚠️ Merge failed, saving LoRA only: {e}")
             self.model.save_pretrained(LLM_MODEL_DIR)
@@ -1227,12 +1241,12 @@ class AutoQwenTrainer:
         self.upload_final_model_to_hf(mode)
         
         complete_msg = f"""
-✅ <b>Qwen Training Completed</b>
+✅ <b>Qwen3 Training Completed</b>
 📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
 🎯 {mode_explanation}
 📚 Symbols trained: {len(symbols_batch) if symbols_batch else 'ALL'}
 💾 Model saved: {LLM_MODEL_DIR}
-📤 Uploaded: {HF_DATASET_REPO}/{QWEN_FINAL_MODEL_PREFIX}/{mode}/
+📤 Uploaded: {HF_DATASET_REPO}/{QWEN3_FINAL_MODEL_PREFIX}/{mode}/
 """
         send_telegram_message(complete_msg, self.telegram_token, self.telegram_chat_id)
         
@@ -1256,13 +1270,13 @@ class AutoQwenTrainer:
             print("ℹ️ No HF_TOKEN, skipping final model upload")
             return
 
-        print(f"\n📤 Uploading Qwen final model → {HF_DATASET_REPO}/{QWEN_FINAL_MODEL_PREFIX}/{mode}/")
+        print(f"\n📤 Uploading Qwen3 final model → {HF_DATASET_REPO}/{QWEN3_FINAL_MODEL_PREFIX}/{mode}/")
         try:
             self.hf_uploader.upload_final_model(LLM_MODEL_DIR, mode)
             self.hf_uploader.upload_tracking_files()
-            print(f"✅ Qwen final model: https://huggingface.co/datasets/{HF_DATASET_REPO}/tree/main/{QWEN_FINAL_MODEL_PREFIX}/{mode}")
+            print(f"✅ Qwen3 final model: https://huggingface.co/datasets/{HF_DATASET_REPO}/tree/main/{QWEN3_FINAL_MODEL_PREFIX}/{mode}")
         except Exception as e:
-            print(f"⚠️ Qwen final model upload failed: {e}")
+            print(f"⚠️ Qwen3 final model upload failed: {e}")
 
     def generate_training_data_for_symbols(self, symbols):
         print(f"\n📝 Generating training data for {len(symbols)} symbols...")
@@ -1280,21 +1294,21 @@ class AutoQwenTrainer:
 
     def run(self):
         print("="*60)
-        print("🚀 AUTO QWEN TRAINER")
+        print("🚀 AUTO QWEN3 TRAINER")
         print("="*60)
         print(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"🧠 Model: {BASE_MODEL}")
         print(f"📁 Local dir: {LLM_MODEL_DIR}")
-        print(f"📁 Local checkpoints: {QWEN_LOCAL_CHECKPOINT_DIR}")
+        print(f"📁 Local checkpoints: {QWEN3_LOCAL_CHECKPOINT_DIR}")
         print(f"📚 Batch size: {BATCH_SIZE}")
         print(f"🔧 LoRA: r={LORA_CONFIG['r']}, alpha={LORA_CONFIG['lora_alpha']}")
         print(f"📊 XGBoost Models: {len(self.xgb_ppo.xgb_models)}")
         print(f"📁 PPO Models: {len(self.xgb_ppo.ppo_models)}")
-        print(f"📤 HF Checkpoints: {QWEN_HF_CHECKPOINT_PREFIX}*")
-        print(f"📤 HF Final: {QWEN_FINAL_MODEL_PREFIX}/*")
+        print(f"📤 HF Checkpoints: {QWEN3_HF_CHECKPOINT_PREFIX}*")
+        print(f"📤 HF Final: {QWEN3_FINAL_MODEL_PREFIX}/*")
         print("="*60)
         print("\n📌 Mode Legend:")
-        print("   • first_train     → 🎯 First Time (Qwen base)")
+        print("   • first_train     → 🎯 First Time (Qwen3 base)")
         print("   • incremental     → ⚙️ New Symbols Added")
         print("   • weekly_finetune → 🔄 WEEKLY FINE-TUNE")
         print("   • consolidate     → 📈 MONTHLY RE-TUNE")
@@ -1398,8 +1412,8 @@ Confidence: {min(95, max(65, int(ex.get('confidence', 0.7) * 100 + 10)))}
         print(f"   Last consolidation: {self.batch_manager.batch_tracking.get('last_consolidate', 'Never')}")
         print(f"   XGBoost Models: {len(self.xgb_ppo.xgb_models)}")
         print(f"   PPO Models: {len(self.xgb_ppo.ppo_models)}")
-        print(f"   Local Qwen Dir: {LLM_MODEL_DIR}")
-        print(f"   Local Checkpoints: {QWEN_LOCAL_CHECKPOINT_DIR}")
+        print(f"   Local Qwen3 Dir: {LLM_MODEL_DIR}")
+        print(f"   Local Checkpoints: {QWEN3_LOCAL_CHECKPOINT_DIR}")
         print(f"   HF Dataset Repo: {HF_DATASET_REPO}")
         print("="*60)
 
@@ -1407,5 +1421,5 @@ Confidence: {min(95, max(65, int(ex.get('confidence', 0.7) * 100 + 10)))}
 
 
 if __name__ == "__main__":
-    trainer = AutoQwenTrainer()
+    trainer = AutoQwen3Trainer()
     trainer.run()
