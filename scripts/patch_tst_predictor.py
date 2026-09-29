@@ -8,7 +8,8 @@
 # ✅ HF Backup Upload (No Download)
 # ✅ Mistake Learning & Auto-Correction
 # ✅ Accuracy Check before HF Upload
-# ✅ Sector + S/R + RSI Divergence Features
+# ✅ FIXED: SECTOR FEATURES — full rewrite (sector column key + date-wise merge_asof)
+# ✅ FIXED: mcap_rank_sector via symbol→sector map
 # ✅ Auto-Pilot Training (All Symbols)
 # ✅ Weekly Fine-tune + Monthly Retrain
 # ✅ MAX QUALITY: Market Cap + EMA + Walk-Forward + OneCycleLR + Adaptive Params
@@ -21,6 +22,7 @@ from pathlib import Path
 import pickle
 import json
 import os
+import re
 import time
 import warnings
 from datetime import datetime, timedelta
@@ -43,6 +45,23 @@ try:
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
+
+
+# =========================================================
+# SECTOR NAME NORMALIZATION HELPER
+# =========================================================
+
+def normalize_sector_name(name):
+    """Sector নাম normalize করুন - space, case, special char handle"""
+    if name is None or (isinstance(name, float) and pd.isna(name)):
+        return ''
+    s = str(name).strip().lower()
+    s = s.replace('&', 'and')
+    s = s.replace('/', ' and ')
+    s = s.replace('_', ' ')
+    s = s.replace('-', ' ')
+    s = re.sub(r'\s+', ' ', s)
+    return s.strip()
 
 
 # =========================================================
@@ -72,7 +91,6 @@ class TransformerEncoder(nn.Module):
     
     def __init__(self, d_model=128, n_heads=8, n_layers=3, d_ff=256, dropout=0.1):
         super().__init__()
-        
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=n_heads,
@@ -81,7 +99,6 @@ class TransformerEncoder(nn.Module):
             batch_first=True,
             activation='gelu'
         )
-        
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
         self.dropout = nn.Dropout(dropout)
     
@@ -90,21 +107,20 @@ class TransformerEncoder(nn.Module):
 
 
 # =========================================================
-# ✅ ULTIMATE PRICE PREDICTOR (3-Layer LSTM + Residual)
+# ULTIMATE PRICE PREDICTOR (3-Layer LSTM + Attention + Residual)
 # =========================================================
 
 class SimpleAttentionPredictor(nn.Module):
-    """Ultimate Attention-based Price Predictor - 3-Layer LSTM + Residual Connections"""
+    """Ultimate Attention-based Price Predictor - 3-Layer LSTM + Residual"""
     
     def __init__(self, input_dim=10, seq_len=60, hidden_dim=128, pred_len=5):
         super().__init__()
-        
         self.input_dim = input_dim
         self.seq_len = seq_len
         self.hidden_dim = hidden_dim
         self.pred_len = pred_len
         
-        # ✅ 3-Layer LSTM (was 2)
+        # 3-Layer Bi-LSTM
         self.lstm = nn.LSTM(
             input_size=input_dim,
             hidden_size=hidden_dim,
@@ -114,7 +130,7 @@ class SimpleAttentionPredictor(nn.Module):
             bidirectional=True
         )
         
-        # ✅ Multi-head attention (8 heads)
+        # 8-Head Multi-head attention
         self.attention = nn.MultiheadAttention(
             embed_dim=hidden_dim * 2,
             num_heads=8,
@@ -122,7 +138,7 @@ class SimpleAttentionPredictor(nn.Module):
             batch_first=True
         )
         
-        # ✅ 3-Layer MLP head (was 2)
+        # 3-Layer MLP head
         self.fc1 = nn.Linear(hidden_dim * 2, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
         self.fc3 = nn.Linear(hidden_dim // 2, 3)
@@ -133,19 +149,13 @@ class SimpleAttentionPredictor(nn.Module):
         self.layer_norm3 = nn.LayerNorm(hidden_dim // 2)
     
     def forward(self, x):
-        # 3-Layer LSTM
         lstm_out, _ = self.lstm(x)
-        
-        # Self-attention with residual
         attn_out, _ = self.attention(lstm_out, lstm_out, lstm_out)
         attn_out = self.layer_norm1(lstm_out + attn_out)
-        
-        # Global average pooling
         pooled = attn_out.mean(dim=1)
         
-        # 3-Layer MLP with GELU + Residual + LayerNorm
         out = self.fc1(pooled)
-        out = pooled[:, :self.hidden_dim] * 0.3 + out * 0.7  # Residual
+        out = pooled[:, :self.hidden_dim] * 0.3 + out * 0.7
         out = self.layer_norm2(out)
         out = F.gelu(out)
         out = self.dropout(out)
@@ -156,7 +166,6 @@ class SimpleAttentionPredictor(nn.Module):
         out2 = self.dropout(out2)
         
         out = self.fc3(out2)
-        
         probs = torch.softmax(out[:, :2], dim=-1)
         magnitude = torch.tanh(out[:, 2:3])
         return torch.cat([probs, magnitude], dim=-1)
@@ -180,6 +189,7 @@ class PatchTSTPredictor:
         use_sr_features=True,
         use_rsi_div_features=True,
         use_market_cap_features=True,
+        full_df=None,   # ✅ NEW: পুরো mongodb.csv (sector map এর জন্য)
     ):
         self.seq_len = seq_len
         self.pred_len = pred_len
@@ -192,9 +202,18 @@ class PatchTSTPredictor:
         self.use_rsi_div_features = use_rsi_div_features
         self.use_market_cap_features = use_market_cap_features
         
-        self.sector_data = {}
+        # Sector state
+        self.symbol_to_sector = {}     # {symbol: sector_name}
+        self.sector_daily = {}         # {sector_name: DataFrame}
+        self.sector_weekly = {}        # {sector_name: DataFrame}
+        
+        # S/R + RSI divergence
         self.sr_data = None
         self.rsi_div_data = {}
+        
+        # Build sector map from full_df (if provided)
+        if full_df is not None:
+            self.symbol_to_sector = self._build_symbol_to_sector(full_df)
         
         self._load_external_features()
         
@@ -210,6 +229,42 @@ class PatchTSTPredictor:
         
         print(f"✅ PatchTST Predictor initialized (device: {self.device}, hidden_dim={hidden_dim})")
     
+    # =========================================================
+    # SECTOR MAP BUILDER (mongodb.csv থেকে)
+    # =========================================================
+    
+    def _build_symbol_to_sector(self, full_df):
+        """mongodb.csv-এর latest non-null row থেকে symbol → sector map"""
+        if 'sector' not in full_df.columns or 'symbol' not in full_df.columns:
+            print("   ⚠️ 'sector' or 'symbol' column missing in full_df")
+            return {}
+        
+        try:
+            df = full_df.copy()
+            if 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                df = df.sort_values('date')
+            
+            mapping = (
+                df.dropna(subset=['sector'])
+                  .groupby('symbol')['sector']
+                  .last()
+                  .to_dict()
+            )
+            mapping = {k: str(v).strip() for k, v in mapping.items()}
+            
+            unique_sectors = sorted(set(mapping.values()))
+            print(f"   ✅ Symbol→Sector map: {len(mapping)} symbols, "
+                  f"{len(unique_sectors)} unique sectors")
+            return mapping
+        except Exception as e:
+            print(f"   ⚠️ symbol→sector build failed: {e}")
+            return {}
+    
+    # =========================================================
+    # EXTERNAL FEATURES LOADERS
+    # =========================================================
+    
     def _load_external_features(self):
         if self.use_sector_features:
             self._load_sector_features()
@@ -219,30 +274,93 @@ class PatchTSTPredictor:
             self._load_rsi_divergence()
     
     def _load_sector_features(self):
+        """Load sector daily/weekly CSVs keyed by sector name"""
         sector_dir = Path('./csv/sector')
         if not sector_dir.exists():
+            print(f"   ⚠️ Sector folder not found: {sector_dir}")
             self.use_sector_features = False
             return
+        
+        self.sector_daily = {}
+        self.sector_weekly = {}
+        
         try:
-            weekly_files = list(sector_dir.glob('weekly/*.csv'))
-            daily_files = list(sector_dir.glob('daily/*.csv'))
-            for f in weekly_files + daily_files:
-                try:
-                    df = pd.read_csv(f)
-                    has_rsi = 'rsi' in df.columns
-                    for _, row in df.iterrows():
-                        symbol = row.get('symbol', '')
-                        if symbol:
-                            if symbol not in self.sector_data:
-                                self.sector_data[symbol] = {}
-                            self.sector_data[symbol]['sector_returns'] = float(row.get('returns', 0))
-                            self.sector_data[symbol]['sector_volume'] = float(row.get('volume_ratio', 1))
-                            if has_rsi:
-                                self.sector_data[symbol]['sector_rsi'] = float(row.get('rsi', 50))
-                except:
-                    pass
-            print(f"   ✅ Loaded sector features for {len(self.sector_data)} symbols")
-        except:
+            # ---------- Daily ----------
+            daily_dir = sector_dir / 'daily'
+            if daily_dir.exists():
+                for f in daily_dir.glob('*.csv'):
+                    try:
+                        df = pd.read_csv(f)
+                        if 'sector' not in df.columns or 'date' not in df.columns:
+                            continue
+                        
+                        sector_name = str(df['sector'].iloc[0]).strip()
+                        if sector_name == 'Unknown' or not sector_name:
+                            continue
+                        
+                        df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                        df = df.dropna(subset=['date']).sort_values('date').reset_index(drop=True)
+                        
+                        if 'rsi' in df.columns:
+                            df['rsi'] = df['rsi'].ffill().bfill().fillna(50)
+                        if 'change' in df.columns:
+                            df['change'] = df['change'].fillna(0)
+                        if 'volume' in df.columns:
+                            df['volume'] = df['volume'].fillna(0)
+                        
+                        self.sector_daily[sector_name] = df
+                    except Exception:
+                        continue
+            
+            # ---------- Weekly ----------
+            weekly_dir = sector_dir / 'weekly'
+            if weekly_dir.exists():
+                for f in weekly_dir.glob('*.csv'):
+                    try:
+                        df = pd.read_csv(f)
+                        if 'sector' not in df.columns:
+                            continue
+                        
+                        sector_name = str(df['sector'].iloc[0]).strip()
+                        if sector_name == 'Unknown' or not sector_name:
+                            continue
+                        
+                        date_col = None
+                        for c in ['week_end_date', 'week_start']:
+                            if c in df.columns:
+                                date_col = c
+                                break
+                        if date_col is None:
+                            continue
+                        
+                        df['date'] = pd.to_datetime(df[date_col], errors='coerce')
+                        df = df.dropna(subset=['date']).sort_values('date').reset_index(drop=True)
+                        
+                        if 'rsi' in df.columns:
+                            df['rsi'] = df['rsi'].ffill().bfill().fillna(50)
+                        if 'change' in df.columns:
+                            df['change'] = df['change'].fillna(0)
+                        
+                        self.sector_weekly[sector_name] = df
+                    except Exception:
+                        continue
+            
+            print(f"   ✅ Sector loaded: {len(self.sector_daily)} daily, "
+                  f"{len(self.sector_weekly)} weekly")
+            
+            # ---- Warn on mismatch ----
+            if self.symbol_to_sector:
+                mongo_sectors = set(self.symbol_to_sector.values())
+                csv_sectors = set(self.sector_daily.keys()) | set(self.sector_weekly.keys())
+                missing_in_csv = mongo_sectors - csv_sectors
+                if missing_in_csv:
+                    print(f"   ⚠️ Sectors in mongodb but not in CSV: {sorted(missing_in_csv)}")
+            
+            if not self.sector_daily and not self.sector_weekly:
+                self.use_sector_features = False
+                
+        except Exception as e:
+            print(f"   ⚠️ Sector load failed: {e}")
             self.use_sector_features = False
     
     def _load_support_resistance(self):
@@ -255,7 +373,8 @@ class PatchTSTPredictor:
             if 'current_date' in self.sr_data.columns:
                 self.sr_data['current_date'] = pd.to_datetime(self.sr_data['current_date'])
             print(f"   ✅ Loaded S/R data: {self.sr_data['symbol'].nunique()} symbols")
-        except:
+        except Exception as e:
+            print(f"   ⚠️ S/R load failed: {e}")
             self.use_sr_features = False
     
     def _load_rsi_divergence(self):
@@ -270,13 +389,50 @@ class PatchTSTPredictor:
             for symbol in div_df['symbol'].unique():
                 self.rsi_div_data[symbol] = div_df[div_df['symbol'] == symbol]
             print(f"   ✅ Loaded RSI divergence for {len(self.rsi_div_data)} symbols")
-        except:
+        except Exception as e:
+            print(f"   ⚠️ RSI divergence load failed: {e}")
             self.use_rsi_div_features = False
     
+    # =========================================================
+    # SECTOR FEATURE LOOKUP (date-aware, no look-ahead)
+    # =========================================================
+    
     def _get_sector_features_for_row(self, symbol, current_date):
-        if not self.use_sector_features or symbol not in self.sector_data:
+        """Date-wise sector features — NO look-ahead bias"""
+        if not self.use_sector_features or current_date is None:
             return {}
-        return self.sector_data.get(symbol, {})
+        
+        sector = self.symbol_to_sector.get(symbol)
+        if not sector:
+            return {}
+        
+        try:
+            current_dt = pd.to_datetime(current_date)
+        except Exception:
+            return {}
+        
+        result = {}
+        
+        # Daily sector features
+        if sector in self.sector_daily:
+            sdf = self.sector_daily[sector]
+            past = sdf[sdf['date'] <= current_dt]
+            if not past.empty:
+                row = past.iloc[-1]
+                result['sector_returns'] = float(row.get('change', 0) or 0) / 100.0
+                result['sector_rsi'] = float(row.get('rsi', 50) or 50)
+                result['sector_volume'] = float(row.get('volume', 0) or 0)
+        
+        # Weekly sector features
+        if sector in self.sector_weekly:
+            swdf = self.sector_weekly[sector]
+            past_w = swdf[swdf['date'] <= current_dt]
+            if not past_w.empty:
+                wrow = past_w.iloc[-1]
+                result['sector_weekly_change'] = float(wrow.get('change', 0) or 0) / 100.0
+                result['sector_weekly_rsi'] = float(wrow.get('rsi', 50) or 50)
+        
+        return result
     
     def _get_sr_features_for_row(self, symbol, current_date, current_close):
         if not self.use_sr_features or self.sr_data is None:
@@ -300,7 +456,7 @@ class PatchTSTPredictor:
                 'sr_strength': strength_map.get(strength_str, 0.5),
                 'sr_type': 1.0 if level_type == 'support' else -1.0 if level_type == 'resistance' else 0.0
             }
-        except:
+        except Exception:
             return {}
     
     def _get_rsi_div_features_for_row(self, symbol, current_date):
@@ -322,13 +478,18 @@ class PatchTSTPredictor:
                 'rsi_div_strength': strength_map.get(strength, 0.0),
                 'rsi_value': float(row.get('rsi', 50))
             }
-        except:
+        except Exception:
             return {}
+    
+    # =========================================================
+    # FEATURE ENGINEERING
+    # =========================================================
     
     def _engineer_features(self, df):
         """Create features from OHLCV data + External features + Market Cap + EMA"""
         df = df.copy()
         
+        # ---------- Basic OHLCV features ----------
         df['returns'] = df['close'].pct_change()
         df['log_returns'] = np.log(df['close'] / df['close'].shift(1))
         df['volume_ratio'] = df['volume'] / df['volume'].rolling(20).mean()
@@ -351,50 +512,125 @@ class PatchTSTPredictor:
             if col in df.columns:
                 df[f'{col}_norm'] = df[col] / (df[col].abs().rolling(50).mean() + 1e-8)
         
+        # ---------- Market cap features ----------
         if self.use_market_cap_features and 'freeFloatMarketCap' in df.columns:
             df['log_market_cap'] = np.log1p(df['freeFloatMarketCap'])
             df['mcap_volume_ratio'] = np.log1p(df['volume'] / (df['freeFloatMarketCap'] + 1e-8))
-            df['mcap_rank_sector'] = df.groupby('sector')['freeFloatMarketCap'].rank(pct=True) if 'sector' in df.columns else 0.5
+            
+            # ✅ mcap_rank_sector via symbol→sector map
+            if self.symbol_to_sector and 'symbol' in df.columns:
+                df['sector_for_rank'] = df['symbol'].map(self.symbol_to_sector).fillna('Unknown')
+                df['mcap_rank_sector'] = (
+                    df.groupby('sector_for_rank')['freeFloatMarketCap'].rank(pct=True)
+                )
+                df = df.drop(columns=['sector_for_rank'])
+            else:
+                df['mcap_rank_sector'] = 0.5
         
+        # ---------- EMA features ----------
         if 'ema_200' in df.columns:
             df['dist_from_ema'] = (df['close'] - df['ema_200']) / df['ema_200'] * 100
             df['above_ema'] = (df['close'] > df['ema_200']).astype(int)
         else:
-            df['ema_200_calc'] = df.groupby('symbol')['close'].transform(lambda x: x.ewm(span=200, adjust=False).mean())
+            if 'symbol' in df.columns:
+                df['ema_200_calc'] = df.groupby('symbol')['close'].transform(
+                    lambda x: x.ewm(span=200, adjust=False).mean()
+                )
+            else:
+                df['ema_200_calc'] = df['close'].ewm(span=200, adjust=False).mean()
             df['dist_from_ema'] = (df['close'] - df['ema_200_calc']) / df['ema_200_calc'] * 100
             df['above_ema'] = (df['close'] > df['ema_200_calc']).astype(int)
         
-        if self.use_sector_features:
-            df['sector_momentum'] = 0.0
-            df['sector_volume_ratio'] = 1.0
-            df['sector_rsi'] = 50.0
-            symbol = df['symbol'].iloc[0] if 'symbol' in df.columns else ''
-            sector_feat = self._get_sector_features_for_row(symbol, None)
-            if sector_feat:
-                df['sector_momentum'] = sector_feat.get('sector_returns', 0)
-                df['sector_volume_ratio'] = sector_feat.get('sector_volume', 1)
-                df['sector_rsi'] = sector_feat.get('sector_rsi', 50)
+        # =========================================================
+        # ✅ SECTOR FEATURES (vectorized merge_asof — NO look-ahead)
+        # =========================================================
+        if (self.use_sector_features 
+            and 'date' in df.columns 
+            and 'symbol' in df.columns 
+            and self.symbol_to_sector):
+            
+            df['date'] = pd.to_datetime(df['date'], errors='coerce')
+            symbol = df['symbol'].iloc[0]
+            sector = self.symbol_to_sector.get(symbol)
+            
+            has_sector_data = False
+            
+            if sector:
+                # ---- Daily merge ----
+                if sector in self.sector_daily:
+                    sec = self.sector_daily[sector][['date', 'change', 'rsi', 'volume']].copy()
+                    sec.columns = ['date', 'sec_change', 'sec_rsi', 'sec_volume']
+                    sec = sec.sort_values('date').drop_duplicates('date', keep='last')
+                    
+                    df = df.sort_values('date')
+                    df = pd.merge_asof(df, sec, on='date', direction='backward')
+                    
+                    df['sector_momentum'] = df['sec_change'].fillna(0) / 100.0
+                    df['sector_rsi'] = df['sec_rsi'].fillna(50)
+                    df['sector_volume_ratio'] = (
+                        df['sec_volume'].fillna(df['sec_volume'].median() if df['sec_volume'].notna().any() else 1) / 
+                        (df['sec_volume'].rolling(20, min_periods=1).mean() + 1e-8)
+                    )
+                    df = df.drop(columns=['sec_change', 'sec_rsi', 'sec_volume'])
+                    has_sector_data = True
+                
+                # ---- Weekly merge (extra signals) ----
+                if sector in self.sector_weekly:
+                    sec_w = self.sector_weekly[sector][['date', 'change', 'rsi']].copy()
+                    sec_w.columns = ['date', 'sec_w_change', 'sec_w_rsi']
+                    sec_w = sec_w.sort_values('date').drop_duplicates('date', keep='last')
+                    
+                    df = df.sort_values('date')
+                    df = pd.merge_asof(df, sec_w, on='date', direction='backward')
+                    df['sector_weekly_momentum'] = df['sec_w_change'].fillna(0) / 100.0
+                    df['sector_weekly_rsi'] = df['sec_w_rsi'].fillna(50)
+                    df = df.drop(columns=['sec_w_change', 'sec_w_rsi'])
+            
+            # Fallbacks for missing sector data
+            if 'sector_momentum' not in df.columns:
+                df['sector_momentum'] = 0.0
+            if 'sector_rsi' not in df.columns:
+                df['sector_rsi'] = 50.0
+            if 'sector_volume_ratio' not in df.columns:
+                df['sector_volume_ratio'] = 1.0
+            if 'sector_weekly_momentum' not in df.columns:
+                df['sector_weekly_momentum'] = 0.0
+            if 'sector_weekly_rsi' not in df.columns:
+                df['sector_weekly_rsi'] = 50.0
         
-        if self.use_sr_features and 'date' in df.columns:
+        # =========================================================
+        # S/R FEATURES
+        # =========================================================
+        if self.use_sr_features and 'date' in df.columns and 'symbol' in df.columns:
             df['sr_distance'] = 0.0
             df['sr_strength'] = 0.5
             df['sr_type'] = 0.0
-            for idx in df.index:
-                row = df.loc[idx]
-                sr_feat = self._get_sr_features_for_row(row.get('symbol', ''), row.get('date'), row.get('close', 0))
-                if sr_feat:
-                    df.loc[idx, 'sr_distance'] = sr_feat.get('sr_distance', 0)
-                    df.loc[idx, 'sr_strength'] = sr_feat.get('sr_strength', 0.5)
-                    df.loc[idx, 'sr_type'] = sr_feat.get('sr_type', 0)
+            
+            if self.sr_data is not None:
+                for idx in df.index:
+                    row = df.loc[idx]
+                    sr_feat = self._get_sr_features_for_row(
+                        row.get('symbol', ''), row.get('date'), row.get('close', 0)
+                    )
+                    if sr_feat:
+                        df.loc[idx, 'sr_distance'] = sr_feat.get('sr_distance', 0)
+                        df.loc[idx, 'sr_strength'] = sr_feat.get('sr_strength', 0.5)
+                        df.loc[idx, 'sr_type'] = sr_feat.get('sr_type', 0)
         
-        if self.use_rsi_div_features and 'date' in df.columns:
+        # =========================================================
+        # RSI DIVERGENCE FEATURES
+        # =========================================================
+        if self.use_rsi_div_features and 'date' in df.columns and 'symbol' in df.columns:
             df['rsi_div_bullish'] = 0.0
             df['rsi_div_bearish'] = 0.0
             df['rsi_div_strength'] = 0.0
             df['rsi_external'] = 50.0
+            
             for idx in df.index:
                 row = df.loc[idx]
-                div_feat = self._get_rsi_div_features_for_row(row.get('symbol', ''), row.get('date'))
+                div_feat = self._get_rsi_div_features_for_row(
+                    row.get('symbol', ''), row.get('date')
+                )
                 if div_feat:
                     df.loc[idx, 'rsi_div_bullish'] = div_feat.get('rsi_div_bullish', 0)
                     df.loc[idx, 'rsi_div_bearish'] = div_feat.get('rsi_div_bearish', 0)
@@ -402,6 +638,10 @@ class PatchTSTPredictor:
                     df.loc[idx, 'rsi_external'] = div_feat.get('rsi_value', 50)
         
         return df
+    
+    # =========================================================
+    # FEATURE SELECTION
+    # =========================================================
     
     def _select_features(self, df):
         """Select and prepare features for the model"""
@@ -414,9 +654,14 @@ class PatchTSTPredictor:
         ]
         
         external_features = [
+            # Sector
             'sector_momentum', 'sector_volume_ratio', 'sector_rsi',
+            'sector_weekly_momentum', 'sector_weekly_rsi',
+            # S/R
             'sr_distance', 'sr_strength', 'sr_type',
+            # RSI divergence
             'rsi_div_bullish', 'rsi_div_bearish', 'rsi_div_strength', 'rsi_external',
+            # Market cap + EMA
             'log_market_cap', 'mcap_volume_ratio', 'mcap_rank_sector',
             'dist_from_ema', 'above_ema',
         ]
@@ -440,10 +685,14 @@ class PatchTSTPredictor:
         
         return df[self.feature_columns]
     
+    # =========================================================
+    # SEQUENCE PREPARATION
+    # =========================================================
+    
     def _prepare_sequences(self, df):
         df = self._engineer_features(df)
         feature_df = self._select_features(df)
-        feature_df = feature_df.fillna(method='ffill').fillna(0)
+        feature_df = feature_df.ffill().fillna(0)
         
         if self.scaler and SKLEARN_AVAILABLE:
             if not hasattr(self.scaler, 'mean_'):
@@ -474,8 +723,11 @@ class PatchTSTPredictor:
         
         return np.array(sequences), np.array(targets)
     
+    # =========================================================
+    # WALK-FORWARD VALIDATION
+    # =========================================================
+    
     def _walk_forward_validation(self, df, n_splits=5):
-        """Time-series cross validation for quality check"""
         if len(df) < 200:
             return 0.5
         
@@ -520,7 +772,7 @@ class PatchTSTPredictor:
             
             temp_model.eval()
             val_features = self._select_features(self._engineer_features(val_df))
-            val_features = val_features.fillna(method='ffill').fillna(0)
+            val_features = val_features.ffill().fillna(0)
             
             if hasattr(self.scaler, 'mean_'):
                 val_scaled = self.scaler.transform(val_features.iloc[-self.seq_len:])
@@ -536,6 +788,10 @@ class PatchTSTPredictor:
             scores.append(1 if correct else 0)
         
         return np.mean(scores) if scores else 0.5
+    
+    # =========================================================
+    # TRAINING
+    # =========================================================
     
     def fit(self, df, epochs=50, batch_size=32, learning_rate=0.001, verbose=True):
         if not TORCH_AVAILABLE:
@@ -611,13 +867,17 @@ class PatchTSTPredictor:
         return True
     
     def _create_scheduler(self, optimizer, epochs):
-        """✅ CosineAnnealingWarmRestarts - Ultimate LR scheduling"""
+        """CosineAnnealingWarmRestarts LR scheduling"""
         return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer,
             T_0=max(epochs // 4, 5),
             T_mult=2,
             eta_min=1e-6
         )
+    
+    # =========================================================
+    # PREDICTION
+    # =========================================================
     
     def predict_next_n_days(self, df, n_days=5):
         if not TORCH_AVAILABLE or not self.is_fitted:
@@ -629,7 +889,7 @@ class PatchTSTPredictor:
         try:
             df = self._engineer_features(df)
             feature_df = self._select_features(df)
-            feature_df = feature_df.fillna(method='ffill').fillna(0)
+            feature_df = feature_df.ffill().fillna(0)
             
             if len(feature_df) < self.seq_len:
                 return {
@@ -686,9 +946,12 @@ class PatchTSTPredictor:
             direction_map.get(pred['direction'], 0.5), pred['confidence']
         ], dtype=np.float32)
     
-    # ✅ FIXED: _save_model with format_version + input_dim
+    # =========================================================
+    # SAVE / LOAD
+    # =========================================================
+    
     def _save_model(self):
-        """Save model with complete metadata to avoid KeyError on load"""
+        """Save model with complete metadata"""
         if self.model is None:
             return
         model_path = self.model_dir / "patchtst_model.pt"
@@ -713,9 +976,8 @@ class PatchTSTPredictor:
         
         print(f"   💾 Model saved (input_dim={input_dim}, seq_len={self.seq_len})")
     
-    # ✅ FIXED: load_model with graceful handling of missing keys
     def load_model(self, symbol=None):
-        """Load model with robust error handling and metadata check"""
+        """Load model with robust error handling"""
         model_path = self.model_dir / "patchtst_model.pt"
         if not model_path.exists():
             print(f"⚠️ No saved model found at {model_path}")
@@ -731,7 +993,6 @@ class PatchTSTPredictor:
             print(f"❌ Cannot read checkpoint: {e}")
             return False
         
-        # ⚡ Required keys check
         required = ['model_state_dict', 'seq_len', 'pred_len', 'hidden_dim']
         missing = [k for k in required if k not in checkpoint]
         if missing:
@@ -744,12 +1005,10 @@ class PatchTSTPredictor:
             self.hidden_dim = checkpoint['hidden_dim']
             self.feature_columns = checkpoint.get('feature_columns')
             
-            # ⚡ input_dim robust inference
             if self.feature_columns:
                 input_dim = len(self.feature_columns)
             else:
                 input_dim = checkpoint.get('input_dim', 10)
-                # state_dict থেকে input_dim বের করার চেষ্টা
                 for k, v in checkpoint['model_state_dict'].items():
                     if 'lstm.weight_ih_l0' in k:
                         input_dim = v.shape[1]
@@ -765,7 +1024,6 @@ class PatchTSTPredictor:
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.model.eval()
             
-            # Scaler
             scaler_path = self.model_dir / "scaler.pkl"
             if scaler_path.exists() and SKLEARN_AVAILABLE:
                 with open(scaler_path, 'rb') as f:
@@ -799,13 +1057,22 @@ class PatchTSTPredictor:
 class PatchTSTIntegration:
     """Wrapper to integrate PatchTST with existing env_trading.py"""
     
-    def __init__(self, model_dir="./csv/patchtst_models"):
-        self.predictor = PatchTSTPredictor(model_dir=model_dir)
+    def __init__(self, model_dir="./csv/patchtst_models", full_df=None):
+        self.predictor = PatchTSTPredictor(model_dir=model_dir, full_df=full_df)
         self.models_per_symbol = {}
     
     def get_or_create_predictor(self, symbol):
         if symbol not in self.models_per_symbol:
-            predictor = PatchTSTPredictor(model_dir=Path(f"./csv/patchtst_models/{symbol}"))
+            predictor = PatchTSTPredictor(
+                model_dir=Path(f"./csv/patchtst_models/{symbol}"),
+                full_df=None  # already built map
+            )
+            predictor.symbol_to_sector = self.predictor.symbol_to_sector
+            predictor.sector_daily = self.predictor.sector_daily
+            predictor.sector_weekly = self.predictor.sector_weekly
+            predictor.sr_data = self.predictor.sr_data
+            predictor.rsi_div_data = self.predictor.rsi_div_data
+            
             if not predictor.load_model(symbol):
                 print(f"   ℹ️ No existing model for {symbol}, needs training")
             self.models_per_symbol[symbol] = predictor
@@ -850,8 +1117,7 @@ class FineTunablePatchTST(PatchTSTPredictor):
 
 
 # =========================================================
-# ✅ FIXED: RATE-LIMIT SAFE CHECKPOINT MANAGER
-# - best_model_path now inside checkpoints/ (no conflict with patchtst_model.pt)
+# RATE-LIMIT SAFE CHECKPOINT MANAGER
 # =========================================================
 
 class SimpleCheckpointManager:
@@ -867,9 +1133,7 @@ class SimpleCheckpointManager:
         self.checkpoint_dir = self.base_dir / "checkpoints"
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
-        # ⚡ FIXED: best_model.pt inside checkpoints (NOT patchtst_model.pt)
         self.best_model_path = self.checkpoint_dir / "best_model.pt"
-        
         self.scaler_path = self.base_dir / "scaler.pkl"
         self.progress_path = self.base_dir / "progress.json"
     
@@ -944,7 +1208,6 @@ class SimpleCheckpointManager:
         return {'status': 'not_started'}
     
     def upload_to_hf(self, message=None):
-        """Upload to HF with 40-second delay between uploads"""
         hf_token = os.getenv("hf_token") or os.getenv("HF_TOKEN", "")
         if not hf_token:
             print(f"   ⚠️ No HF_TOKEN, skipping backup")
@@ -1090,11 +1353,11 @@ class MistakeLearner:
 
 
 # =========================================================
-# COMPLETE TRAINING FUNCTION (ULTIMATE QUALITY)
+# COMPLETE TRAINING FUNCTION
 # =========================================================
 
 def train_patchtst_with_checkpoint(
-    symbol, df, epochs=50, batch_size=16, learning_rate=0.001,
+    symbol, df, full_df=None, epochs=50, batch_size=16, learning_rate=0.001,
     resume=True, backup_to_hf=True, min_accuracy=0.55, verbose=True
 ):
     """Complete training: Resume → Train → Learn → Validate → HF Upload"""
@@ -1134,7 +1397,13 @@ def train_patchtst_with_checkpoint(
     print(f"   💾 Resume: {'Yes' if resume else 'No'} | 🛑 Patience: {patience}")
     
     model_dir = Path(f"./csv/patchtst_models/{symbol}")
-    predictor = FineTunablePatchTST(model_dir=model_dir, hidden_dim=hidden_dim)
+    
+    # ✅ Pass full_df for sector map
+    predictor = FineTunablePatchTST(
+        model_dir=model_dir,
+        hidden_dim=hidden_dim,
+        full_df=full_df
+    )
     checkpoint_mgr = SimpleCheckpointManager(symbol)
     mistake_learner = MistakeLearner(symbol)
     
@@ -1225,12 +1494,12 @@ def train_patchtst_with_checkpoint(
             print(f"   ⏹️ Early stop at epoch {epoch+1}")
             break
     
-    # ⚡ Final: save BEST model to patchtst_model.pt (proper format)
+    # Final save
     checkpoint_mgr.save_local(model, optimizer, scheduler, epoch + 1, avg_loss, is_best=True)
     predictor.model = model
     predictor.is_fitted = True
     predictor.feature_columns = predictor.feature_columns or []
-    predictor._save_model()   # ⚡ Main file with full metadata
+    predictor._save_model()
     
     if verbose and len(df) >= 200:
         wf_score = predictor._walk_forward_validation(df)
@@ -1306,6 +1575,7 @@ if __name__ == "__main__":
     print("🚀 PatchTST ULTIMATE QUALITY Auto-Pilot Training")
     print(f"   ✅ 3-Layer LSTM | ✅ CosineAnnealingWarmRestarts | ✅ Gradient Accumulation")
     print(f"   ✅ Extended Epochs | ✅ Residual Connections | ✅ Layer Normalization")
+    print(f"   ✅ Sector Features (date-wise, no look-ahead)")
     print(f"   ✅ Rate-Limit Safe: 40s delay between HF uploads")
     print("="*60)
     
@@ -1319,6 +1589,11 @@ if __name__ == "__main__":
     df = pd.read_csv(data_path)
     df['date'] = pd.to_datetime(df['date'])
     print(f"   ✅ Loaded {len(df)} rows, {df['symbol'].nunique()} symbols")
+    
+    # ✅ Show sector map summary
+    if 'sector' in df.columns:
+        unique_sectors = df.dropna(subset=['sector'])['sector'].nunique()
+        print(f"   ✅ Sectors in mongodb: {unique_sectors}")
     
     progress_path = Path('./csv/patchtst_models/_marathon_progress.json')
     marathon_done_path = Path('./csv/patchtst_models/_marathon_done.txt')
@@ -1372,7 +1647,7 @@ if __name__ == "__main__":
         print("❌ No symbols to train")
         sys.exit(0)
     
-    # ULTIMATE QUALITY parameters
+    # Training parameters
     if mode in ["MONTHLY_RETRAIN", "FIRST_RUN"]:
         default_epochs = 150
         learning_rate = 0.0005
@@ -1397,6 +1672,7 @@ if __name__ == "__main__":
     total = len(symbols)
     start_time = datetime.now()
     
+    # ✅ Pass full_df for sector map (built ONCE)
     for i, sym in enumerate(symbols, 1):
         sym_df = df[df['symbol'] == sym].sort_values('date')
         
@@ -1404,9 +1680,16 @@ if __name__ == "__main__":
         print(f"📊 [{i}/{total}] {sym} ({len(sym_df)} rows, {mode})")
         
         result = train_patchtst_with_checkpoint(
-            symbol=sym, df=sym_df, epochs=default_epochs, batch_size=8,
-            learning_rate=learning_rate, resume=True, backup_to_hf=True,
-            min_accuracy=0.55, verbose=False
+            symbol=sym,
+            df=sym_df,
+            full_df=df,   # ✅ sector map এর জন্য
+            epochs=default_epochs,
+            batch_size=8,
+            learning_rate=learning_rate,
+            resume=True,
+            backup_to_hf=True,
+            min_accuracy=0.55,
+            verbose=False
         )
         
         results.append({'symbol': sym, **result})
@@ -1415,13 +1698,14 @@ if __name__ == "__main__":
         
         elapsed = (datetime.now() - start_time).total_seconds()
         avg_time = elapsed / i
-        remaining = avg_time * (total - i)
-        print(f"   📈 Progress: {i}/{total} | ☁️ {hf_uploads} uploaded | ⏰ ETA: {remaining/3600:.1f}h")
+        remaining_time = avg_time * (total - i)
+        print(f"   📈 Progress: {i}/{total} | ☁️ {hf_uploads} uploaded | ⏰ ETA: {remaining_time/3600:.1f}h")
         
         if i % 25 == 0:
             progress = {
                 'mode': mode, 'completed': i, 'total': total, 'uploaded': hf_uploads,
-                'elapsed_hours': round(elapsed/3600, 1), 'eta_hours': round(remaining/3600, 1),
+                'elapsed_hours': round(elapsed/3600, 1),
+                'eta_hours': round(remaining_time/3600, 1),
                 'completed_symbols': [r['symbol'] for r in results],
                 'timestamp': datetime.now().isoformat()
             }
