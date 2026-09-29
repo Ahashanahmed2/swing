@@ -2,11 +2,13 @@
 # PatchTST - Time Series Transformer for Price Prediction
 # State-of-the-art financial forecasting
 # Drop-in module — no changes to existing code required
-# ✅ Checkpoint Save/Load (Local)
+# ✅ FIXED: Checkpoint conflict (patchtst_model.pt vs checkpoints/best_model.pt)
+# ✅ FIXED: 'seq_len' KeyError on load_model
+# ✅ FIXED: format_version + input_dim in checkpoint
 # ✅ HF Backup Upload (No Download)
 # ✅ Mistake Learning & Auto-Correction
 # ✅ Accuracy Check before HF Upload
-# ✅ Sector + Support/Resistance + RSI Divergence Features
+# ✅ Sector + S/R + RSI Divergence Features
 # ✅ Auto-Pilot Training (All Symbols)
 # ✅ Weekly Fine-tune + Monthly Retrain
 # ✅ MAX QUALITY: Market Cap + EMA + Walk-Forward + OneCycleLR + Adaptive Params
@@ -85,55 +87,6 @@ class TransformerEncoder(nn.Module):
     
     def forward(self, x):
         return self.encoder(x)
-
-
-# =========================================================
-# PatchTST MODEL
-# =========================================================
-
-class PatchTSTModel(nn.Module):
-    """PatchTST: Patch-based Time Series Transformer"""
-    
-    def __init__(
-        self,
-        n_vars=10,
-        patch_len=16,
-        stride=8,
-        d_model=128,
-        n_heads=8,
-        n_layers=3,
-        d_ff=256,
-        dropout=0.1,
-        pred_len=5,
-        output_dim=3
-    ):
-        super().__init__()
-        
-        self.n_vars = n_vars
-        self.patch_len = patch_len
-        self.stride = stride
-        self.pred_len = pred_len
-        self.seq_len = None
-        
-        self.patching = Patching(patch_len, stride)
-        self.patch_embedding = nn.Linear(patch_len, d_model)
-        self.positional_encoding = nn.Parameter(torch.randn(1, 500, d_model) * 0.02)
-        self.transformer = TransformerEncoder(d_model, n_heads, n_layers, d_ff, dropout)
-        self.aggregation = nn.AdaptiveAvgPool1d(1)
-        self.fc1 = nn.Linear(d_model, d_model // 2)
-        self.fc2 = nn.Linear(d_model // 2, output_dim)
-        self.dropout = nn.Dropout(dropout)
-        self.gelu = nn.GELU()
-    
-    def forward(self, x):
-        batch_size, n_vars, seq_len = x.shape
-        x = self.patching(x)
-        n_patches = x.shape[2]
-        x = x.permute(0, 2, 1, 3)
-        x = x.reshape(batch_size, n_patches, -1)
-        x = self.patching(x.reshape(batch_size * n_patches, 1, -1))
-        batch_size, n_patches, _ = x.shape if len(x.shape) == 3 else (batch_size, 1, 1)
-        return torch.zeros(batch_size, 3)
 
 
 # =========================================================
@@ -661,7 +614,7 @@ class PatchTSTPredictor:
         """✅ CosineAnnealingWarmRestarts - Ultimate LR scheduling"""
         return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer,
-            T_0=epochs // 4,
+            T_0=max(epochs // 4, 5),
             T_mult=2,
             eta_min=1e-6
         )
@@ -733,52 +686,97 @@ class PatchTSTPredictor:
             direction_map.get(pred['direction'], 0.5), pred['confidence']
         ], dtype=np.float32)
     
+    # ✅ FIXED: _save_model with format_version + input_dim
     def _save_model(self):
+        """Save model with complete metadata to avoid KeyError on load"""
         if self.model is None:
             return
         model_path = self.model_dir / "patchtst_model.pt"
+        
+        input_dim = len(self.feature_columns) if self.feature_columns else 10
+        
         torch.save({
             'model_state_dict': self.model.state_dict(),
             'feature_columns': self.feature_columns,
             'seq_len': self.seq_len,
             'pred_len': self.pred_len,
-            'hidden_dim': self.hidden_dim
+            'hidden_dim': self.hidden_dim,
+            'input_dim': input_dim,
+            'saved_at': datetime.now().isoformat(),
+            'format_version': 2,
         }, model_path)
+        
         if self.scaler and SKLEARN_AVAILABLE:
             scaler_path = self.model_dir / "scaler.pkl"
             with open(scaler_path, 'wb') as f:
                 pickle.dump(self.scaler, f)
+        
+        print(f"   💾 Model saved (input_dim={input_dim}, seq_len={self.seq_len})")
     
+    # ✅ FIXED: load_model with graceful handling of missing keys
     def load_model(self, symbol=None):
+        """Load model with robust error handling and metadata check"""
         model_path = self.model_dir / "patchtst_model.pt"
         if not model_path.exists():
             print(f"⚠️ No saved model found at {model_path}")
             return False
+        
         if not TORCH_AVAILABLE:
             print("❌ PyTorch required for loading")
             return False
+        
         try:
             checkpoint = torch.load(model_path, map_location=self.device)
+        except Exception as e:
+            print(f"❌ Cannot read checkpoint: {e}")
+            return False
+        
+        # ⚡ Required keys check
+        required = ['model_state_dict', 'seq_len', 'pred_len', 'hidden_dim']
+        missing = [k for k in required if k not in checkpoint]
+        if missing:
+            print(f"⚠️ Incomplete checkpoint (missing: {missing}). Needs retraining.")
+            return False
+        
+        try:
             self.seq_len = checkpoint['seq_len']
             self.pred_len = checkpoint['pred_len']
             self.hidden_dim = checkpoint['hidden_dim']
-            self.feature_columns = checkpoint['feature_columns']
-            input_dim = len(self.feature_columns) if self.feature_columns else 10
+            self.feature_columns = checkpoint.get('feature_columns')
+            
+            # ⚡ input_dim robust inference
+            if self.feature_columns:
+                input_dim = len(self.feature_columns)
+            else:
+                input_dim = checkpoint.get('input_dim', 10)
+                # state_dict থেকে input_dim বের করার চেষ্টা
+                for k, v in checkpoint['model_state_dict'].items():
+                    if 'lstm.weight_ih_l0' in k:
+                        input_dim = v.shape[1]
+                        break
+            
             self.model = SimpleAttentionPredictor(
-                input_dim=input_dim, seq_len=self.seq_len,
-                hidden_dim=self.hidden_dim, pred_len=self.pred_len
+                input_dim=input_dim,
+                seq_len=self.seq_len,
+                hidden_dim=self.hidden_dim,
+                pred_len=self.pred_len
             ).to(self.device)
+            
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.model.eval()
+            
+            # Scaler
             scaler_path = self.model_dir / "scaler.pkl"
             if scaler_path.exists() and SKLEARN_AVAILABLE:
                 with open(scaler_path, 'rb') as f:
                     self.scaler = pickle.load(f)
+            
             self.is_fitted = True
-            print(f"✅ Model loaded successfully")
+            print(f"✅ Model loaded (input_dim={input_dim}, seq_len={self.seq_len}, pred_len={self.pred_len})")
             return True
+            
         except Exception as e:
-            print(f"❌ Error loading model: {e}")
+            print(f"❌ Error loading model: {type(e).__name__}: {e}")
             return False
     
     def _create_model(self, input_dim):
@@ -788,7 +786,6 @@ class PatchTSTPredictor:
         )
     
     def _create_optimizer(self, lr, model=None):
-        """Create optimizer - with optional model parameter"""
         m = model if model is not None else self.model
         if m is None:
             return None
@@ -853,16 +850,15 @@ class FineTunablePatchTST(PatchTSTPredictor):
 
 
 # =========================================================
-# ✅ RATE-LIMIT SAFE CHECKPOINT MANAGER
+# ✅ FIXED: RATE-LIMIT SAFE CHECKPOINT MANAGER
+# - best_model_path now inside checkpoints/ (no conflict with patchtst_model.pt)
 # =========================================================
 
 class SimpleCheckpointManager:
     """Checkpoint System: Save/Load local, Backup to HF (40s delay between uploads)"""
     
-    # Class-level upload tracker (shared across all instances)
     _last_upload_time = None
-    _upload_queue = []
-    _min_upload_interval = 40  # seconds
+    _min_upload_interval = 40
     
     def __init__(self, symbol, hf_repo="ahashanahmed/csv"):
         self.symbol = symbol
@@ -870,7 +866,10 @@ class SimpleCheckpointManager:
         self.base_dir = Path(f"./csv/patchtst_models/{symbol}")
         self.checkpoint_dir = self.base_dir / "checkpoints"
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        self.best_model_path = self.base_dir / "patchtst_model.pt"
+        
+        # ⚡ FIXED: best_model.pt inside checkpoints (NOT patchtst_model.pt)
+        self.best_model_path = self.checkpoint_dir / "best_model.pt"
+        
         self.scaler_path = self.base_dir / "scaler.pkl"
         self.progress_path = self.base_dir / "progress.json"
     
@@ -882,11 +881,13 @@ class SimpleCheckpointManager:
             'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
             'loss': loss,
             'timestamp': datetime.now().isoformat(),
-            'symbol': self.symbol
+            'symbol': self.symbol,
         }
+        
         if is_best:
             torch.save(checkpoint, self.best_model_path)
-            print(f"   🏆 Best model saved (epoch {epoch}, loss {loss:.6f})")
+            print(f"   🏆 Best checkpoint saved (epoch {epoch}, loss {loss:.6f})")
+        
         ckpt_path = self.checkpoint_dir / f"epoch_{epoch}.pt"
         torch.save(checkpoint, ckpt_path)
         self._save_progress(epoch, loss, is_best)
@@ -895,7 +896,7 @@ class SimpleCheckpointManager:
     def load_local(self, model, optimizer=None, scheduler=None):
         if self.best_model_path.exists():
             checkpoint = torch.load(self.best_model_path, map_location='cpu')
-            print(f"   📂 Loaded best model from local")
+            print(f"   📂 Loaded best checkpoint from local")
         else:
             checkpoints = sorted(self.checkpoint_dir.glob("epoch_*.pt"))
             if not checkpoints:
@@ -905,10 +906,11 @@ class SimpleCheckpointManager:
             print(f"   📂 Loaded {checkpoints[-1].name} from local")
         
         model.load_state_dict(checkpoint['model_state_dict'])
-        if optimizer and 'optimizer_state_dict' in checkpoint and checkpoint['optimizer_state_dict']:
+        if optimizer and checkpoint.get('optimizer_state_dict'):
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         if scheduler and checkpoint.get('scheduler_state_dict'):
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        
         epoch = checkpoint['epoch']
         loss = checkpoint['loss']
         print(f"   ✅ Resumed from epoch {epoch} (loss: {loss:.6f})")
@@ -916,8 +918,12 @@ class SimpleCheckpointManager:
     
     def _save_progress(self, epoch, loss, is_best):
         progress = {
-            'symbol': self.symbol, 'last_epoch': epoch, 'last_loss': loss,
-            'is_best': is_best, 'last_updated': datetime.now().isoformat(), 'checkpoint_exists': True
+            'symbol': self.symbol,
+            'last_epoch': epoch,
+            'last_loss': loss,
+            'is_best': is_best,
+            'last_updated': datetime.now().isoformat(),
+            'checkpoint_exists': True,
         }
         with open(self.progress_path, 'w') as f:
             json.dump(progress, f, indent=2)
@@ -938,19 +944,18 @@ class SimpleCheckpointManager:
         return {'status': 'not_started'}
     
     def upload_to_hf(self, message=None):
-        """Upload to HF with 40-second delay between uploads (Rate-Limit Safe)"""
+        """Upload to HF with 40-second delay between uploads"""
         hf_token = os.getenv("hf_token") or os.getenv("HF_TOKEN", "")
         if not hf_token:
             print(f"   ⚠️ No HF_TOKEN, skipping backup")
             return False
         
-        # ✅ Check if enough time has passed since last upload
         now = datetime.now()
         if SimpleCheckpointManager._last_upload_time is not None:
             elapsed = (now - SimpleCheckpointManager._last_upload_time).total_seconds()
             if elapsed < SimpleCheckpointManager._min_upload_interval:
                 wait_time = SimpleCheckpointManager._min_upload_interval - elapsed
-                print(f"   ⏳ Rate limit: waiting {wait_time:.0f}s before upload...")
+                print(f"   ⏳ Rate limit: waiting {wait_time:.0f}s...")
                 time.sleep(wait_time)
         
         try:
@@ -970,10 +975,8 @@ class SimpleCheckpointManager:
                 commit_message=message
             )
             
-            # ✅ Update last upload time
             SimpleCheckpointManager._last_upload_time = datetime.now()
-            
-            print(f"   ☁️ Backup uploaded to HF: {hf_path}")
+            print(f"   ☁️ Backup uploaded: {hf_path}")
             return True
             
         except Exception as e:
@@ -981,7 +984,6 @@ class SimpleCheckpointManager:
             return False
     
     def upload_final_to_hf(self):
-        """Upload final trained model to HF (Rate-Limit Safe)"""
         return self.upload_to_hf(
             message=f"✅ FINAL MODEL: {self.symbol} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         )
@@ -1009,6 +1011,9 @@ class MistakeLearner:
                 data = json.load(f)
                 self.mistakes = data.get('mistakes', [])
                 self.corrections = data.get('corrections', {})
+                stats = data.get('stats', {})
+                self.total_predictions = stats.get('total', 0)
+                self.correct_predictions = stats.get('correct', 0)
     
     def _save(self):
         self.mistakes_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1092,13 +1097,13 @@ def train_patchtst_with_checkpoint(
     symbol, df, epochs=50, batch_size=16, learning_rate=0.001,
     resume=True, backup_to_hf=True, min_accuracy=0.55, verbose=True
 ):
-    """Complete training: Resume → Train → Learn → Validate → HF Upload (ULTIMATE QUALITY)"""
+    """Complete training: Resume → Train → Learn → Validate → HF Upload"""
     
     print(f"\n{'='*60}")
     print(f"🧠 PatchTST Training: {symbol}")
     print(f"{'='*60}")
     
-    # ✅ ULTIMATE Adaptive parameters
+    # Adaptive parameters
     data_rows = len(df)
     if data_rows >= 500:
         epochs = min(epochs + 100, 250)
@@ -1200,7 +1205,7 @@ def train_patchtst_with_checkpoint(
             for batch_X, batch_y in val_loader:
                 pred = model(batch_X)
                 val_loss += criterion(pred, batch_y).item()
-        val_loss /= len(val_loader)
+        val_loss /= max(len(val_loader), 1)
         model.train()
         
         is_best = val_loss < best_loss
@@ -1214,21 +1219,24 @@ def train_patchtst_with_checkpoint(
             checkpoint_mgr.save_local(model, optimizer, scheduler, epoch + 1, avg_loss, is_best)
         
         if verbose and (epoch + 1) % 5 == 0:
-            print(f"   Epoch {epoch+1}/{epochs} | Loss: {avg_loss:.6f} | Val: {val_loss:.6f} | Best: {best_loss:.6f} | LR: {scheduler.get_last_lr()[0]:.6f}")
+            print(f"   Epoch {epoch+1}/{epochs} | Loss: {avg_loss:.6f} | Val: {val_loss:.6f} | Best: {best_loss:.6f}")
         
         if patience_counter >= patience:
             print(f"   ⏹️ Early stop at epoch {epoch+1}")
             break
     
+    # ⚡ Final: save BEST model to patchtst_model.pt (proper format)
     checkpoint_mgr.save_local(model, optimizer, scheduler, epoch + 1, avg_loss, is_best=True)
     predictor.model = model
     predictor.is_fitted = True
+    predictor.feature_columns = predictor.feature_columns or []
+    predictor._save_model()   # ⚡ Main file with full metadata
     
     if verbose and len(df) >= 200:
         wf_score = predictor._walk_forward_validation(df)
         print(f"   📊 Walk-Forward Score: {wf_score:.3f}")
     
-    # Mistake Learning
+    # Mistake Learning on validation
     print(f"\n🧠 LEARNING FROM VALIDATION MISTAKES")
     model.eval()
     total_correct = 0
@@ -1260,7 +1268,7 @@ def train_patchtst_with_checkpoint(
             corrected_correct += 1
     
     corrected_accuracy = corrected_correct / max(total_samples, 1)
-    print(f"   📊 Accuracy after corrections: {corrected_accuracy:.1%}")
+    print(f"   📊 After corrections: {corrected_accuracy:.1%}")
     print(f"   📈 Improvement: {corrected_accuracy - initial_accuracy:+.1%}")
     
     print(f"\n📊 HF UPLOAD DECISION")
@@ -1270,31 +1278,26 @@ def train_patchtst_with_checkpoint(
         result = {'status': 'needs_retrain', 'initial_accuracy': initial_accuracy,
                   'corrected_accuracy': corrected_accuracy, 'uploaded_to_hf': False}
     elif corrected_accuracy >= min_accuracy:
-        print(f"   ✅ Accuracy {corrected_accuracy:.1%} >= {min_accuracy:.0%} threshold")
+        print(f"   ✅ Accuracy {corrected_accuracy:.1%} >= {min_accuracy:.0%}")
+        uploaded = False
         if backup_to_hf:
-            # ✅ Rate-Limit Safe upload
             checkpoint_mgr.upload_final_to_hf()
             uploaded = True
             print(f"   ☁️ Uploaded to HF!")
-        else:
-            uploaded = False
         result = {'status': 'success', 'initial_accuracy': initial_accuracy,
                   'corrected_accuracy': corrected_accuracy, 'uploaded_to_hf': uploaded,
                   'correction_type': mistake_learner.corrections.get('type', 'none')}
     else:
-        print(f"   ⚠️ Accuracy {corrected_accuracy:.1%} < {min_accuracy:.0%} threshold")
+        print(f"   ⚠️ Accuracy {corrected_accuracy:.1%} < {min_accuracy:.0%}")
         result = {'status': 'low_accuracy', 'initial_accuracy': initial_accuracy,
                   'corrected_accuracy': corrected_accuracy, 'uploaded_to_hf': False}
-    
-    checkpoint_mgr.save_local(model, optimizer, scheduler, epoch + 1, avg_loss, is_best=True)
-    predictor._save_model()
     
     print(f"\n✅ {symbol}: {result['status'].upper()}")
     return result
 
 
 # =========================================================
-# MAIN - AUTO-PILOT ULTIMATE QUALITY TRAINING
+# MAIN - AUTO-PILOT TRAINING
 # =========================================================
 
 if __name__ == "__main__":
@@ -1308,6 +1311,10 @@ if __name__ == "__main__":
     
     data_path = sys.argv[1] if len(sys.argv) > 1 else './csv/mongodb.csv'
     symbol_filter = sys.argv[2] if len(sys.argv) > 2 else None
+    
+    if not Path(data_path).exists():
+        print(f"❌ Data file not found: {data_path}")
+        sys.exit(1)
     
     df = pd.read_csv(data_path)
     df['date'] = pd.to_datetime(df['date'])
@@ -1354,8 +1361,7 @@ if __name__ == "__main__":
                 mode = "WEEKLY_FINE_TUNE"
                 print(f"   🔄 Mode: WEEKLY FINE-TUNE ({days_since} days)")
             else:
-                print(f"   ✅ All done recently ({days_since} days ago)")
-                print(f"   ⏭️ Nothing to train, exiting")
+                print(f"   ✅ All done recently ({days_since} days)")
                 sys.exit(0)
         else:
             symbols = all_symbols
@@ -1366,7 +1372,7 @@ if __name__ == "__main__":
         print("❌ No symbols to train")
         sys.exit(0)
     
-    # ✅ ULTIMATE QUALITY parameters
+    # ULTIMATE QUALITY parameters
     if mode in ["MONTHLY_RETRAIN", "FIRST_RUN"]:
         default_epochs = 150
         learning_rate = 0.0005
@@ -1377,15 +1383,14 @@ if __name__ == "__main__":
         default_epochs = 100
         learning_rate = 0.0008
     
-    print(f"\n⚙️ ULTIMATE QUALITY CONFIG:")
+    print(f"\n⚙️ CONFIG:")
     print(f"   Mode: {mode}")
     print(f"   Base Epochs: {default_epochs}")
     print(f"   Learning Rate: {learning_rate}")
     print(f"   Architecture: 3-Layer LSTM + 8-Head Attention + Residual")
     print(f"   Scheduler: CosineAnnealingWarmRestarts")
     print(f"   Gradient: Accumulation ×4")
-    print(f"   Validation: Walk-Forward CV (5 folds)")
-    print(f"   HF Upload: 40s delay (rate-limit safe)")
+    print(f"   HF Upload: 40s delay")
     
     results = []
     hf_uploads = 0
@@ -1441,7 +1446,6 @@ if __name__ == "__main__":
     print(f"   ⏰ Time: {total_time:.1f} hours")
     print(f"   📊 Symbols: {total}")
     print(f"   ☁️ Uploaded: {hf_uploads}")
-    print(f"   ✅ Success Rate: {hf_uploads/total*100:.1f}%" if total > 0 else "N/A")
     
     success = [r for r in results if r.get('status') == 'success']
     retrain = [r for r in results if r.get('status') == 'needs_retrain']
