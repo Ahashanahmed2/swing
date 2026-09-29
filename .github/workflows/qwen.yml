@@ -1,0 +1,132 @@
+name: Qwen Train
+
+on:
+  schedule:
+    - cron: "53 1 * * 5"        # Every Friday 1:53 AM (same as before)
+  workflow_dispatch:             # Manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  qwen_train:
+    runs-on: ubuntu-latest
+    # ⚠️ GitHub free tier hard limit: 6 hours (360 min)
+    # Leave 5 min buffer for cleanup
+    timeout-minutes: 355
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Create necessary directories
+        run: |
+          mkdir -p ./csv/llm_model_qwen
+          mkdir -p ./csv/xgboost
+          mkdir -p ./csv/ppo_models
+          mkdir -p ./csv/ppo_models/per_symbol
+          mkdir -p ./csv/ppo_models/ensemble
+          mkdir -p ./csv/agentic_loop_logs
+          echo "✅ Directories created"
+          echo "Current directory: $(pwd)"
+          ls -la ./csv/
+
+      - name: Verify folders
+        run: |
+          echo "=== Checking ./csv ==="
+          ls -la ./csv/
+          echo "=== Checking ./csv/llm_model_qwen ==="
+          ls -la ./csv/llm_model_qwen/ | head -10
+          echo "=== Checking ./csv/xgboost ==="
+          ls -la ./csv/xgboost/ | head -10
+          echo "=== Checking ./csv/ppo_models ==="
+          ls -la ./csv/ppo_models/
+          echo "=== Checking ./csv/ppo_models/per_symbol ==="
+          ls -la ./csv/ppo_models/per_symbol/
+
+      - name: Install dependencies
+        run: |
+          pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cpu
+          python -c "import torch; print('PyTorch installed:', torch.__version__)"
+
+          pip install --force-reinstall transformers==4.40.0
+          python -c "import transformers; print(f'Transformers: {transformers.__version__}')"
+          python -c "from transformers import TrainingArguments; print('TrainingArguments OK')"
+
+          pip install accelerate==0.33.0
+          pip install peft==0.10.0
+          pip install huggingface_hub requests joblib
+
+          pip install -r requirements.txt
+
+      - name: Prepare Qwen model + data
+        env:
+          hf_token: ${{ secrets.HF_TOKEN }}
+        run: |
+          # ✅ If your download script exists, run it (fetches Qwen + checkpoints + data)
+          if [ -f scripts/qwen_download.py ]; then
+            echo "📥 Running scripts/qwen_download.py..."
+            python scripts/qwen_download.py || echo "⚠️ Download script failed, continuing anyway..."
+          else
+            echo "ℹ️ No qwen_download.py found — skipping download step"
+          fi
+
+          # Verify Qwen model
+          if [ -f ./csv/llm_model_qwen/config.json ]; then
+            echo "✅ Qwen model ready at ./csv/llm_model_qwen"
+            ls -la ./csv/llm_model_qwen/ | head -10
+          else
+            echo "⚠️ Qwen model missing at ./csv/llm_model_qwen"
+            echo "   Training will fallback to base model download"
+          fi
+
+      - name: Run Qwen training
+        env:
+          MONGODBEMAIL_URI: ${{ secrets.MONGODBEMAIL_URI }}
+          MONGO_URL: ${{ secrets.MONGO_URL }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN_TRADE }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID_TRADE }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          hf_token: ${{ secrets.HF_TOKEN }}
+        run: |
+          # ✅ Prefer scripts/qwen_train.py, fallback to root qwen_train.py
+          if [ -f scripts/qwen_train.py ]; then
+            echo "🚀 Running scripts/qwen_train.py"
+            python scripts/qwen_train.py
+          elif [ -f qwen_train.py ]; then
+            echo "🚀 Running qwen_train.py"
+            python qwen_train.py
+          else
+            echo "❌ qwen_train.py not found!"
+            exit 1
+          fi
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen-training-logs-${{ github.run_number }}
+          path: |
+            ./csv/current_training_status.json
+            ./csv/agentic_loop_logs/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Notify Telegram on failure
+        if: failure()
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN_TRADE }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID_TRADE }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            -d "text=⚠️ Qwen Training FAILED (run #${{ github.run_number }})" || true
