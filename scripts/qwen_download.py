@@ -142,7 +142,8 @@ def download_from_hf_with_retry():
 
     start_time = datetime.now()
     attempt = 0
-    base_wait = 300    while True:
+    base_wait = 300    
+    while True:
         attempt += 1
         elapsed = (datetime.now() - start_time).total_seconds() / 60
 
