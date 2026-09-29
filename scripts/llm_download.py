@@ -134,7 +134,6 @@ def download_from_hf_with_retry():
     start_time = datetime.now()
     attempt = 0
     base_wait = 300  # 5 minutes
-    
     while True:  # ← আনলিমিটেড লুপ
         attempt += 1
         
