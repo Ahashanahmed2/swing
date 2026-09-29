@@ -152,7 +152,7 @@ AGENTIC_LOOP_LOG_DIR = "./csv/agentic_loop_logs"
 # =========================================================
 EPOCHS_CONFIG = {
     "first_train": 12,
-    "incremental": 8,
+    "incremental": 4,
     "weekly_finetune": 6,
     "consolidate": 20,
     "mistake_learning": 10,
@@ -1066,7 +1066,7 @@ class AutoLLMTrainer:
             train_texts, 
             truncation=True, 
             padding="max_length", 
-            max_length=512,
+            max_length=384,
             return_tensors="pt"
         )
 
@@ -1142,7 +1142,7 @@ class AutoLLMTrainer:
             per_device_eval_batch_size=batch_size,
             gradient_accumulation_steps=grad_accum,
             learning_rate=learning_rate,
-            warmup_steps=1000,
+            warmup_steps=100,
             weight_decay=0.025,
             lr_scheduler_type="cosine_with_restarts",
             save_steps=80,
