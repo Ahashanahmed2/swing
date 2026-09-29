@@ -2,7 +2,7 @@ name: Qwen Train
 
 on:
   schedule:
-    - cron: "53 1 * * 5"        # Every Friday 1:53 AM (same as before)
+    - cron: "0 */6 * * *"        # Every Friday 1:53 AM
   workflow_dispatch:             # Manual trigger
 
 permissions:
@@ -11,8 +11,7 @@ permissions:
 jobs:
   qwen_train:
     runs-on: ubuntu-latest
-    # ⚠️ GitHub free tier hard limit: 6 hours (360 min)
-    # Leave 5 min buffer for cleanup
+    # GitHub free tier hard limit: 6 hours
     timeout-minutes: 355
 
     steps:
@@ -66,28 +65,11 @@ jobs:
 
           pip install -r requirements.txt
 
-      - name: Prepare Qwen model + data
-        env:
-          hf_token: ${{ secrets.HF_TOKEN }}
-        run: |
-          # ✅ If your download script exists, run it (fetches Qwen + checkpoints + data)
-          if [ -f scripts/qwen_download.py ]; then
-            echo "📥 Running scripts/qwen_download.py..."
-            python scripts/qwen_download.py || echo "⚠️ Download script failed, continuing anyway..."
-          else
-            echo "ℹ️ No qwen_download.py found — skipping download step"
-          fi
-
-          # Verify Qwen model
-          if [ -f ./csv/llm_model_qwen/config.json ]; then
-            echo "✅ Qwen model ready at ./csv/llm_model_qwen"
-            ls -la ./csv/llm_model_qwen/ | head -10
-          else
-            echo "⚠️ Qwen model missing at ./csv/llm_model_qwen"
-            echo "   Training will fallback to base model download"
-          fi
-
-      - name: Run Qwen training
+      # =========================================================
+      # ✅ Single step: qwen.py handles everything
+      #    (download → generate data → train)
+      # =========================================================
+      - name: Run Qwen pipeline
         env:
           MONGODBEMAIL_URI: ${{ secrets.MONGODBEMAIL_URI }}
           MONGO_URL: ${{ secrets.MONGO_URL }}
@@ -98,15 +80,15 @@ jobs:
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
           hf_token: ${{ secrets.HF_TOKEN }}
         run: |
-          # ✅ Prefer scripts/qwen_train.py, fallback to root qwen_train.py
-          if [ -f scripts/qwen_train.py ]; then
-            echo "🚀 Running scripts/qwen_train.py"
-            python scripts/qwen_train.py
-          elif [ -f qwen_train.py ]; then
-            echo "🚀 Running qwen_train.py"
-            python qwen_train.py
+          # ✅ Prefer qwen.py, fallback to train.py
+          if [ -f qwen.py ]; then
+            echo "🚀 Running qwen.py"
+            python qwen.py
+          elif [ -f train.py ]; then
+            echo "🚀 Running train.py"
+            python train.py
           else
-            echo "❌ qwen_train.py not found!"
+            echo "❌ qwen.py / train.py not found!"
             exit 1
           fi
 
