@@ -7,6 +7,7 @@
 # ✅ TELEGRAM NOTIFICATIONS ADDED
 # ✅ WEEKLY & MONTHLY RETRAINING FIXED
 # ✅ MODE EXPLANATION ADDED FOR BOT OUTPUT
+# ✅ LOCAL-ONLY CHECKPOINT RESUME: ./csv/qwen_checkpoints/qwen_checkpoint-N/
 
 import os
 import torch
@@ -91,9 +92,12 @@ HF_DATASET_REPO = "ahashanahmed/csv"
 BASE_MODEL = "Qwen/Qwen2.5-0.5B"             # ← Qwen 0.5B
 LLM_MODEL_DIR = "./csv/llm_model_qwen"       # ← Qwen local dir
 
-# ✅ QWEN CHECKPOINT HF PATHS (must match qwen_download.py)
-QWEN_HF_CHECKPOINT_PREFIX = "qwen_checkpoints/qwen_checkpoint-"   # HF path
+# ✅ QWEN CHECKPOINT HF PATHS (upload only)
+QWEN_HF_CHECKPOINT_PREFIX = "qwen_checkpoints/qwen_checkpoint-"   # HF upload path
 QWEN_FINAL_MODEL_PREFIX = "final_model_qwen"                       # HF final path
+
+# ✅ LOCAL CHECKPOINT DIR (resume from here)
+QWEN_LOCAL_CHECKPOINT_DIR = "./csv/qwen_checkpoints"               # ← resume from local
 
 # ✅ ALL LOCAL PATHS UPDATED TO ./csv/
 TRACKING_FILE = "./csv/trained_symbols.json"
@@ -722,6 +726,7 @@ class AutoQwenTrainer:
     def __init__(self):
         os.makedirs("./csv", exist_ok=True)
         os.makedirs(LLM_MODEL_DIR, exist_ok=True)
+        os.makedirs(QWEN_LOCAL_CHECKPOINT_DIR, exist_ok=True)
         os.makedirs(AGENTIC_LOOP_LOG_DIR, exist_ok=True)
         
         self.trained_symbols = self.load_trained_symbols()
@@ -1070,75 +1075,39 @@ class AutoQwenTrainer:
         import glob
     
         # =========================================================
-        # ✅ DOWNLOAD LATEST QWEN CHECKPOINT FROM HF
+        # ✅ LOCAL CHECKPOINT RESUME (NO HF DOWNLOAD)
+        #    Looks in: ./csv/qwen_checkpoints/qwen_checkpoint-N/
         # =========================================================
         last_checkpoint = None
         
-        if os.getenv("hf_token"):
-            try:
-                print("   📥 Checking HF for latest Qwen checkpoint...")
-                from huggingface_hub import snapshot_download
-                
-                api = HfApi(token=os.getenv("hf_token"))
-                files = api.list_repo_files(repo_id=HF_DATASET_REPO, repo_type="dataset")
-                
-                # Find Qwen checkpoints
-                qwen_steps = set()
-                for f in files:
-                    if f.startswith("qwen_checkpoints/qwen_checkpoint-"):
-                        match = re.search(r'qwen_checkpoint-(\d+)', f)
-                        if match:
-                            qwen_steps.add(int(match.group(1)))
-                
-                if qwen_steps:
-                    latest_step = max(qwen_steps)
-                    print(f"   ✅ HF Qwen checkpoint: qwen_checkpoint-{latest_step}")
-                    
-                    local_ckpt = os.path.join(LLM_MODEL_DIR, f"checkpoint-{latest_step}")
-                    
-                    if os.path.exists(local_ckpt):
-                        print(f"   ✅ Already local")
-                        last_checkpoint = local_ckpt
-                    else:
-                        print(f"   📥 Downloading qwen_checkpoint-{latest_step}...")
-                        snapshot_download(
-                            repo_id=HF_DATASET_REPO,
-                            repo_type="dataset",
-                            allow_patterns=f"qwen_checkpoints/qwen_checkpoint-{latest_step}/*",
-                            local_dir="./csv/_qwen_temp",
-                            token=os.getenv("hf_token"),
-                        )
-                        
-                        import shutil
-                        src = f"./csv/_qwen_temp/qwen_checkpoints/qwen_checkpoint-{latest_step}"
-                        if os.path.exists(src):
-                            os.makedirs(LLM_MODEL_DIR, exist_ok=True)
-                            if os.path.exists(local_ckpt):
-                                shutil.rmtree(local_ckpt)
-                            shutil.move(src, local_ckpt)
-                            shutil.rmtree("./csv/_qwen_temp", ignore_errors=True)
-                            last_checkpoint = local_ckpt
-                            print(f"   ✅ Downloaded to {local_ckpt}")
-                else:
-                    print("   ℹ️ No Qwen checkpoint found in HF")
-            except Exception as e:
-                print(f"   ⚠️ HF checkpoint fetch failed: {e}")
+        print(f"   🔍 Scanning local checkpoints in: {QWEN_LOCAL_CHECKPOINT_DIR}")
         
-        # Fallback: local checkpoints
-        if last_checkpoint is None:
-            local_ckpts = glob.glob(os.path.join(LLM_MODEL_DIR, "checkpoint-*"))
-            if local_ckpts:
-                def step_num(p):
-                    m = re.search(r'checkpoint-(\d+)', p)
-                    return int(m.group(1)) if m else 0
-                last_checkpoint = sorted(local_ckpts, key=step_num)[-1]
-                print(f"   📂 Local checkpoint: {last_checkpoint}")
-            else:
-                print(f"   ℹ️ No checkpoint - starting fresh")
+        # Check both naming patterns for compatibility
+        local_patterns = [
+            os.path.join(QWEN_LOCAL_CHECKPOINT_DIR, "qwen_checkpoint-*"),
+            os.path.join(QWEN_LOCAL_CHECKPOINT_DIR, "checkpoint-*"),
+        ]
+        
+        all_local_ckpts = []
+        for pattern in local_patterns:
+            found = glob.glob(pattern)
+            if found:
+                all_local_ckpts.extend(found)
+        
+        if all_local_ckpts:
+            def get_step_num(path):
+                m = re.search(r'checkpoint-(\d+)', path)
+                return int(m.group(1)) if m else 0
+            
+            last_checkpoint = sorted(all_local_ckpts, key=get_step_num)[-1]
+            print(f"   ✅ Found local checkpoint: {last_checkpoint}")
+            print(f"   📊 Step: {get_step_num(last_checkpoint)}")
+        else:
+            print(f"   ℹ️ No local checkpoint found - starting fresh")
 
         if last_checkpoint:
             send_telegram_message(
-                f"🔄 <b>Resuming Qwen from</b>\n📂 {last_checkpoint}\n🎯 Mode: {mode.upper()}",
+                f"🔄 <b>Resuming Qwen from LOCAL</b>\n📂 {last_checkpoint}\n🎯 Mode: {mode.upper()}",
                 self.telegram_token, self.telegram_chat_id
             )
             
@@ -1153,7 +1122,7 @@ class AutoQwenTrainer:
             warmup_steps=100,
             weight_decay=0.025,
             lr_scheduler_type="cosine_with_restarts",
-            save_steps=20,              # ✅ More frequent (GitHub Actions 6h limit)
+            save_steps=20,
             save_total_limit=5,
             logging_steps=10,
             save_strategy="steps",
@@ -1194,6 +1163,19 @@ class AutoQwenTrainer:
                         print(f"\n   📤 Uploading Qwen checkpoint {state.global_step} to HF...")
                         self.hf_uploader.upload_checkpoint(checkpoint_dir, state.global_step)
                         self.hf_uploader.upload_tracking_files()
+                        
+                        # ✅ Also copy to local qwen_checkpoints/ dir for resume
+                        try:
+                            import shutil
+                            local_ckpt_target = os.path.join(
+                                QWEN_LOCAL_CHECKPOINT_DIR,
+                                f"qwen_checkpoint-{state.global_step}"
+                            )
+                            if not os.path.exists(local_ckpt_target):
+                                shutil.copytree(checkpoint_dir, local_ckpt_target)
+                                print(f"   💾 Local copy saved: {local_ckpt_target}")
+                        except Exception as e:
+                            print(f"   ⚠️ Local copy failed: {e}")
                 return control         
         
             def __getattr__(self, name):
@@ -1204,7 +1186,8 @@ class AutoQwenTrainer:
         trainer.add_callback(CustomHFCallback(self.hf_uploader))
 
         print("\n🏋️ Starting Qwen Training...")
-        print(f"   📤 Checkpoints → {HF_DATASET_REPO}/{QWEN_HF_CHECKPOINT_PREFIX}*")
+        print(f"   📂 Local checkpoints: {QWEN_LOCAL_CHECKPOINT_DIR}")
+        print(f"   📤 HF checkpoints → {HF_DATASET_REPO}/{QWEN_HF_CHECKPOINT_PREFIX}*")
         
         try:
             trainer.train(resume_from_checkpoint=last_checkpoint)
@@ -1302,6 +1285,7 @@ class AutoQwenTrainer:
         print(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"🧠 Model: {BASE_MODEL}")
         print(f"📁 Local dir: {LLM_MODEL_DIR}")
+        print(f"📁 Local checkpoints: {QWEN_LOCAL_CHECKPOINT_DIR}")
         print(f"📚 Batch size: {BATCH_SIZE}")
         print(f"🔧 LoRA: r={LORA_CONFIG['r']}, alpha={LORA_CONFIG['lora_alpha']}")
         print(f"📊 XGBoost Models: {len(self.xgb_ppo.xgb_models)}")
@@ -1415,6 +1399,7 @@ Confidence: {min(95, max(65, int(ex.get('confidence', 0.7) * 100 + 10)))}
         print(f"   XGBoost Models: {len(self.xgb_ppo.xgb_models)}")
         print(f"   PPO Models: {len(self.xgb_ppo.ppo_models)}")
         print(f"   Local Qwen Dir: {LLM_MODEL_DIR}")
+        print(f"   Local Checkpoints: {QWEN_LOCAL_CHECKPOINT_DIR}")
         print(f"   HF Dataset Repo: {HF_DATASET_REPO}")
         print("="*60)
 
