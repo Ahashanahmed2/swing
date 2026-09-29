@@ -25,7 +25,7 @@ LOCAL_DIR = "./csv"
 
 # ✅ Qwen-specific paths
 QWEN_HF_CHECKPOINT_PREFIX = "qwen_checkpoints/qwen_checkpoint-"   # HF path
-QWEN_LOCAL_CHECKPOINT_DIR = "./csv/llm_model_qwen"                # Local dir
+QWEN_LOCAL_CHECKPOINT_DIR = "./csv/qwen_checkpoints"                # Local dir
 QWEN_MODEL_DIR = "./csv/llm_model_qwen"                           # Local model dir
 
 MAX_WORKERS = 2
