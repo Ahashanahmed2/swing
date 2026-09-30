@@ -1308,8 +1308,7 @@ class AutoQwen3Trainer:
         print("\n📌 Mode Legend:")
         print("   • first_train     → 🎯 First Time (Qwen3 base)")
         print("   • incremental     → ⚙️ New Symbols Added")
-        print("   • weekly
-        tune → 🔄 WEEKLY FINE-TUNE")
+        print("   • weekly_finetune → 🔄 WEEKLY FINE-TUNE")
         print("   • consolidate     → 📈 MONTHLY RE-TUNE")
         print("   • mistake_learning→ 🎯 Learning from Mistakes")
         print("="*60)
