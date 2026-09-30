@@ -2,7 +2,7 @@ name: ppo Train
 
 on:
   schedule:
-      - cron: "58 20 * * 6"
+      - cron: "0 */6 * * *"
   workflow_dispatch:  # ম্যানুয়ালি চালাতে পারবে
 
 permissions:
