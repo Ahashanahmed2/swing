@@ -100,18 +100,16 @@ QWEN3_FINAL_MODEL_PREFIX = "final_model_qwen3"                         # HF fina
 QWEN3_LOCAL_CHECKPOINT_DIR = "./csv/qwen3_checkpoints"                 # ← resume from local
 
 # ✅ ALL LOCAL PATHS UPDATED TO ./csv/
-TRACKING_FILE = "./csv/trained_symbols.json"
-BATCH_TRACKING_FILE = "./csv/batch_tracking.json"
-LAST_FINE_TUNE_FILE = "./csv/last_finetune.txt"
-LAST_CONSOLIDATE_FILE = "./csv/last_consolidate.txt"
-
+TRACKING_FILE = "./csv/trained_symbols_qwen3.json"
+BATCH_TRACKING_FILE = "./csv/batch_tracking_qwen3.json"
+LAST_FINE_TUNE_FILE = "./csv/last_finetune_qwen3.txt"
+LAST_CONSOLIDATE_FILE = "./csv/last_consolidate_qwen3.txt"
 # ✅ LOCAL DATA PATHS ONLY - NO HF DOWNLOAD
-TRAINING_DATA_PATH = "./csv/training_texts.txt"
 MARKET_DATA_PATH = "./csv/mongodb.csv"
-MISTAKES_FILE = "./csv/trading_mistakes.csv"
-CONFIDENCE_LOG = "./csv/llm_confidence_log.csv"
-HARD_EXAMPLES_FILE = "./csv/hard_examples.csv"
-
+TRAINING_DATA_PATH = "./csv/training_texts_qwen3.txt"
+MISTAKES_FILE = "./csv/trading_mistakes_qwen3.csv"
+CONFIDENCE_LOG = "./csv/llm_confidence_log_qwen3.csv"
+HARD_EXAMPLES_FILE = "./csv/hard_examples_qwen3.csv"
 # XGBoost and PPO paths
 XGBOOST_DIR = "./csv/xgboost"
 PPO_MODELS_DIR = "./csv/ppo_models"
