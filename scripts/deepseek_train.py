@@ -87,7 +87,7 @@ LAST_CONSOLIDATE_FILE = "./csv/last_consolidate_deepseek.txt"
 
 # ✅ Data paths
 MARKET_DATA_PATH = "./csv/mongodb.csv"
-TRAINING_DATA_PATH = "./csv/training_texts_deepseek.txt"
+TRAINING_DATA_PATH = "./csv/training_texts.txt"
 MISTAKES_FILE = "./csv/trading_mistakes_deepseek.csv"
 CONFIDENCE_LOG = "./csv/llm_confidence_log_deepseek.csv"
 HARD_EXAMPLES_FILE = "./csv/hard_examples_deepseek.csv"
