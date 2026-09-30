@@ -1,0 +1,107 @@
+name: DeepSeek Train
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deepseek_train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Create necessary directories
+        run: |
+          mkdir -p ./csv/llm_model_deepseek
+          mkdir -p ./csv/deepseek_checkpoints
+          mkdir -p ./csv/xgboost
+          mkdir -p ./csv/ppo_models
+          mkdir -p ./csv/ppo_models/per_symbol
+          mkdir -p ./csv/agentic_loop_logs
+          echo "✅ Directories created"
+          ls -la ./csv/
+
+      - name: Install dependencies
+        run: |
+          pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cpu
+          python -c "import torch; print('PyTorch:', torch.__version__)"
+
+          pip install --force-reinstall "transformers>=4.51.0,<4.55.0"
+          python -c "import transformers; print('Transformers:', transformers.__version__)"
+          python -c "from transformers import TrainingArguments; print('TrainingArguments OK')"
+
+          pip install --force-reinstall "accelerate>=1.0.0,<2.0.0"
+          pip install --force-reinstall "peft>=0.13.0,<1.0.0"
+
+          pip install huggingface_hub requests joblib
+          pip install -r requirements.txt
+
+          echo "✅ Dependencies installed"
+
+      - name: Verify DeepSeek architecture support
+        run: |
+          python -c "
+          from transformers import AutoConfig
+          import transformers
+          print(f'Transformers: {transformers.__version__}')
+
+          # Check Qwen2 support (DeepSeek-R1-Distill uses Qwen2 architecture)
+          from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+          if 'qwen2' in CONFIG_MAPPING:
+              print('✅ Qwen2 architecture supported (needed for DeepSeek-R1-Distill)')
+          else:
+              print('❌ Qwen2 architecture NOT supported!')
+              exit(1)
+          "
+
+      - name: Run DeepSeek pipeline
+        env:
+          MONGODBEMAIL_URI: ${{ secrets.MONGODBEMAIL_URI }}
+          MONGO_URL: ${{ secrets.MONGO_URL }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN_TRADE }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID_TRADE }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          hf_token: ${{ secrets.HF_TOKEN }}
+          TOKENIZERS_PARALLELISM: "false"
+        run: |
+          # ✅ Run download → data gen → train
+          python scripts/deepseek_download.py
+          python scripts/generate_pattern_training_data_complete.py --symbols "" || true
+          python scripts/deepseek_train.py
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepseek-logs-${{ github.run_number }}
+          path: |
+            ./csv/current_training_status.json
+            ./csv/agentic_loop_logs/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Notify Telegram on failure
+        if: failure()
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN_TRADE }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID_TRADE }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            -d "text=⚠️ DeepSeek Training FAILED (run #${{ github.run_number }})" || true
