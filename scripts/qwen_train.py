@@ -284,36 +284,35 @@ class HFUploader:
         except Exception as e:
             print(f"   ⚠️ Qwen3 final model upload failed: {e}")
             return False
-    
-    def upload_tracking_files(self):
-        """Upload tracking files to HF Dataset repo"""
-        if self.api is None:
-            return
-        
-        try:
-            if os.path.exists(TRACKING_FILE):
-                self.api.upload_file(
-                    path_or_fileobj=TRACKING_FILE,
-                    path_in_repo="trained_symbols.json",
-                    repo_id=self.repo_id,
-                    repo_type="dataset",
-                    commit_message=f"Update trained symbols - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-                )
-                print(f"   📤 trained_symbols.json uploaded")
             
-            if os.path.exists(BATCH_TRACKING_FILE):
-                self.api.upload_file(
-                    path_or_fileobj=BATCH_TRACKING_FILE,
-                    path_in_repo="batch_tracking.json",
-                    repo_id=self.repo_id,
-                    repo_type="dataset",
-                    commit_message=f"Update batch tracking - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-                )
-                print(f"   📤 batch_tracking.json uploaded")
-                
-        except Exception as e:
-            print(f"   ⚠️ Tracking upload failed: {e}")
-
+    def upload_tracking_files(self):
+    """Upload Qwen3 tracking files to HF Dataset repo (with _qwen3 suffix)"""
+    if self.api is None:
+        return
+    
+    try:
+        if os.path.exists(TRACKING_FILE):
+            self.api.upload_file(
+                path_or_fileobj=TRACKING_FILE,
+                path_in_repo="trained_symbols_qwen3.json",     # ✅ _qwen3 suffix
+                repo_id=self.repo_id,
+                repo_type="dataset",
+                commit_message=f"Update Qwen3 trained symbols - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            )
+            print(f"   📤 trained_symbols_qwen3.json uploaded")
+        
+        if os.path.exists(BATCH_TRACKING_FILE):
+            self.api.upload_file(
+                path_or_fileobj=BATCH_TRACKING_FILE,
+                path_in_repo="batch_tracking_qwen3.json",      # ✅ _qwen3 suffix
+                repo_id=self.repo_id,
+                repo_type="dataset",
+                commit_message=f"Update Qwen3 batch tracking - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            )
+            print(f"   📤 batch_tracking_qwen3.json uploaded")
+            
+    except Exception as e:
+        print(f"   ⚠️ Tracking upload failed: {e}")
 
 # =========================================================
 # BATCH MANAGER
