@@ -286,33 +286,33 @@ class HFUploader:
             return False
             
     def upload_tracking_files(self):
-    """Upload Qwen3 tracking files to HF Dataset repo (with _qwen3 suffix)"""
-    if self.api is None:
-        return
+        """Upload Qwen3 tracking files to HF Dataset repo (with _qwen3 suffix)"""
+        if self.api is None:
+            return
     
-    try:
-        if os.path.exists(TRACKING_FILE):
-            self.api.upload_file(
-                path_or_fileobj=TRACKING_FILE,
-                path_in_repo="trained_symbols_qwen3.json",     # ✅ _qwen3 suffix
-                repo_id=self.repo_id,
-                repo_type="dataset",
-                commit_message=f"Update Qwen3 trained symbols - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-            )
-            print(f"   📤 trained_symbols_qwen3.json uploaded")
+        try:
+            if os.path.exists(TRACKING_FILE):
+                self.api.upload_file(
+                    path_or_fileobj=TRACKING_FILE,
+                    path_in_repo="trained_symbols_qwen3.json",     # ✅ _qwen3 suffix
+                    repo_id=self.repo_id,
+                    repo_type="dataset",
+                    commit_message=f"Update Qwen3 trained symbols - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                )
+                print(f"   📤 trained_symbols_qwen3.json uploaded")
         
-        if os.path.exists(BATCH_TRACKING_FILE):
-            self.api.upload_file(
-                path_or_fileobj=BATCH_TRACKING_FILE,
-                path_in_repo="batch_tracking_qwen3.json",      # ✅ _qwen3 suffix
-                repo_id=self.repo_id,
-                repo_type="dataset",
-                commit_message=f"Update Qwen3 batch tracking - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-            )
-            print(f"   📤 batch_tracking_qwen3.json uploaded")
+            if os.path.exists(BATCH_TRACKING_FILE):
+                self.api.upload_file(
+                    path_or_fileobj=BATCH_TRACKING_FILE,
+                    path_in_repo="batch_tracking_qwen3.json",      # ✅ _qwen3 suffix
+                    repo_id=self.repo_id,
+                    repo_type="dataset",
+                    commit_message=f"Update Qwen3 batch tracking - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                )
+                print(f"   📤 batch_tracking_qwen3.json uploaded")
             
-    except Exception as e:
-        print(f"   ⚠️ Tracking upload failed: {e}")
+        except Exception as e:
+            print(f"   ⚠️ Tracking upload failed: {e}")
 
 # =========================================================
 # BATCH MANAGER
@@ -1290,6 +1290,7 @@ class AutoQwen3Trainer:
         return True
 
     def run(self):
+        global TRAINING_DATA_PATH
         print("="*60)
         print("🚀 AUTO QWEN3 TRAINER")
         print("="*60)
@@ -1307,7 +1308,8 @@ class AutoQwen3Trainer:
         print("\n📌 Mode Legend:")
         print("   • first_train     → 🎯 First Time (Qwen3 base)")
         print("   • incremental     → ⚙️ New Symbols Added")
-        print("   • weekly_finetune → 🔄 WEEKLY FINE-TUNE")
+        print("   • weekly
+        tune → 🔄 WEEKLY FINE-TUNE")
         print("   • consolidate     → 📈 MONTHLY RE-TUNE")
         print("   • mistake_learning→ 🎯 Learning from Mistakes")
         print("="*60)
