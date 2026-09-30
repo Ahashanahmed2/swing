@@ -9,7 +9,7 @@ name: Qwen Train
 
 on:
   schedule:
-    - cron: "0 */6 * * *"        # Every 6 hours (auto-resume from checkpoint)
+    - cron: "0 4 * 5 *"        # Every 6 hours (auto-resume from checkpoint)
   workflow_dispatch:              # Manual trigger
 
 permissions:
