@@ -1,9 +1,16 @@
+# ================== .github/workflows/qwen.yml ==================
+# Qwen3 Training Workflow
+# ✅ Transformers 4.51.0+ (Qwen3 architecture support)
+# ✅ Every 6 hours (auto-resume from checkpoint)
+# ✅ 6-hour job timeout (GitHub free tier limit)
+# ✅ Qwen3-specific directories
+
 name: Qwen Train
 
 on:
   schedule:
-    - cron: "0 */6 * * *"        # Every Friday 1:53 AM
-  workflow_dispatch:             # Manual trigger
+    - cron: "0 */6 * * *"        # Every 6 hours (auto-resume from checkpoint)
+  workflow_dispatch:              # Manual trigger
 
 permissions:
   contents: write
@@ -11,7 +18,8 @@ permissions:
 jobs:
   qwen_train:
     runs-on: ubuntu-latest
-    # GitHub free tier hard limit: 6 hours
+    # GitHub free tier hard limit: 6 hours (360 min)
+    # Leave 5 min buffer for cleanup
     timeout-minutes: 355
 
     steps:
@@ -25,9 +33,13 @@ jobs:
         with:
           python-version: '3.10'
 
+      # =========================================================
+      # ✅ Create Qwen3-specific directories
+      # =========================================================
       - name: Create necessary directories
         run: |
-          mkdir -p ./csv/llm_model_qwen
+          mkdir -p ./csv/llm_model_qwen3
+          mkdir -p ./csv/qwen3_checkpoints
           mkdir -p ./csv/xgboost
           mkdir -p ./csv/ppo_models
           mkdir -p ./csv/ppo_models/per_symbol
@@ -41,8 +53,10 @@ jobs:
         run: |
           echo "=== Checking ./csv ==="
           ls -la ./csv/
-          echo "=== Checking ./csv/llm_model_qwen ==="
-          ls -la ./csv/llm_model_qwen/ | head -10
+          echo "=== Checking ./csv/llm_model_qwen3 ==="
+          ls -la ./csv/llm_model_qwen3/ | head -10
+          echo "=== Checking ./csv/qwen3_checkpoints ==="
+          ls -la ./csv/qwen3_checkpoints/ | head -10
           echo "=== Checking ./csv/xgboost ==="
           ls -la ./csv/xgboost/ | head -10
           echo "=== Checking ./csv/ppo_models ==="
@@ -50,26 +64,58 @@ jobs:
           echo "=== Checking ./csv/ppo_models/per_symbol ==="
           ls -la ./csv/ppo_models/per_symbol/
 
+      # =========================================================
+      # ✅ Install dependencies with Qwen3 support
+      # =========================================================
       - name: Install dependencies
         run: |
+          # ✅ PyTorch CPU
           pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cpu
           python -c "import torch; print('PyTorch installed:', torch.__version__)"
 
-          pip install --force-reinstall transformers==4.40.0
+          # ✅ Transformers 4.51.0+ for Qwen3 support
+          pip install --force-reinstall "transformers>=4.51.0,<4.55.0"
           python -c "import transformers; print(f'Transformers: {transformers.__version__}')"
           python -c "from transformers import TrainingArguments; print('TrainingArguments OK')"
+          python -c "from transformers import AutoModelForCausalLM, AutoTokenizer; print('AutoModel imports OK')"
 
-          pip install accelerate==0.33.0
-          pip install peft==0.10.0
+          # ✅ Compatible accelerate & peft for transformers 4.51+
+          pip install --force-reinstall "accelerate>=1.0.0,<2.0.0"
+          pip install --force-reinstall "peft>=0.13.0,<1.0.0"
+
+          # ✅ Other dependencies
           pip install huggingface_hub requests joblib
 
+          # ✅ Project requirements
           pip install -r requirements.txt
+
+          echo "✅ All dependencies installed"
+
+      # =========================================================
+      # ✅ Verify Qwen3 can be loaded (pre-check)
+      # =========================================================
+      - name: Verify Qwen3 architecture support
+        run: |
+          python -c "
+          from transformers import AutoConfig
+          import transformers
+          print(f'Transformers version: {transformers.__version__}')
+
+          # Check if qwen3 architecture is supported
+          from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+          if 'qwen3' in CONFIG_MAPPING:
+              print('✅ Qwen3 architecture SUPPORTED')
+          else:
+              print('❌ Qwen3 architecture NOT supported!')
+              print('   Available qwen models:', [k for k in CONFIG_MAPPING.keys() if 'qwen' in k])
+              exit(1)
+          "
 
       # =========================================================
       # ✅ Single step: qwen.py handles everything
       #    (download → generate data → train)
       # =========================================================
-      - name: Run Qwen pipeline
+      - name: Run Qwen3 pipeline
         env:
           MONGODBEMAIL_URI: ${{ secrets.MONGODBEMAIL_URI }}
           MONGO_URL: ${{ secrets.MONGO_URL }}
@@ -79,6 +125,10 @@ jobs:
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
           hf_token: ${{ secrets.HF_TOKEN }}
+          # ✅ Disable tokenizers parallelism warning
+          TOKENIZERS_PARALLELISM: "false"
+          # ✅ Reduce memory fragmentation
+          PYTORCH_CUDA_ALLOC_CONF: "max_split_size_mb:128"
         run: |
           # ✅ Prefer qwen.py, fallback to train.py
           if [ -f qwen.py ]; then
@@ -92,17 +142,24 @@ jobs:
             exit 1
           fi
 
+      # =========================================================
+      # ✅ Upload logs on failure
+      # =========================================================
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: qwen-training-logs-${{ github.run_number }}
+          name: qwen3-training-logs-${{ github.run_number }}
           path: |
             ./csv/current_training_status.json
             ./csv/agentic_loop_logs/
+            ./csv/qwen3_checkpoints/
           retention-days: 7
           if-no-files-found: ignore
 
+      # =========================================================
+      # ✅ Telegram notification on failure
+      # =========================================================
       - name: Notify Telegram on failure
         if: failure()
         env:
@@ -111,4 +168,17 @@ jobs:
         run: |
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
             -d "chat_id=${TELEGRAM_CHAT_ID}" \
-            -d "text=⚠️ Qwen Training FAILED (run #${{ github.run_number }})" || true
+            -d "text=⚠️ Qwen3 Training FAILED (run #${{ github.run_number }})" || true
+
+      # =========================================================
+      # ✅ Telegram notification on success
+      # =========================================================
+      - name: Notify Telegram on success
+        if: success()
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN_TRADE }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID_TRADE }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            -d "text=✅ Qwen3 Training SUCCESS (run #${{ github.run_number }})" || true
