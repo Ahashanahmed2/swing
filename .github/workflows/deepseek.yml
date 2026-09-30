@@ -81,9 +81,8 @@ jobs:
           TOKENIZERS_PARALLELISM: "false"
         run: |
           # ✅ Run download → data gen → train
-          python scripts/deepseek_download.py
-          python scripts/generate_pattern_training_data_complete.py --symbols "" || true
-          python scripts/deepseek_train.py
+          python deepseek.py
+          
 
       - name: Upload logs on failure
         if: failure()
