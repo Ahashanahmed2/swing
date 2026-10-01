@@ -106,7 +106,7 @@ LAST_FINE_TUNE_FILE = "./csv/last_finetune_qwen3.txt"
 LAST_CONSOLIDATE_FILE = "./csv/last_consolidate_qwen3.txt"
 # ✅ LOCAL DATA PATHS ONLY - NO HF DOWNLOAD
 MARKET_DATA_PATH = "./csv/mongodb.csv"
-TRAINING_DATA_PATH = "./csv/training_texts_qwen3.txt"
+TRAINING_DATA_PATH = "./csv/training_texts.txt"
 MISTAKES_FILE = "./csv/trading_mistakes_qwen3.csv"
 CONFIDENCE_LOG = "./csv/llm_confidence_log_qwen3.csv"
 HARD_EXAMPLES_FILE = "./csv/hard_examples_qwen3.csv"
