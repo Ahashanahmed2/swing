@@ -10,6 +10,16 @@
 
 import os
 import torch
+# Line 1203 এর আগে যোগ করুন
+
+_original_torch_load = torch.load
+def _patched_torch_load(*args, **kwargs):
+    kwargs.setdefault('weights_only', False)
+    return _original_torch_load(*args, **kwargs)
+torch.load = _patched_torch_load
+
+# এখন আপনার existing line
+trainer.train(resume_from_checkpoint=last_checkpoint)  # Line 1203
 import json
 import warnings
 import pandas as pd
