@@ -40,14 +40,14 @@ jobs:
           pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cpu
           python -c "import torch; print('PyTorch:', torch.__version__)"
 
-          pip install --force-reinstall "transformers>=4.51.0,<4.55.0"
+          pip install --force-reinstall "transformers==4.51.0"
           python -c "import transformers; print('Transformers:', transformers.__version__)"
           python -c "from transformers import TrainingArguments; print('TrainingArguments OK')"
 
-          pip install --force-reinstall "accelerate>=1.0.0,<2.0.0"
-          pip install --force-reinstall "peft>=0.13.0,<1.0.0"
+          pip install --force-reinstall "accelerate==1.0.1"
+          pip install --force-reinstall "peft==0.13.2"
 
-          pip install huggingface_hub requests joblib
+          pip install huggingface_hub acceleratere joblib
           pip install -r requirements.txt
 
           echo "✅ Dependencies installed"
