@@ -44,9 +44,7 @@ jobs:
           pip install --force-reinstall --no-deps "transformers==4.51.0"
           pip install --force-reinstall --no-deps "accelerate==1.0.1"
           pip install --force-reinstall --no-deps "peft==0.13.2"
-          pip install --force-reinstall --no-deps "tokenizers==0.20.3"
-
-          
+          pip install --force-reinstall --no-deps "tokenizers>=0.21,<0.22"          
           pip install -r requirements.txt
 
           echo "✅ Dependencies installed"
