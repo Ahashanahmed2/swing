@@ -452,7 +452,7 @@ class XGBoostPPOIntegrator:
 # =========================================================
 
 class WeightedTrainer(Trainer):
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs, return_outputs=False,num_items_in_batch=None):
         weights = inputs.get("weight", None)
         labels = inputs.get("labels")
 
