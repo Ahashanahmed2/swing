@@ -877,7 +877,7 @@ class AutoDeepSeekTrainer:
 
         training_args = TrainingArguments(
             output_dir=LLM_MODEL_DIR,
-            overwrite_output_dir=False,
+            #overwrite_output_dir=False,
             num_train_epochs=num_epochs,
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size,
@@ -890,8 +890,8 @@ class AutoDeepSeekTrainer:
             save_total_limit=5,
             logging_steps=10,
             save_strategy="steps",
-            evaluation_strategy="no",
-            load_best_model_at_end=False,
+            #evaluation_strategy="no",
+            #load_best_model_at_end=False,
             fp16=False,
             dataloader_num_workers=0,
             dataloader_pin_memory=False,
