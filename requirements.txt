@@ -1,5 +1,4 @@
-pymongo
-ta
+cffi
 dotenv
 requests
 fpdf2>=2.7.0
@@ -25,4 +24,5 @@ requests>=2.31.0
 urllib3>=2.0.0
 certifi>=2023.0.0
 pytz>=2023.0
-curl_cffi
+curl_ccurl
+regex>=2023.0.0
