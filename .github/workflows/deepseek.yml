@@ -46,7 +46,7 @@ jobs:
           pip install --force-reinstall --no-deps "peft==0.13.2"
           pip install --force-reinstall --no-deps "tokenizers==0.20.3"
 
-          pip install huggingface_hub acceleratere joblib
+          
           pip install -r requirements.txt
 
           echo "✅ Dependencies installed"
