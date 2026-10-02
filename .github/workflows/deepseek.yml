@@ -41,7 +41,7 @@ jobs:
           pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cpu
           python -c "import torch; print('PyTorch:', torch.__version__)"
 
-          echo "📦 Installing LLM stack (exact versions, isolated)..."
+          echo "📦 Installing LLM stack..."
           pip install --no-deps \
             "transformers==4.51.0" \
             "huggingface_hub==0.30.0" \
@@ -98,38 +98,38 @@ jobs:
       - name: Verify dependency versions
         run: |
           python -c "
-import transformers
-import huggingface_hub
-import tokenizers
-import torch
+          import transformers
+          import huggingface_hub
+          import tokenizers
+          import torch
 
-print('=' * 50)
-print(f'Transformers:    {transformers.__version__}')
-print(f'HF Hub:          {huggingface_hub.__version__}')
-print(f'Tokenizers:      {tokenizers.__version__}')
-print(f'PyTorch:         {torch.__version__}')
-print('=' * 50)
+          print('=' * 50)
+          print(f'Transformers:    {transformers.__version__}')
+          print(f'HF Hub:          {huggingface_hub.__version__}')
+          print(f'Tokenizers:      {tokenizers.__version__}')
+          print(f'PyTorch:         {torch.__version__}')
+          print('=' * 50)
 
-assert transformers.__version__ == '4.51.0', f'❌ transformers {transformers.__version__}'
-assert huggingface_hub.__version__ == '0.30.0', f'❌ hub {huggingface_hub.__version__}'
-assert tokenizers.__version__ == '0.21.1', f'❌ tokenizers {tokenizers.__version__}'
-print('✅ All versions correct!')
-"
+          assert transformers.__version__ == '4.51.0'
+          assert huggingface_hub.__version__ == '0.30.0'
+          assert tokenizers.__version__ == '0.21.1'
+          print('✅ All versions correct!')
+          "
 
       - name: Verify DeepSeek architecture support
         run: |
           python -c "
-from transformers import AutoConfig
-import transformers
-print(f'Transformers: {transformers.__version__}')
+          from transformers import AutoConfig
+          import transformers
+          print(f'Transformers: {transformers.__version__}')
 
-from transformers.models.auto.configuration_auto import CONFIG_MAPPING
-if 'qwen2' in CONFIG_MAPPING:
-    print('✅ Qwen2 architecture supported (needed for DeepSeek-R1-Distill)')
-else:
-    print('❌ Qwen2 architecture NOT supported!')
-    exit(1)
-"
+          from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+          if 'qwen2' in CONFIG_MAPPING:
+              print('✅ Qwen2 architecture supported')
+          else:
+              print('❌ Qwen2 NOT supported!')
+              exit(1)
+          "
 
       - name: Run DeepSeek pipeline
         env:
