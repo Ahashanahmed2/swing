@@ -74,14 +74,14 @@ jobs:
           python -c "import torch; print('PyTorch installed:', torch.__version__)"
 
           # ✅ Transformers 4.51.0+ for Qwen3 support
-          pip install --force-reinstall "transformers>=4.51.0,<4.55.0"
+          pip install --force-reinstall "transformers>=4.51.0"
           python -c "import transformers; print(f'Transformers: {transformers.__version__}')"
           python -c "from transformers import TrainingArguments; print('TrainingArguments OK')"
           python -c "from transformers import AutoModelForCausalLM, AutoTokenizer; print('AutoModel imports OK')"
 
-          # ✅ Compatible accelerate & peft for transformers 4.51+
-          pip install --force-reinstall "accelerate>=1.0.0,<2.0.0"
-          pip install --force-reinstall "peft>=0.13.0,<1.0.0"
+          # ✅ Compatible accelerate & peft for transformers 4.51.0
+          pip install --force-reinstall "accelerate==1.0.1"
+          pip install --force-reinstall "peft==0.13.2"
 
           # ✅ Other dependencies
           pip install huggingface_hub requests joblib
