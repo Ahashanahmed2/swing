@@ -1,18 +1,15 @@
 """
 scripts/generate_final_ai_signals.py
-সমস্ত AI মডেল (LLM + XGBoost + PPO + Agentic Loop + Elliott Wave) একত্রে
+সমস্ত AI মডেল (GPT-2 + Qwen3 + DeepSeek + XGBoost + PPO + Agentic Loop + PatchTST) একত্রে
 কম্বাইন্ড ফাইনাল ট্রেডিং সিগন্যাল জেনারেটর
-✅ PPO: Actual model load with proper observation reshape (1, 50)
-✅ PPO: Safe action extraction (numpy 2.0 compatible)
-✅ Ensemble path fixed (uses PPO_MODELS_DIR)
-✅ Safe file loading (no crash if files missing)
-✅ PPO obs from real market features (not zeros)
-✅ Sector: Dynamic + cached mongo_by_symbol
-✅ Agentic Loop: Live consensus
-✅ PatchTST: Added prediction
-✅ Bullish Strong: Added from rsi_diver (rt, bbr, strong columns)
-✅ mongo_df loaded ONCE, cached as mongo_by_symbol
-✅ S/R সম্পূর্ণ বাদ - শুধু AI মডেল থেকে সিগনাল
+
+✅ LLM: GPT-2 (legacy) + Qwen3-0.6B + DeepSeek-1.5B
+✅ Elliott Wave: REMOVED
+✅ Bullish Strong: REMOVED
+✅ Sector Analysis: REMOVED
+✅ PPO: Real model load with proper obs reshape (1, 50)
+✅ PatchTST: Prediction included
+✅ Simplified 33-column output
 """
 
 import pandas as pd
@@ -35,7 +32,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # =========================================================
 # কনফিগারেশন
 # =========================================================
-LLM_MODEL_DIR = "./csv/llm_model"
+
+# ✅ LLM models (all 3)
+GPT2_MODEL_DIR = "./csv/llm_model"                     # ← GPT-2 (legacy)
+QWEN3_MODEL_DIR = "./csv/llm_model_qwen3"              # ← Qwen3
+DEEPSEEK_MODEL_DIR = "./csv/llm_model_deepseek"        # ← DeepSeek
+
 MONGO_PATH = "./csv/mongodb.csv"
 XGBOOST_DIR = "./csv/xgboost"
 PPO_MODELS_DIR = "./csv/ppo_models/per_symbol"
@@ -43,8 +45,6 @@ MODEL_METADATA_PATH = "./csv/model_metadata.csv"
 PREDICTION_LOG_PATH = "./csv/prediction_log.csv"
 XGB_CONFIDENCE_PATH = "./csv/xgb_confidence.csv"
 AGENTIC_LOOP_STATE = "./csv/agentic_loop_state.json"
-ELLIOTT_BACKTEST_PATH = "./csv/elliott_backtest.json"
-BULLISH_STRONG_PATH = "./output/ai_signal/bullish_strong.csv"
 
 FINAL_OUTPUT_PATH = "./output/ai_signal/FINAL_AI_SIGNALS.csv"
 os.makedirs("./output/ai_signal", exist_ok=True)
@@ -72,14 +72,6 @@ except ImportError:
     print("⚠️ Stable-Baselines3 not available")
 
 try:
-    from sector_features import SectorFeatureEngine
-    SECTOR_AVAILABLE = True
-    print("✅ SectorFeatureEngine loaded")
-except ImportError:
-    SECTOR_AVAILABLE = False
-    print("⚠️ SectorFeatureEngine not available")
-
-try:
     from agentic_loop import AgenticLoop
     AGENTIC_LOOP_AVAILABLE = True
     print("✅ Agentic Loop loaded")
@@ -96,16 +88,8 @@ except ImportError:
     print("⚠️ PatchTST not available")
 
 # =========================================================
-# ✅ INITIALIZE NEW COMPONENTS
+# ✅ INITIALIZE COMPONENTS
 # =========================================================
-
-sector_engine = None
-if SECTOR_AVAILABLE:
-    try:
-        sector_engine = SectorFeatureEngine(csv_market_path=MONGO_PATH)
-        print("✅ Sector Engine initialized")
-    except Exception as e:
-        print(f"⚠️ Sector Engine failed: {e}")
 
 agentic_loop = None
 if AGENTIC_LOOP_AVAILABLE:
@@ -124,55 +108,30 @@ if PATCHTST_AVAILABLE:
         print(f"⚠️ PatchTST failed: {e}")
 
 # =========================================================
-# ✅ BULLISH STRONG SIGNALS LOAD
-# =========================================================
-print("\n📂 Loading Bullish Strong signals...")
-bullish_strong_dict = {}
-bullish_strong_df = None
-
-try:
-    if os.path.exists(BULLISH_STRONG_PATH):
-        bullish_strong_df = pd.read_csv(BULLISH_STRONG_PATH)
-
-        for _, row in bullish_strong_df.iterrows():
-            symbol = row['symbol']
-            bullish_strong_dict[symbol] = {
-                'has_signal': True,
-                'high': row.get('high', 0),
-                'gape': row.get('gape', 0),
-                'rt': row.get('rt', '0:0'),
-                'bbr': row.get('bbr', 1.0),
-                'strong': row.get('strong', '0:0')
-            }
-
-        print(f"   ✅ Loaded {len(bullish_strong_dict)} Bullish Strong signals")
-    else:
-        print(f"   ⚠️ Bullish Strong file not found: {BULLISH_STRONG_PATH}")
-except Exception as e:
-    print(f"   ⚠️ Failed to load Bullish Strong: {e}")
-
-# =========================================================
-# এআই মডেল ওজন (Weight)
+# ✅ AI মডেল ওজন (Weights)
 # =========================================================
 AI_WEIGHTS = {
-    'llm': 0.30,
-    'xgb': 0.25,
-    'ppo': 0.15,
-    'agentic': 0.15,
-    'patch_tst': 0.10,
-    'sector': 0.05,
+    'gpt2': 0.10,         # GPT-2 (legacy)
+    'qwen3': 0.15,        # Qwen3-0.6B
+    'deepseek': 0.10,     # DeepSeek-1.5B
+    'xgb': 0.25,          # XGBoost
+    'ppo': 0.15,          # PPO
+    'agentic': 0.15,      # Agentic Loop
+    'patch_tst': 0.10,    # PatchTST
 }
+# Total = 1.00 ✅
 
 print("="*70)
-print("🤖 COMBINED AI TRADING SIGNAL GENERATOR (50-DIM PPO)")
+print("🤖 COMBINED AI TRADING SIGNAL GENERATOR")
 print("="*70)
 print(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print(f"📊 AI Weights: LLM={AI_WEIGHTS['llm']*100:.0f}% | XGB={AI_WEIGHTS['xgb']*100:.0f}% | PPO={AI_WEIGHTS['ppo']*100:.0f}% | Agentic={AI_WEIGHTS['agentic']*100:.0f}% | PatchTST={AI_WEIGHTS['patch_tst']*100:.0f}% | Sector={AI_WEIGHTS['sector']*100:.0f}%")
+print(f"📊 Weights: GPT2={AI_WEIGHTS['gpt2']*100:.0f}% | Qwen3={AI_WEIGHTS['qwen3']*100:.0f}% | DeepSeek={AI_WEIGHTS['deepseek']*100:.0f}%")
+print(f"          XGB={AI_WEIGHTS['xgb']*100:.0f}% | PPO={AI_WEIGHTS['ppo']*100:.0f}% | Agentic={AI_WEIGHTS['agentic']*100:.0f}% | PatchTST={AI_WEIGHTS['patch_tst']*100:.0f}%")
 print(f"🔧 PPO STATE_DIM={STATE_DIM} | WINDOW={WINDOW}")
 print("="*70)
 
 # =========================================================
-# ১. mongodb — ONCE লোড (perf + consistency)
+# ১. mongodb — ONCE লোড
 # =========================================================
 print("\n📂 Loading symbols from mongodb...")
 if not os.path.exists(MONGO_PATH):
@@ -185,19 +144,15 @@ mongo_df = mongo_df.sort_values(['symbol', 'date'])
 target_symbols = mongo_df['symbol'].unique().tolist()
 print(f"   ✅ Loaded {len(target_symbols)} symbols")
 
-# Per-symbol data cache (perf)
+# Per-symbol cache
 mongo_by_symbol = {sym: grp for sym, grp in mongo_df.groupby('symbol')}
 latest_market = mongo_df.groupby('symbol').tail(1).set_index('symbol')
 
 # =========================================================
-# ✅ PPO OBSERVATION BUILDER — matches training format (50-dim)
+# ✅ PPO OBSERVATION BUILDER
 # =========================================================
 def build_ppo_observation(symbol, symbol_df=None, window=WINDOW):
-    """
-    Build 50-dim PPO observation from market features.
-    MUST match ppo_train.py build_observation() and env_trading.py:
-    last `window` rows of [open,high,low,close,volume] flattened → 50 dims
-    """
+    """Build 50-dim PPO observation from market features."""
     try:
         if symbol_df is None:
             symbol_df = mongo_by_symbol.get(symbol)
@@ -213,14 +168,12 @@ def build_ppo_observation(symbol, symbol_df=None, window=WINDOW):
 
         seg = sym_tail[available_cols].values.astype(np.float32)
 
-        # Pad rows to WINDOW
         if len(seg) < window:
             pad = window - len(seg)
             seg = np.pad(seg, ((pad, 0), (0, 0)), mode="edge")
 
         market_vec = seg.flatten()
 
-        # Ensure exact STATE_DIM
         if len(market_vec) < STATE_DIM:
             market_vec = np.pad(market_vec, (0, STATE_DIM - len(market_vec)))
         elif len(market_vec) > STATE_DIM:
@@ -231,10 +184,10 @@ def build_ppo_observation(symbol, symbol_df=None, window=WINDOW):
         return np.zeros(STATE_DIM, dtype=np.float32)
 
 # =========================================================
-# ✅ SAFE ACTION EXTRACTOR (numpy 2.0 compatible)
+# ✅ SAFE ACTION EXTRACTOR
 # =========================================================
 def extract_ppo_action(action):
-    """Extract scalar action value from PPO predict output (any shape)."""
+    """Extract scalar action value from PPO predict output."""
     try:
         action_arr = np.asarray(action).flatten()
         if len(action_arr) > 0:
@@ -244,11 +197,10 @@ def extract_ppo_action(action):
     return 0
 
 # =========================================================
-# ২. XGBoost ডেটা লোড — ✅ SAFE LOADING
+# ২. XGBoost ডেটা লোড
 # =========================================================
 print("\n📂 Loading XGBoost data...")
 
-# ✅ Safe load model_metadata
 meta_df = pd.DataFrame()
 good_xgb_symbols = np.array([])
 if os.path.exists(MODEL_METADATA_PATH):
@@ -258,14 +210,9 @@ if os.path.exists(MODEL_METADATA_PATH):
             meta_df = _meta[_meta['auc'] >= 0.55]
             good_xgb_symbols = meta_df['symbol'].unique()
             print(f"   ✅ model_metadata.csv loaded ({len(good_xgb_symbols)} good models)")
-        else:
-            print(f"   ⚠️ model_metadata.csv missing 'auc'/'symbol' columns")
     except Exception as e:
         print(f"   ⚠️ Failed to load model_metadata: {e}")
-else:
-    print(f"   ⚠️ model_metadata.csv not found — XGB signals disabled")
 
-# ✅ Safe load prediction_log
 pred_df = pd.DataFrame()
 if os.path.exists(PREDICTION_LOG_PATH):
     try:
@@ -277,10 +224,7 @@ if os.path.exists(PREDICTION_LOG_PATH):
     except Exception as e:
         print(f"   ⚠️ Failed to load prediction_log: {e}")
         pred_df = pd.DataFrame()
-else:
-    print(f"   ⚠️ prediction_log.csv not found")
 
-# ✅ Safe load xgb_confidence
 conf_df = pd.DataFrame()
 if os.path.exists(XGB_CONFIDENCE_PATH):
     try:
@@ -290,26 +234,20 @@ if os.path.exists(XGB_CONFIDENCE_PATH):
     except Exception as e:
         print(f"   ⚠️ Failed to load xgb_confidence: {e}")
         conf_df = pd.DataFrame()
-else:
-    print(f"   ⚠️ xgb_confidence.csv not found")
 
-# Merge if possible
 if not pred_df.empty and not conf_df.empty:
     try:
         xgb_df = pd.merge(pred_df, conf_df, on=['symbol', 'date'], how='left')
     except Exception as e:
-        print(f"   ⚠️ Merge failed: {e}")
         xgb_df = pred_df.copy()
 elif not pred_df.empty:
     xgb_df = pred_df.copy()
 else:
     xgb_df = pd.DataFrame()
 
-# Filter to good symbols
 if not xgb_df.empty and len(good_xgb_symbols) > 0:
     xgb_df = xgb_df[xgb_df['symbol'].isin(good_xgb_symbols)]
 
-# Compute prob_up
 if not xgb_df.empty:
     if 'prob_up' not in xgb_df.columns:
         if 'prediction' in xgb_df.columns and 'confidence_score' in xgb_df.columns:
@@ -328,45 +266,37 @@ else:
 print(f"   ✅ XGBoost: {len(good_xgb_symbols)} good models, {len(xgb_latest)} symbols ready")
 
 # =========================================================
-# ৩. PPO মডেল লোড — ✅ REAL OBS + RESHAPE + SAFE ACTION
+# ৩. PPO মডেল লোড
 # =========================================================
 print("\n📂 Loading PPO models with REAL market observations...")
 ppo_data = {}
 
 for symbol in target_symbols:
     ppo_path = os.path.join(PPO_MODELS_DIR, f"ppo_{symbol}.zip")
-    # ✅ FIX: same directory as PPO_MODELS_DIR
     ensemble_path = os.path.join(PPO_MODELS_DIR, f"ensemble_{symbol}.pkl")
 
-    # ✅ Build symbol-specific observation from ACTUAL market data
     obs = build_ppo_observation(symbol, mongo_by_symbol.get(symbol))
-    # ✅ Reshape to 2D (1, 50) for SB3 PPO.predict
     obs_2d = np.asarray(obs, dtype=np.float32).reshape(1, -1)
 
     if os.path.exists(ppo_path) and SB3_AVAILABLE:
         try:
             ppo_model = PPO.load(ppo_path, device="cpu")
             action, _ = ppo_model.predict(obs_2d, deterministic=True)
-
-            # ✅ Safe action extraction
             action_val = extract_ppo_action(action)
-
             action_map = {0: 'HOLD', 1: 'BUY', 2: 'SELL'}
             ppo_data[symbol] = {
                 'available': True,
-                'weight': 1.0,
                 'signal': action_map.get(action_val, 'HOLD'),
                 'confidence': 65.0,
                 'action': action_val
             }
         except Exception as e:
-            ppo_data[symbol] = {'available': False, 'weight': 0, 'signal': 'ERROR', 'confidence': 0, 'action': -1}
+            ppo_data[symbol] = {'available': False, 'signal': 'ERROR', 'confidence': 0, 'action': -1}
     elif os.path.exists(ensemble_path) and SB3_AVAILABLE:
         try:
             with open(ensemble_path, 'rb') as f:
                 ensemble_info = joblib.load(f)
             if ensemble_info.get('model_paths'):
-                # ✅ Majority vote across ensemble models
                 all_actions = []
                 for mp in ensemble_info['model_paths']:
                     try:
@@ -384,26 +314,24 @@ for symbol in target_symbols:
                 action_map = {0: 'HOLD', 1: 'BUY', 2: 'SELL'}
                 ppo_data[symbol] = {
                     'available': True,
-                    'weight': 1.0,
                     'signal': action_map.get(action_val, 'HOLD'),
                     'confidence': 65.0,
                     'action': action_val
                 }
             else:
-                ppo_data[symbol] = {'available': False, 'weight': 0, 'signal': 'N/A', 'confidence': 0, 'action': -1}
+                ppo_data[symbol] = {'available': False, 'signal': 'N/A', 'confidence': 0, 'action': -1}
         except:
-            ppo_data[symbol] = {'available': False, 'weight': 0, 'signal': 'N/A', 'confidence': 0, 'action': -1}
+            ppo_data[symbol] = {'available': False, 'signal': 'N/A', 'confidence': 0, 'action': -1}
     else:
-        ppo_data[symbol] = {'available': False, 'weight': 0, 'signal': 'N/A', 'confidence': 0, 'action': -1}
+        ppo_data[symbol] = {'available': False, 'signal': 'N/A', 'confidence': 0, 'action': -1}
 
 ppo_available = sum(1 for v in ppo_data.values() if v['available'])
-print(f"   ✅ PPO: {ppo_available}/{len(target_symbols)} models loaded with REAL signals")
+print(f"   ✅ PPO: {ppo_available}/{len(target_symbols)} models loaded")
 
 # =========================================================
 # ৪. Agentic Loop
 # =========================================================
 print("\n📂 Initializing Agentic Loop...")
-agentic_available = False
 
 agentic_state_data = {}
 if os.path.exists(AGENTIC_LOOP_STATE):
@@ -415,141 +343,113 @@ if os.path.exists(AGENTIC_LOOP_STATE):
         print(f"   ⚠️ Agentic Loop state file corrupted")
 
 agentic_available = agentic_loop is not None
-if agentic_available:
-    print(f"   ✅ Agentic Loop: Live consensus ready")
-else:
-    print(f"   ⚠️ Agentic Loop not available")
+print(f"   {'✅' if agentic_available else '⚠️'} Agentic Loop: {'Live consensus ready' if agentic_available else 'not available'}")
 
 # =========================================================
-# ৫. Elliott Wave Backtest
+# ৫. GPT-2 LOAD
 # =========================================================
-print("\n📂 Loading Elliott Wave backtest...")
-elliott_data = {'accuracy': 50, 'total_predictions': 0}
-if os.path.exists(ELLIOTT_BACKTEST_PATH):
+print("\n🤖 Loading GPT-2 (legacy)...")
+gpt2_available = False
+gpt2_tokenizer = None
+gpt2_model = None
+gpt2_device = "cpu"
+
+if os.path.exists(os.path.join(GPT2_MODEL_DIR, "config.json")):
     try:
-        with open(ELLIOTT_BACKTEST_PATH, 'r') as f:
-            elliott_backtest = json.load(f)
-        accuracy_log = elliott_backtest.get('accuracy_log', [])
-        if accuracy_log:
-            elliott_data['accuracy'] = accuracy_log[-1].get('accuracy', 50)
-            elliott_data['total_predictions'] = accuracy_log[-1].get('total_predictions', 0)
-        print(f"   ✅ Elliott Wave: {elliott_data['accuracy']:.1f}% accuracy")
-    except:
-        print(f"   ⚠️ Elliott backtest file corrupted")
-else:
-    print(f"   ⚠️ Elliott backtest not found")
-
-# =========================================================
-# ৬. Elliott Wave Details
-# =========================================================
-def get_elliott_wave_details(symbol):
-    try:
-        sym_data = mongo_by_symbol.get(symbol)
-        if sym_data is None or len(sym_data) < 50:
-            return {
-                'wave_count': 'Insufficient Data', 'sub_waves': 'N/A',
-                'current_wave': 'Unknown', 'wave_confidence': 0,
-                'is_bullish': False, 'wave_position': 'Unknown'
-            }
-
-        try:
-            from generate_pattern_training_data_complete import detect_elliott_wave_complete
-            elliott_result = detect_elliott_wave_complete(sym_data, len(sym_data)-1, lookback=200)
-
-            if elliott_result and elliott_result.get('wave_structure'):
-                wave_structure = elliott_result['wave_structure']
-                wave_count = wave_structure.get('wave_count', [])
-                sub_waves = wave_structure.get('sub_waves', {})
-
-                current_wave = wave_count[-1] if wave_count else 'Unknown'
-                confidence = wave_structure.get('confidence', 0)
-                is_bullish = elliott_result.get('is_bullish', False)
-
-                sub_wave_text = ""
-                for wave_name, sub in sub_waves.items():
-                    sub_structure = sub.get('structure', 'N/A')
-                    sub_wave_list = sub.get('sub_waves', [])
-                    sub_wave_text += f"{wave_name}:{sub_structure}({'-'.join(sub_wave_list)}) | "
-
-                return {
-                    'wave_count': ' → '.join(wave_count),
-                    'sub_waves': sub_wave_text.strip('| '),
-                    'current_wave': current_wave,
-                    'wave_confidence': confidence,
-                    'is_bullish': is_bullish,
-                    'wave_position': current_wave
-                }
-        except ImportError:
-            pass
-
-        return {
-            'wave_count': 'No Pattern Detected',
-            'sub_waves': 'N/A',
-            'current_wave': 'None',
-            'wave_confidence': 0,
-            'is_bullish': False,
-            'wave_position': 'None'
-        }
-    except Exception as e:
-        return {
-            'wave_count': f'Error: {str(e)[:50]}',
-            'sub_waves': 'Error',
-            'current_wave': 'Error',
-            'wave_confidence': 0,
-            'is_bullish': False,
-            'wave_position': 'Error'
-        }
-
-# =========================================================
-# ৭. LLM মডেল লোড
-# =========================================================
-print("\n🤖 Loading LLM Model...")
-llm_available = False
-tokenizer = None
-model = None
-device = "cpu"
-
-if os.path.exists(os.path.join(LLM_MODEL_DIR, "config.json")):
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(LLM_MODEL_DIR)
-        model = AutoModelForCausalLM.from_pretrained(
-            LLM_MODEL_DIR,
+        gpt2_tokenizer = AutoTokenizer.from_pretrained(GPT2_MODEL_DIR)
+        gpt2_model = AutoModelForCausalLM.from_pretrained(
+            GPT2_MODEL_DIR,
             torch_dtype=torch.float32,
-            low_cpu_mem_usage=True
+            low_cpu_mem_usage=True,
         )
-        tokenizer.pad_token = tokenizer.eos_token
-        model.config.pad_token_id = tokenizer.pad_token_id
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model.to(device)
-        llm_available = True
-        print(f"   ✅ LLM loaded on {device}")
+        gpt2_tokenizer.pad_token = gpt2_tokenizer.eos_token
+        gpt2_model.config.pad_token_id = gpt2_tokenizer.pad_token_id
+        gpt2_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        gpt2_model.to(gpt2_device)
+        gpt2_available = True
+        print(f"   ✅ GPT-2 loaded on {gpt2_device}")
     except Exception as e:
-        print(f"   ⚠️ LLM load failed: {e}")
+        print(f"   ⚠️ GPT-2 load failed: {e}")
 else:
-    print(f"   ⚠️ LLM model not found")
+    print(f"   ⚠️ GPT-2 not found: {GPT2_MODEL_DIR}")
 
 # =========================================================
-# ৮. LLM inference
+# ৬. QWEN3 LOAD
 # =========================================================
-def get_llm_signal(symbol, row):
-    if not llm_available:
-        return {
-            'signal': 'MODEL_NOT_READY', 'confidence': 0, 'strength': 'N/A',
-            'bias': 'NEUTRAL', 'entry': 0, 'stop_loss': 0, 'target': 0
-        }
+print("\n🤖 Loading Qwen3...")
+qwen3_available = False
+qwen3_tokenizer = None
+qwen3_model = None
+qwen3_device = "cpu"
 
-    sector = 'Unknown'
-    if sector_engine:
-        try:
-            sector = sector_engine.get_sector(symbol)
-        except:
-            sector = row.get('sector', 'Unknown') if hasattr(row, 'get') else 'Unknown'
-    else:
-        sector = row.get('sector', 'Unknown') if hasattr(row, 'get') else 'Unknown'
+if os.path.exists(os.path.join(QWEN3_MODEL_DIR, "config.json")):
+    try:
+        qwen3_tokenizer = AutoTokenizer.from_pretrained(
+            QWEN3_MODEL_DIR,
+            trust_remote_code=True,
+        )
+        qwen3_model = AutoModelForCausalLM.from_pretrained(
+            QWEN3_MODEL_DIR,
+            trust_remote_code=True,
+            torch_dtype=torch.float32,
+            low_cpu_mem_usage=True,
+        )
+        if qwen3_tokenizer.pad_token is None:
+            qwen3_tokenizer.pad_token = qwen3_tokenizer.eos_token
+        if qwen3_model.config.pad_token_id is None:
+            qwen3_model.config.pad_token_id = qwen3_tokenizer.pad_token_id
 
+        qwen3_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        qwen3_model.to(qwen3_device)
+        qwen3_available = True
+        print(f"   ✅ Qwen3 loaded on {qwen3_device}")
+    except Exception as e:
+        print(f"   ⚠️ Qwen3 load failed: {e}")
+else:
+    print(f"   ⚠️ Qwen3 not found: {QWEN3_MODEL_DIR}")
+
+# =========================================================
+# ৭. DEEPSEEK LOAD
+# =========================================================
+print("\n🤖 Loading DeepSeek...")
+deepseek_available = False
+deepseek_tokenizer = None
+deepseek_model = None
+deepseek_device = "cpu"
+
+if os.path.exists(os.path.join(DEEPSEEK_MODEL_DIR, "config.json")):
+    try:
+        deepseek_tokenizer = AutoTokenizer.from_pretrained(
+            DEEPSEEK_MODEL_DIR,
+            trust_remote_code=True,
+        )
+        deepseek_model = AutoModelForCausalLM.from_pretrained(
+            DEEPSEEK_MODEL_DIR,
+            trust_remote_code=True,
+            torch_dtype=torch.float32,
+            low_cpu_mem_usage=True,
+        )
+        if deepseek_tokenizer.pad_token is None:
+            deepseek_tokenizer.pad_token = deepseek_tokenizer.eos_token
+        if deepseek_model.config.pad_token_id is None:
+            deepseek_model.config.pad_token_id = deepseek_tokenizer.pad_token_id
+
+        deepseek_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        deepseek_model.to(deepseek_device)
+        deepseek_available = True
+        print(f"   ✅ DeepSeek loaded on {deepseek_device}")
+    except Exception as e:
+        print(f"   ⚠️ DeepSeek load failed: {e}")
+else:
+    print(f"   ⚠️ DeepSeek not found: {DEEPSEEK_MODEL_DIR}")
+
+# =========================================================
+# ✅ LLM INFERENCE FUNCTION (Generic)
+# =========================================================
+def _llm_inference(tokenizer, model, device, symbol, row, model_name="LLM"):
+    """Generic LLM inference"""
     prompt = f"""Symbol: {symbol} | Price: {row.get('close', 0):.2f}
 RSI: {row.get('rsi', 50):.1f} | MACD: {row.get('macd', 0):.4f}
-Sector: {sector}
 
 Provide trading signal (BUY/SELL/HOLD), confidence%, entry, stop loss, target.
 
@@ -559,8 +459,13 @@ RECOMMENDATION:"""
         inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512).to(device)
 
         with torch.no_grad():
-            outputs = model.generate(**inputs, max_new_tokens=100, temperature=0.7,
-                                    do_sample=True, pad_token_id=tokenizer.eos_token_id)
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=100,
+                temperature=0.7,
+                do_sample=True,
+                pad_token_id=tokenizer.eos_token_id
+            )
 
         response = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
@@ -578,15 +483,6 @@ RECOMMENDATION:"""
         conf_match = re.search(r'(\d+)%', response)
         if conf_match: result['confidence'] = float(conf_match.group(1))
 
-        entry_match = re.search(r'Entry:?\s*([\d.]+)', response, re.IGNORECASE)
-        if entry_match: result['entry'] = float(entry_match.group(1))
-
-        sl_match = re.search(r'Stop Loss:?\s*([\d.]+)', response, re.IGNORECASE)
-        if sl_match: result['stop_loss'] = float(sl_match.group(1))
-
-        tp_match = re.search(r'Target:?\s*([\d.]+)', response, re.IGNORECASE)
-        if tp_match: result['target'] = float(tp_match.group(1))
-
         if re.search(r'STRONG', response, re.IGNORECASE): result['strength'] = 'STRONG'
         elif re.search(r'WEAK', response, re.IGNORECASE): result['strength'] = 'WEAK'
 
@@ -598,7 +494,34 @@ RECOMMENDATION:"""
         }
 
 # =========================================================
-# ৯-১০.৮ Signal fetchers
+# ✅ LLM SIGNAL FETCHERS
+# =========================================================
+def get_gpt2_signal(symbol, row):
+    if not gpt2_available:
+        return {
+            'signal': 'MODEL_NOT_READY', 'confidence': 0, 'strength': 'N/A',
+            'bias': 'NEUTRAL', 'entry': 0, 'stop_loss': 0, 'target': 0
+        }
+    return _llm_inference(gpt2_tokenizer, gpt2_model, gpt2_device, symbol, row, "GPT-2")
+
+def get_qwen3_signal(symbol, row):
+    if not qwen3_available:
+        return {
+            'signal': 'MODEL_NOT_READY', 'confidence': 0, 'strength': 'N/A',
+            'bias': 'NEUTRAL', 'entry': 0, 'stop_loss': 0, 'target': 0
+        }
+    return _llm_inference(qwen3_tokenizer, qwen3_model, qwen3_device, symbol, row, "Qwen3")
+
+def get_deepseek_signal(symbol, row):
+    if not deepseek_available:
+        return {
+            'signal': 'MODEL_NOT_READY', 'confidence': 0, 'strength': 'N/A',
+            'bias': 'NEUTRAL', 'entry': 0, 'stop_loss': 0, 'target': 0
+        }
+    return _llm_inference(deepseek_tokenizer, deepseek_model, deepseek_device, symbol, row, "DeepSeek")
+
+# =========================================================
+# ✅ OTHER SIGNAL FETCHERS
 # =========================================================
 def get_xgb_data(symbol):
     if not xgb_latest.empty and symbol in xgb_latest.index:
@@ -610,24 +533,19 @@ def get_xgb_data(symbol):
         elif prob < 0.40: signal = 'SELL'
         else: signal = 'HOLD'
 
-        auc_val = 0
-        if not meta_df.empty and symbol in meta_df['symbol'].values:
-            auc_val = meta_df[meta_df['symbol'] == symbol]['auc'].values[0]
-
         return {
-            'signal': signal, 'confidence': conf, 'prob_up': prob,
-            'auc': auc_val
+            'signal': signal, 'confidence': conf
         }
-    return {'signal': 'N/A', 'confidence': 0, 'prob_up': 0.5, 'auc': 0}
+    return {'signal': 'N/A', 'confidence': 0}
 
 def get_ppo_data(symbol):
     if symbol in ppo_data and ppo_data[symbol]['available']:
         return ppo_data[symbol]
-    return {'available': False, 'signal': 'N/A', 'confidence': 0, 'weight': 0, 'action': -1}
+    return {'available': False, 'signal': 'N/A', 'confidence': 0, 'action': -1}
 
 def get_agentic_signal(symbol):
     if not agentic_available or agentic_loop is None:
-        return {'score': 50, 'bias': 'NEUTRAL', 'available': False, 'confidence': 0}
+        return {'bias': 'NEUTRAL', 'available': False, 'confidence': 0}
 
     try:
         symbol_data = mongo_by_symbol.get(symbol)
@@ -641,17 +559,16 @@ def get_agentic_signal(symbol):
             market_regime='NEUTRAL'
         )
         return {
-            'score': score * 100,
             'bias': decision,
             'confidence': confidence,
             'available': True
         }
     except:
-        return {'score': 50, 'bias': 'NEUTRAL', 'available': False, 'confidence': 0}
+        return {'bias': 'NEUTRAL', 'available': False, 'confidence': 0}
 
 def get_patch_tst_signal(symbol):
     if not PATCHTST_AVAILABLE or patch_tst is None:
-        return {'available': False, 'direction': 'N/A', 'confidence': 0, 'up_prob': 0.5}
+        return {'available': False, 'direction': 'N/A', 'confidence': 0}
 
     try:
         symbol_df = mongo_by_symbol.get(symbol)
@@ -659,113 +576,63 @@ def get_patch_tst_signal(symbol):
         return {
             'available': True,
             'direction': pred.get('direction', 'UNKNOWN'),
-            'confidence': pred.get('confidence', 0),
-            'up_prob': pred.get('up_prob', 0.5)
+            'confidence': pred.get('confidence', 0)
         }
     except:
-        return {'available': False, 'direction': 'N/A', 'confidence': 0, 'up_prob': 0.5}
+        return {'available': False, 'direction': 'N/A', 'confidence': 0}
 
-def get_sector_from_mongodb(symbol):
-    try:
-        sym_data = mongo_by_symbol.get(symbol)
-        if sym_data is not None and 'sector' in sym_data.columns:
-            sector = sym_data['sector'].iloc[-1]
-            if pd.notna(sector) and sector not in ['Other', 'Unknown', '']:
-                return {'score': 50, 'name': str(sector), 'is_top': False}
-    except:
-        pass
-    return {'score': 50, 'name': 'Unknown', 'is_top': False}
-
-def get_sector_score(symbol):
-    if not SECTOR_AVAILABLE or sector_engine is None:
-        return get_sector_from_mongodb(symbol)
-
-    try:
-        sector = sector_engine.get_sector(symbol)
-        if sector in ['Other', 'Unknown', 'other', 'unknown', '']:
-            return get_sector_from_mongodb(symbol)
-
-        top3 = [s for s, _ in sector_engine.get_top_sectors(3)]
-        bottom2 = [s for s, _ in sector_engine.get_bottom_sectors(2)]
-
-        if sector in top3: score = 80
-        elif sector in bottom2: score = 20
-        else: score = 50
-
-        return {'score': score, 'name': sector, 'is_top': sector in top3}
-    except:
-        return get_sector_from_mongodb(symbol)
-
-def get_bullish_strong_boost(symbol):
-    if symbol in bullish_strong_dict:
-        data = bullish_strong_dict[symbol]
-        bbr = data['bbr']
-        if bbr >= 3.0: boost = 15
-        elif bbr >= 2.0: boost = 12
-        elif bbr >= 1.5: boost = 8
-        else: boost = 5
-
-        strong_ratio = data['strong']
-        if ':' in strong_ratio:
-            try:
-                bull_strong, bear_strong = map(int, strong_ratio.split(':'))
-                if bull_strong > bear_strong * 2:
-                    boost += 5
-            except:
-                pass
-
-        return {
-            'has_signal': True, 'boost': boost, 'bbr': bbr,
-            'rt': data['rt'], 'strong': data['strong'],
-            'gape': data['gape'], 'high': data['high']
-        }
-    return {'has_signal': False, 'boost': 0, 'bbr': 0, 'rt': '0:0', 'strong': '0:0', 'gape': 0, 'high': 0}
-
-def get_agentic_score_global():
-    if not agentic_state_data:
-        return 50, 'NEUTRAL'
-    xgb_agent = agentic_state_data.get('agents', {}).get('XGBoost', {})
-    xgb_acc = xgb_agent.get('accuracy', 0.5)
-    xgb_weight = xgb_agent.get('weight', 0.35)
-    tech_agent = agentic_state_data.get('agents', {}).get('Technical', {})
-    tech_acc = tech_agent.get('accuracy', 0.5)
-    risk_agent = agentic_state_data.get('agents', {}).get('Risk', {})
-    risk_acc = risk_agent.get('accuracy', 0.5)
-    score = (xgb_acc * xgb_weight * 100) + (tech_acc * 0.2 * 100) + (risk_acc * 0.15 * 100)
-    if score > 65: bias = 'BULLISH'
-    elif score < 35: bias = 'BEARISH'
-    else: bias = 'NEUTRAL'
-    return score, bias
-
-def calculate_final_combined_score(llm_sig, xgb_sig, ppo_sig, agentic_sig, patch_tst_sig, sector_sig, bullish_boost):
+# =========================================================
+# ✅ FINAL SCORE CALCULATION (7 models)
+# =========================================================
+def calculate_final_combined_score(gpt2_sig, qwen3_sig, deepseek_sig, xgb_sig, ppo_sig, agentic_sig, patch_tst_sig):
     final_score = 0
 
-    if llm_sig['signal'] == 'BUY': final_score += llm_sig['confidence'] * AI_WEIGHTS['llm']
-    elif llm_sig['signal'] == 'SELL': final_score += (100 - llm_sig['confidence']) * AI_WEIGHTS['llm']
-    else: final_score += 50 * AI_WEIGHTS['llm']
+    # GPT-2
+    if gpt2_sig['signal'] == 'BUY': final_score += gpt2_sig['confidence'] * AI_WEIGHTS['gpt2']
+    elif gpt2_sig['signal'] == 'SELL': final_score += (100 - gpt2_sig['confidence']) * AI_WEIGHTS['gpt2']
+    else: final_score += 50 * AI_WEIGHTS['gpt2']
 
+    # Qwen3
+    if qwen3_sig['signal'] == 'BUY': final_score += qwen3_sig['confidence'] * AI_WEIGHTS['qwen3']
+    elif qwen3_sig['signal'] == 'SELL': final_score += (100 - qwen3_sig['confidence']) * AI_WEIGHTS['qwen3']
+    else: final_score += 50 * AI_WEIGHTS['qwen3']
+
+    # DeepSeek
+    if deepseek_sig['signal'] == 'BUY': final_score += deepseek_sig['confidence'] * AI_WEIGHTS['deepseek']
+    elif deepseek_sig['signal'] == 'SELL': final_score += (100 - deepseek_sig['confidence']) * AI_WEIGHTS['deepseek']
+    else: final_score += 50 * AI_WEIGHTS['deepseek']
+
+    # XGBoost
     if xgb_sig['signal'] == 'BUY': final_score += xgb_sig['confidence'] * AI_WEIGHTS['xgb']
     elif xgb_sig['signal'] == 'SELL': final_score += (100 - xgb_sig['confidence']) * AI_WEIGHTS['xgb']
     else: final_score += 50 * AI_WEIGHTS['xgb']
 
+    # PPO
     if ppo_sig['available']:
         if ppo_sig['signal'] == 'BUY': final_score += ppo_sig['confidence'] * AI_WEIGHTS['ppo']
         elif ppo_sig['signal'] == 'SELL': final_score += (100 - ppo_sig['confidence']) * AI_WEIGHTS['ppo']
         else: final_score += 50 * AI_WEIGHTS['ppo']
     else: final_score += 50 * AI_WEIGHTS['ppo']
 
+    # Agentic
     if agentic_sig['available']:
-        if agentic_sig['bias'] == 'BUY': final_score += agentic_sig['score'] * AI_WEIGHTS['agentic']
-        elif agentic_sig['bias'] == 'SELL': final_score += (100 - agentic_sig['score']) * AI_WEIGHTS['agentic']
-        else: final_score += 50 * AI_WEIGHTS['agentic']
+        if agentic_sig['bias'] in ['BUY', 'STRONG_BUY']:
+            final_score += agentic_sig['confidence'] * 100 * AI_WEIGHTS['agentic']
+        elif agentic_sig['bias'] in ['SELL', 'STRONG_SELL']:
+            final_score += (1 - agentic_sig['confidence']) * 100 * AI_WEIGHTS['agentic']
+        else:
+            final_score += 50 * AI_WEIGHTS['agentic']
     else: final_score += 50 * AI_WEIGHTS['agentic']
 
-    if patch_tst_sig['available']: final_score += patch_tst_sig['up_prob'] * 100 * AI_WEIGHTS['patch_tst']
+    # PatchTST
+    if patch_tst_sig['available']:
+        if patch_tst_sig['direction'] == 'UP':
+            final_score += (50 + patch_tst_sig['confidence'] * 50) * AI_WEIGHTS['patch_tst']
+        elif patch_tst_sig['direction'] == 'DOWN':
+            final_score += (50 - patch_tst_sig['confidence'] * 50) * AI_WEIGHTS['patch_tst']
+        else:
+            final_score += 50 * AI_WEIGHTS['patch_tst']
     else: final_score += 50 * AI_WEIGHTS['patch_tst']
-
-    final_score += sector_sig['score'] * AI_WEIGHTS['sector']
-
-    if bullish_boost['has_signal']: final_score += bullish_boost['boost']
 
     return min(100, final_score)
 
@@ -778,21 +645,21 @@ def get_final_signal_label(score):
     elif score >= 20: return '❌ SELL'
     else: return '💀 STRONG SELL'
 
-def get_model_availability(llm_avail, xgb_avail, ppo_avail, agentic_avail, patch_tst_avail):
-    count = sum([llm_avail, xgb_avail, ppo_avail, agentic_avail, patch_tst_avail])
-    if count >= 5: return f'FULL ({count}/5)'
-    elif count >= 3: return f'GOOD ({count}/5)'
-    elif count >= 1: return f'BASIC ({count}/5)'
-    else: return 'NONE (0/5)'
+def get_model_availability(gpt2_avail, qwen3_avail, deepseek_avail, xgb_avail, ppo_avail, agentic_avail, patch_tst_avail):
+    count = sum([gpt2_avail, qwen3_avail, deepseek_avail, xgb_avail, ppo_avail, agentic_avail, patch_tst_avail])
+    total = 7
+    if count >= 7: return f'FULL ({count}/{total})'
+    elif count >= 5: return f'GOOD ({count}/{total})'
+    elif count >= 2: return f'BASIC ({count}/{total})'
+    else: return f'NONE ({count}/{total})'
 
 # =========================================================
-# ১৪. Main loop
+# ৮. Main loop
 # =========================================================
 print("\n🎯 Generating FINAL AI signals...")
 print("-"*70)
 
 results = []
-agentic_score_global, agentic_bias_global = get_agentic_score_global()
 
 for i, symbol in enumerate(target_symbols):
     print(f"\r   🔍 Processing {i+1}/{len(target_symbols)}: {symbol}...", end='')
@@ -801,19 +668,23 @@ for i, symbol in enumerate(target_symbols):
         market_row = latest_market.loc[symbol]
         current_high = market_row.get('high', 0) if hasattr(market_row, 'get') else 0
     else:
-        market_row = pd.Series({'close': 0, 'rsi': 50, 'macd': 0, 'sector': 'Unknown'})
+        market_row = pd.Series({'close': 0, 'rsi': 50, 'macd': 0})
 
-    llm_sig = get_llm_signal(symbol, market_row)
+    # ✅ All 3 LLM signals
+    gpt2_sig = get_gpt2_signal(symbol, market_row)
+    qwen3_sig = get_qwen3_signal(symbol, market_row)
+    deepseek_sig = get_deepseek_signal(symbol, market_row)
+
+    # ✅ Other models
     xgb_sig = get_xgb_data(symbol)
     ppo_sig = get_ppo_data(symbol)
     agentic_sig = get_agentic_signal(symbol)
     patch_tst_sig = get_patch_tst_signal(symbol)
-    sector_sig = get_sector_score(symbol)
-    bullish_boost = get_bullish_strong_boost(symbol)
-    elliott_details = get_elliott_wave_details(symbol)
 
     model_avail = get_model_availability(
-        llm_available,
+        gpt2_available,
+        qwen3_available,
+        deepseek_available,
         symbol in good_xgb_symbols,
         ppo_sig['available'],
         agentic_sig['available'],
@@ -821,68 +692,68 @@ for i, symbol in enumerate(target_symbols):
     )
 
     final_score = calculate_final_combined_score(
-        llm_sig, xgb_sig, ppo_sig, agentic_sig,
-        patch_tst_sig, sector_sig, bullish_boost
+        gpt2_sig, qwen3_sig, deepseek_sig,
+        xgb_sig, ppo_sig, agentic_sig, patch_tst_sig
     )
     final_signal = get_final_signal_label(final_score)
 
-    entry_price = llm_sig['entry'] if llm_sig['entry'] > 0 else market_row.get('close', 0)
-
+    # ✅ 33-column output
     results.append({
         'symbol': symbol,
-        'date': str(market_row.get('date', ''))[:10] if hasattr(market_row, 'get') else '',
         'current_price': market_row.get('close', 0) if hasattr(market_row, 'get') else 0,
         'high': current_high,
-        'sector': sector_sig['name'],
-        'llm_signal': llm_sig['signal'],
-        'llm_confidence': round(llm_sig['confidence'], 1),
-        'llm_strength': llm_sig['strength'],
-        'llm_bias': llm_sig['bias'],
-        'llm_available': llm_available,
+
+        # GPT-2
+        'gpt2_signal': gpt2_sig['signal'],
+        'gpt2_confidence': round(gpt2_sig['confidence'], 1),
+        'gpt2_strength': gpt2_sig['strength'],
+        'gpt2_bias': gpt2_sig['bias'],
+        'gpt2_available': gpt2_available,
+
+        # Qwen3
+        'qwen3_signal': qwen3_sig['signal'],
+        'qwen3_confidence': round(qwen3_sig['confidence'], 1),
+        'qwen3_strength': qwen3_sig['strength'],
+        'qwen3_bias': qwen3_sig['bias'],
+        'qwen3_available': qwen3_available,
+
+        # DeepSeek
+        'deepseek_signal': deepseek_sig['signal'],
+        'deepseek_confidence': round(deepseek_sig['confidence'], 1),
+        'deepseek_strength': deepseek_sig['strength'],
+        'deepseek_bias': deepseek_sig['bias'],
+        'deepseek_available': deepseek_available,
+
+        # XGBoost
         'xgb_signal': xgb_sig['signal'],
         'xgb_confidence': round(xgb_sig['confidence'], 1),
-        'xgb_prob_up': round(xgb_sig['prob_up'], 3),
-        'xgb_auc': round(xgb_sig['auc'], 3),
         'xgb_available': symbol in good_xgb_symbols,
+
+        # PPO
         'ppo_signal': ppo_sig['signal'],
         'ppo_confidence': round(ppo_sig['confidence'], 1),
         'ppo_available': ppo_sig['available'],
-        'ppo_weight': ppo_sig['weight'],
+
+        # Agentic
         'agentic_signal': agentic_sig['bias'],
-        'agentic_score': round(agentic_sig['score'], 1),
         'agentic_confidence': round(agentic_sig.get('confidence', 0), 3),
         'agentic_available': agentic_sig['available'],
+
+        # PatchTST
         'patch_tst_direction': patch_tst_sig['direction'],
         'patch_tst_confidence': round(patch_tst_sig['confidence'], 3),
-        'patch_tst_up_prob': round(patch_tst_sig['up_prob'], 3),
         'patch_tst_available': patch_tst_sig['available'],
-        'sector_score': sector_sig['score'],
-        'is_top_sector': sector_sig['is_top'],
-        'bullish_strong_signal': bullish_boost['has_signal'],
-        'bullish_strong_bbr': round(bullish_boost['bbr'], 2) if bullish_boost['bbr'] else 0,
-        'bullish_strong_rt': bullish_boost['rt'],
-        'bullish_strong_ratio': bullish_boost['strong'],
-        'bullish_boost_amount': bullish_boost['boost'],
-        'bullish_strong_gape': bullish_boost['gape'],
-        'bullish_strong_high': round(bullish_boost['high'], 2) if bullish_boost['high'] else 0,
-        'elliott_accuracy': elliott_data.get('accuracy', 50),
-        'elliott_total_predictions': elliott_data.get('total_predictions', 0),
-        'elliott_wave_count': elliott_details['wave_count'] if elliott_details else 'No Data',
-        'elliott_sub_waves': elliott_details['sub_waves'] if elliott_details else 'N/A',
-        'elliott_current_wave': elliott_details['current_wave'] if elliott_details else 'Unknown',
-        'elliott_wave_confidence': elliott_details['wave_confidence'] if elliott_details else 0,
-        'elliott_is_bullish': elliott_details['is_bullish'] if elliott_details else False,
-        'elliott_wave_position': elliott_details['wave_position'] if elliott_details else 'Unknown',
+
+        # Final
         'model_availability': model_avail,
         'final_combined_score': round(final_score, 1),
         'final_signal': final_signal,
-        'entry_price': round(entry_price, 2),
     })
 
 print("\n")
 
 # =========================================================
-# ১৫. সেভ
+# ৯. সেভ
 # =========================================================
 output_df = pd.DataFrame(results)
 output_df = output_df.sort_values('final_combined_score', ascending=False)
@@ -890,22 +761,22 @@ output_df = output_df[output_df['final_combined_score'] >= 55]
 output_df.to_csv(FINAL_OUTPUT_PATH, index=False)
 
 # =========================================================
-# ১৬. রিপোর্ট
+# ১০. রিপোর্ট
 # =========================================================
 print("="*70)
-print("📊 FINAL AI TRADING SIGNALS REPORT (50-DIM PPO)")
+print("📊 FINAL AI TRADING SIGNALS REPORT (GPT-2 + Qwen3 + DeepSeek)")
 print("="*70)
 print(f"📅 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print(f"📊 Total Signals: {len(output_df)}")
+
 print(f"\n🤖 AI Models Available:")
-print(f"   LLM: {'✅ Available' if llm_available else '❌ Not Ready'}")
+print(f"   GPT-2: {'✅ Available' if gpt2_available else '❌ Not Ready'}")
+print(f"   Qwen3: {'✅ Available' if qwen3_available else '❌ Not Ready'}")
+print(f"   DeepSeek: {'✅ Available' if deepseek_available else '❌ Not Ready'}")
 print(f"   XGBoost: ✅ Available ({len(good_xgb_symbols)} models)")
-print(f"   PPO: {'✅' if ppo_available > 0 else '❌'} Available ({ppo_available} models with REAL signals)")
+print(f"   PPO: {'✅' if ppo_available > 0 else '❌'} Available ({ppo_available} models)")
 print(f"   Agentic Loop: {'✅' if agentic_available else '❌'} Available")
 print(f"   PatchTST: {'✅' if PATCHTST_AVAILABLE else '❌'} Available")
-print(f"   Sector Engine: {'✅' if SECTOR_AVAILABLE else '❌'} Available")
-print(f"   Elliott Wave: {elliott_data.get('accuracy', 50):.1f}% accuracy")
-print(f"   Bullish Strong: {'✅' if len(bullish_strong_dict) > 0 else '❌'} Available ({len(bullish_strong_dict)} signals)")
 
 print(f"\n📈 SIGNAL DISTRIBUTION:")
 if len(output_df) > 0:
@@ -913,7 +784,7 @@ if len(output_df) > 0:
 else:
     print("   (No signals)")
 
-print(f"\n📊 PPO SIGNAL DISTRIBUTION (proof it's NOT all same):")
+print(f"\n📊 PPO SIGNAL DISTRIBUTION:")
 if len(output_df) > 0:
     print(output_df['ppo_signal'].value_counts().to_string())
 else:
@@ -930,22 +801,20 @@ if len(output_df) > 0:
     buy_signals = output_df[output_df['final_signal'].str.contains('BUY', na=False)].head(10)
     if len(buy_signals) > 0:
         print(buy_signals[['symbol', 'final_signal', 'final_combined_score',
-                            'entry_price', 'ppo_signal', 'bullish_strong_signal',
-                            'elliott_current_wave']].to_string())
+                            'gpt2_signal', 'qwen3_signal', 'deepseek_signal',
+                            'xgb_signal', 'ppo_signal', 'patch_tst_direction']].to_string())
     else:
         print("   (No BUY signals)")
-else:
-    print("   (No signals)")
 
 print(f"\n💀 TOP 5 SELL SIGNALS:")
 if len(output_df) > 0:
     sell_signals = output_df[output_df['final_signal'].str.contains('SELL', na=False)].head(5)
     if len(sell_signals) > 0:
-        print(sell_signals[['symbol', 'final_signal', 'final_combined_score', 'ppo_signal']].to_string())
+        print(sell_signals[['symbol', 'final_signal', 'final_combined_score',
+                             'gpt2_signal', 'qwen3_signal', 'deepseek_signal',
+                             'ppo_signal']].to_string())
     else:
         print("   (No SELL signals)")
-else:
-    print("   (No signals)")
 
 print(f"\n" + "="*70)
 print(f"✅ FINAL OUTPUT: {FINAL_OUTPUT_PATH}")
