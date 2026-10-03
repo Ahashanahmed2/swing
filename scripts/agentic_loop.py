@@ -1,7 +1,8 @@
-# agentic_loop.py - Multi-Agent Voting System for Trading (with Sector Features)
-# This integrates with your existing XGBoost + PPO system
+# agentic_loop.py - Multi-Agent Voting System with LLM Integration
 # ✅ FIXED: Breakeven handling, SELL close logic, pnl_pct display
-# ✅ NEW: Sector Agent, Ensemble Weight Optimization, Performance Tracking, Telegram
+# ✅ REMOVED: News Agent, Sector Agent
+# ✅ ADDED: Qwen3 Agent, DeepSeek Agent (real LLM inference)
+# ✅ Weight redistribution: Qwen3=0.12, DeepSeek=0.08
 
 import pandas as pd
 import numpy as np
@@ -9,10 +10,21 @@ import os
 import joblib
 import json
 import requests
+import re
+import torch
 from datetime import datetime, timedelta
 from collections import defaultdict
+from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
+
+# Try importing transformers for LLM agents
+try:
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
+    print("⚠️ Transformers not available — LLM agents disabled")
 
 
 # =========================
@@ -61,7 +73,6 @@ class TradingAgent:
             'confidence': confidence
         })
 
-        # Recent accuracy (last 20 predictions)
         if len(self.performance_history) >= 20:
             recent = self.performance_history[-20:]
             self.recent_accuracy = sum(1 for p in recent if p['correct']) / len(recent)
@@ -74,7 +85,6 @@ class TradingAgent:
         return self.correct_predictions / self.total_predictions
 
     def get_dynamic_weight(self):
-        """Dynamic weight based on recent performance"""
         base_weight = self.weight
         accuracy = self.recent_accuracy if self.total_predictions >= 10 else self.get_accuracy()
 
@@ -90,7 +100,7 @@ class TradingAgent:
 # =========================
 
 class XGBoostAgent(TradingAgent):
-    """Your existing XGBoost model as an agent"""
+    """XGBoost model as an agent"""
 
     def __init__(self, xgb_model_dir):
         super().__init__("XGBoost", weight=0.35)
@@ -101,7 +111,6 @@ class XGBoostAgent(TradingAgent):
         self.load_models()
 
     def load_models(self):
-        """Load all XGBoost models from directory"""
         try:
             if os.path.exists(self.model_dir):
                 model_files = [f for f in os.listdir(self.model_dir) if f.endswith('.joblib')]
@@ -124,7 +133,6 @@ class XGBoostAgent(TradingAgent):
             print(f"   ⚠️ XGBoost Agent init failed: {e}")
 
     def _load_model_quality(self):
-        """Load model quality metrics from metadata"""
         metadata_path = './csv/model_metadata.csv'
         if os.path.exists(metadata_path):
             try:
@@ -136,11 +144,9 @@ class XGBoostAgent(TradingAgent):
                 pass
 
     def set_symbol(self, symbol):
-        """Set current symbol for prediction"""
         self.current_symbol = symbol
 
     def predict(self, features):
-        """Predict using symbol-specific model"""
         if not self.models or self.current_symbol not in self.models:
             return 0.5, 0.3
 
@@ -169,7 +175,6 @@ class TechnicalAgent(TradingAgent):
         super().__init__("Technical", weight=0.20)
 
     def analyze(self, symbol_data):
-        """Analyze technical indicators"""
         if len(symbol_data) < 20:
             return 0.5, 0.3
 
@@ -254,14 +259,13 @@ class TechnicalAgent(TradingAgent):
 # =========================
 
 class RiskAgent(TradingAgent):
-    """Risk management agent - position sizing and stop-loss"""
+    """Risk management agent"""
 
     def __init__(self):
         super().__init__("Risk", weight=0.15)
         self.symbol_history = defaultdict(lambda: {'trades': 0, 'losses': 0, 'consecutive_losses': 0})
 
     def assess(self, symbol, volatility, market_regime, atr=None, drawdown=0):
-        """Assess risk level"""
         risk_score = 0.5
 
         if volatility > 0.03:
@@ -306,67 +310,218 @@ class RiskAgent(TradingAgent):
 
 
 # =========================
-# SECTOR AGENT
+# QWEN3 AGENT (NEW)
 # =========================
 
-class SectorAgent(TradingAgent):
-    """Sector analysis agent - tracks sector momentum and rotation"""
+class Qwen3Agent(TradingAgent):
+    """Qwen3-0.6B LLM as an agent for trading signals"""
 
-    def __init__(self):
-        super().__init__("Sector", weight=0.15)
-        self.sector_data = {}
-        self.sector_momentum = {}
-        self.sector_ranks = {}
-        self.load_sector_data()
+    def __init__(self, model_dir="./csv/llm_model_qwen3", weight=0.12):
+        super().__init__("Qwen3", weight=weight)
+        self.model_dir = model_dir
+        self.model = None
+        self.tokenizer = None
+        self.device = "cpu"
+        self.available = False
+        self.load_model()
 
-    def load_sector_data(self):
-        sector_file = './csv/sector_performance.csv'
-        if os.path.exists(sector_file):
-            try:
-                df = pd.read_csv(sector_file)
-                for _, row in df.iterrows():
-                    sector = row.get('sector', 'Unknown')
-                    self.sector_momentum[sector] = row.get('momentum', 0)
-                    self.sector_ranks[sector] = row.get('rank', 0)
-            except:
-                pass
+    def load_model(self):
+        if not TRANSFORMERS_AVAILABLE:
+            print(f"   ⚠️ Qwen3 Agent: transformers not available")
+            return
 
-    def analyze(self, symbol, sector, current_price=None):
-        if sector == 'Unknown' or sector not in self.sector_momentum:
+        if not os.path.exists(os.path.join(self.model_dir, "config.json")):
+            print(f"   ⚠️ Qwen3 Agent: model not found at {self.model_dir}")
+            return
+
+        try:
+            print(f"   🔄 Loading Qwen3 from {self.model_dir}...")
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_dir,
+                trust_remote_code=True,
+            )
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.model_dir,
+                trust_remote_code=True,
+                torch_dtype=torch.float32,
+                low_cpu_mem_usage=True,
+            )
+
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            if self.model.config.pad_token_id is None:
+                self.model.config.pad_token_id = self.tokenizer.pad_token_id
+
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.model.to(self.device)
+            self.available = True
+            print(f"   ✅ Qwen3 Agent loaded on {self.device}")
+        except Exception as e:
+            print(f"   ⚠️ Qwen3 Agent load failed: {e}")
+            self.available = False
+
+    def analyze(self, symbol, symbol_data):
+        """Analyze using Qwen3 LLM"""
+        if not self.available or len(symbol_data) < 5:
             return 0.5, 0.3
 
-        momentum = self.sector_momentum.get(sector, 0)
-        rank = self.sector_ranks.get(sector, 999)
-        total_sectors = len(self.sector_ranks) if self.sector_ranks else 1
+        try:
+            latest = symbol_data.iloc[-1]
+            close = float(latest.get('close', 0))
+            rsi = float(latest.get('rsi', 50)) if not pd.isna(latest.get('rsi', 50)) else 50
+            macd = float(latest.get('macd', 0)) if not pd.isna(latest.get('macd', 0)) else 0
 
-        rank_score = 1 - (rank / total_sectors) if total_sectors > 0 else 0.5
+            prompt = f"""Symbol: {symbol} | Price: {close:.2f}
+RSI: {rsi:.1f} | MACD: {macd:.4f}
 
-        if momentum > 0.03:
-            score = 0.65 + min(momentum * 2, 0.25)
-            confidence = 0.7
-        elif momentum < -0.03:
-            score = 0.35 - min(abs(momentum) * 2, 0.25)
-            confidence = 0.7
-        else:
+Provide trading signal (BUY/SELL/HOLD) with confidence%.
+
+RECOMMENDATION:"""
+
+            inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=256).to(self.device)
+
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=30,
+                    temperature=0.7,
+                    do_sample=True,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                )
+
+            response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+            # Parse signal
             score = 0.5
             confidence = 0.4
 
-        score = score * 0.7 + rank_score * 0.3
-        return max(0.1, min(0.9, score)), confidence
+            if re.search(r'\bBUY\b', response, re.IGNORECASE):
+                score = 0.75
+                confidence = 0.6
+            elif re.search(r'\bSELL\b', response, re.IGNORECASE):
+                score = 0.25
+                confidence = 0.6
+            else:
+                score = 0.5
+                confidence = 0.3
+
+            # Extract confidence from response
+            conf_match = re.search(r'(\d+)%', response)
+            if conf_match:
+                extracted_conf = float(conf_match.group(1)) / 100.0
+                if 0.3 <= extracted_conf <= 0.95:
+                    confidence = extracted_conf
+
+            return score, confidence
+        except Exception as e:
+            return 0.5, 0.3
 
 
 # =========================
-# NEWS AGENT
+# DEEPSEEK AGENT (NEW)
 # =========================
 
-class NewsAgent(TradingAgent):
-    """Sentiment analysis from news (placeholder)"""
+class DeepSeekAgent(TradingAgent):
+    """DeepSeek-R1-Distill-Qwen-1.5B LLM as an agent"""
 
-    def __init__(self):
-        super().__init__("News", weight=0.05)
+    def __init__(self, model_dir="./csv/llm_model_deepseek", weight=0.08):
+        super().__init__("DeepSeek", weight=weight)
+        self.model_dir = model_dir
+        self.model = None
+        self.tokenizer = None
+        self.device = "cpu"
+        self.available = False
+        self.load_model()
 
-    def analyze_sentiment(self, symbol):
-        return 0.5, 0.3
+    def load_model(self):
+        if not TRANSFORMERS_AVAILABLE:
+            print(f"   ⚠️ DeepSeek Agent: transformers not available")
+            return
+
+        if not os.path.exists(os.path.join(self.model_dir, "config.json")):
+            print(f"   ⚠️ DeepSeek Agent: model not found at {self.model_dir}")
+            return
+
+        try:
+            print(f"   🔄 Loading DeepSeek from {self.model_dir}...")
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_dir,
+                trust_remote_code=True,
+            )
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.model_dir,
+                trust_remote_code=True,
+                torch_dtype=torch.float32,
+                low_cpu_mem_usage=True,
+            )
+
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            if self.model.config.pad_token_id is None:
+                self.model.config.pad_token_id = self.tokenizer.pad_token_id
+
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.model.to(self.device)
+            self.available = True
+            print(f"   ✅ DeepSeek Agent loaded on {self.device}")
+        except Exception as e:
+            print(f"   ⚠️ DeepSeek Agent load failed: {e}")
+            self.available = False
+
+    def analyze(self, symbol, symbol_data):
+        """Analyze using DeepSeek LLM"""
+        if not self.available or len(symbol_data) < 5:
+            return 0.5, 0.3
+
+        try:
+            latest = symbol_data.iloc[-1]
+            close = float(latest.get('close', 0))
+            rsi = float(latest.get('rsi', 50)) if not pd.isna(latest.get('rsi', 50)) else 50
+            macd = float(latest.get('macd', 0)) if not pd.isna(latest.get('macd', 0)) else 0
+
+            prompt = f"""Symbol: {symbol} | Price: {close:.2f}
+RSI: {rsi:.1f} | MACD: {macd:.4f}
+
+Analyze and provide trading signal (BUY/SELL/HOLD) with confidence%.
+
+SIGNAL:"""
+
+            inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=256).to(self.device)
+
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=30,
+                    temperature=0.7,
+                    do_sample=True,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                )
+
+            response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+            # Parse signal
+            score = 0.5
+            confidence = 0.4
+
+            if re.search(r'\bBUY\b', response, re.IGNORECASE):
+                score = 0.75
+                confidence = 0.6
+            elif re.search(r'\bSELL\b', response, re.IGNORECASE):
+                score = 0.25
+                confidence = 0.6
+            else:
+                score = 0.5
+                confidence = 0.3
+
+            conf_match = re.search(r'(\d+)%', response)
+            if conf_match:
+                extracted_conf = float(conf_match.group(1)) / 100.0
+                if 0.3 <= extracted_conf <= 0.95:
+                    confidence = extracted_conf
+
+            return score, confidence
+        except Exception as e:
+            return 0.5, 0.3
 
 
 # =========================
@@ -425,23 +580,23 @@ class MemoryAgent(TradingAgent):
 # =========================
 
 class AgenticLoop:
-    """
-    Main Agentic Loop system that coordinates all agents
-    """
+    """Main Agentic Loop system - coordinates all agents"""
 
-    def __init__(self, xgb_model_dir='./csv/xgboost/'):
+    def __init__(self, xgb_model_dir='./csv/xgboost/',
+                 qwen3_model_dir='./csv/llm_model_qwen3',
+                 deepseek_model_dir='./csv/llm_model_deepseek'):
         self.agents = []
         self.vote_history = []
         self.decision_log = []
         self.performance_log = []
 
-        # Initialize agents
+        # ✅ Initialize agents (NO Sector, NO News)
         self.agents.append(XGBoostAgent(xgb_model_dir))
         self.agents.append(TechnicalAgent())
         self.agents.append(RiskAgent())
-        self.agents.append(SectorAgent())
-        self.agents.append(NewsAgent())
         self.agents.append(MemoryAgent())
+        self.agents.append(Qwen3Agent(model_dir=qwen3_model_dir))       # ✅ NEW
+        self.agents.append(DeepSeekAgent(model_dir=deepseek_model_dir)) # ✅ NEW
 
         self.agent_weights = self._get_initial_weights()
         self.ensemble_correct = 0
@@ -450,11 +605,12 @@ class AgenticLoop:
         self._load_state()
 
         print("\n" + "=" * 60)
-        print("🤖 AGENTIC LOOP INITIALIZED")
+        print("🤖 AGENTIC LOOP INITIALIZED (LLM-Enhanced)")
         print("=" * 60)
         print(f"   Agents: {len(self.agents)}")
         for agent in self.agents:
-            print(f"      - {agent.name} (weight: {agent.weight})")
+            status = "✅" if getattr(agent, 'available', True) else "⚠️"
+            print(f"      {status} {agent.name} (weight: {agent.weight})")
         print("=" * 60)
 
     def _load_state(self):
@@ -480,10 +636,10 @@ class AgenticLoop:
             self.agent_weights = [w / total for w in self.agent_weights]
 
     def get_consensus(self, symbol, symbol_data, volatility, market_regime,
-                      sector='Unknown', atr=None, drawdown=0):
+                      sector=None, atr=None, drawdown=0):
         """
         Get consensus decision from all agents
-        Returns: (decision, score, confidence, details)
+        Note: `sector` param kept for backwards compatibility — ignored
         """
         votes = []
         agent_details = {}
@@ -493,20 +649,23 @@ class AgenticLoop:
                 agent.set_symbol(symbol)
 
         for i, agent in enumerate(self.agents):
-            if agent.name == "XGBoost":
-                prob, conf = agent.predict(self._get_features(symbol_data))
-            elif agent.name == "Technical":
-                prob, conf = agent.analyze(symbol_data)
-            elif agent.name == "Risk":
-                prob, conf = agent.assess(symbol, volatility, market_regime, atr, drawdown)
-            elif agent.name == "Sector":
-                prob, conf = agent.analyze(symbol, sector, symbol_data['close'].iloc[-1] if len(symbol_data) > 0 else None)
-            elif agent.name == "News":
-                prob, conf = agent.analyze_sentiment(symbol)
-            elif agent.name == "Memory":
-                prob, conf = agent.get_similar_pattern(symbol, self._get_features(symbol_data))
-            else:
-                prob, conf = 0.5, 0.5
+            try:
+                if agent.name == "XGBoost":
+                    prob, conf = agent.predict(self._get_features(symbol_data))
+                elif agent.name == "Technical":
+                    prob, conf = agent.analyze(symbol_data)
+                elif agent.name == "Risk":
+                    prob, conf = agent.assess(symbol, volatility, market_regime, atr, drawdown)
+                elif agent.name == "Memory":
+                    prob, conf = agent.get_similar_pattern(symbol, self._get_features(symbol_data))
+                elif agent.name == "Qwen3":
+                    prob, conf = agent.analyze(symbol, symbol_data)
+                elif agent.name == "DeepSeek":
+                    prob, conf = agent.analyze(symbol, symbol_data)
+                else:
+                    prob, conf = 0.5, 0.5
+            except Exception as e:
+                prob, conf = 0.5, 0.3
 
             dynamic_weight = agent.get_dynamic_weight()
             self.agent_weights[i] = dynamic_weight
@@ -555,7 +714,6 @@ class AgenticLoop:
         log_entry = {
             'timestamp': datetime.now(),
             'symbol': symbol,
-            'sector': sector,
             'decision': decision,
             'score': weighted_score,
             'confidence': consensus_confidence,
@@ -573,7 +731,6 @@ class AgenticLoop:
         message = f"""
 🚨 <b>Strong Signal Detected!</b>
 📊 Symbol: {log_entry['symbol']}
-🏭 Sector: {log_entry.get('sector', 'Unknown')}
 🎯 Decision: {log_entry['decision']}
 📈 Score: {log_entry['score']:.3f}
 💪 Confidence: {log_entry['confidence']:.3f}
@@ -582,40 +739,28 @@ class AgenticLoop:
         send_telegram_message(message)
 
     def after_trade_feedback(self, trade_result):
-        """
-        Update agents based on trade outcome — LEARNING LOOP
-        ✅ FIXED:
-            - Breakeven handling (skip signal)
-            - SELL close logic (LONG-only environment)
-            - PnL % display
-        """
+        """Update agents based on trade outcome"""
         symbol = trade_result.get('symbol')
         pnl = trade_result.get('pnl', 0)
         pnl_pct = trade_result.get('pnl_pct', 0)
 
-        # ✅ FIX 1: Breakeven (PnL ≈ 0) — skip learning signal entirely
         if abs(pnl) < 0.01 and abs(pnl_pct) < 0.01:
             return None
 
         was_win = pnl > 0
         ppo_action = trade_result.get('ppo_action', None)
-        # Find the decision that led to this trade
         recent_decisions = [d for d in self.decision_log if d['symbol'] == symbol]
         if not recent_decisions:
             return None
 
         last_decision = recent_decisions[-1]
         agent_votes = last_decision.get('agent_votes', {})
-        # ✅ SIMPLEST: evaluate by PnL outcome only
-        # WIN → correct, LOSS → incorrect
-        # Breakeven already handled above (return None)
         ensemble_was_correct = was_win
 
         self.ensemble_total += 1
         if ensemble_was_correct:
             self.ensemble_correct += 1
 
-        # Update each agent's performance
         for agent in self.agents:
             if agent.name in agent_votes:
                 agent_score = agent_votes[agent.name]['score']
@@ -631,25 +776,12 @@ class AgenticLoop:
                 if agent.name == "Risk":
                     agent.update_history(symbol, not was_win)
 
-        # Update Memory agent
         memory_agent = next((a for a in self.agents if a.name == "Memory"), None)
         if memory_agent:
             if 'features' not in trade_result:
                 trade_result['features'] = self._get_features_from_trade(trade_result)
             memory_agent.remember_trade(trade_result)
 
-        # Update Sector agent data
-        sector = trade_result.get('sector', 'Unknown')
-        if sector != 'Unknown':
-            sector_agent = next((a for a in self.agents if a.name == "Sector"), None)
-            if sector_agent:
-                if sector not in sector_agent.sector_data:
-                    sector_agent.sector_data[sector] = {'wins': 0, 'total': 0}
-                sector_agent.sector_data[sector]['total'] += 1
-                if was_win:
-                    sector_agent.sector_data[sector]['wins'] += 1
-
-        # Log performance
         ensemble_accuracy = self.ensemble_correct / self.ensemble_total if self.ensemble_total > 0 else 0.5
         self.performance_log.append({
             'timestamp': datetime.now(),
@@ -662,7 +794,6 @@ class AgenticLoop:
             'ensemble_accuracy': ensemble_accuracy
         })
 
-        # ✅ FIX 3: Correct PnL % display
         if pnl_pct == 0:
             entry_price = trade_result.get('entry_price', 0)
             exit_price = trade_result.get('exit_price', 0)
@@ -675,10 +806,14 @@ class AgenticLoop:
         print(f"      Ensemble Accuracy: {ensemble_accuracy:.1%}")
         print(f"      Updating {len(self.agents)} agents...")
 
+        # ✅ Auto-save state
+        self.save_state()
+        self.save_decision_log()
+
         return {a.name: a.get_dynamic_weight() for a in self.agents}
 
     def _get_features(self, symbol_data):
-        """Extract features from symbol data for XGBoost"""
+        """Extract 15-dim features for XGBoost"""
         if len(symbol_data) < 10:
             return np.zeros((1, 15))
 
@@ -792,7 +927,6 @@ class AgenticLoop:
                 if 'agent_votes' in df.columns:
                     df['agent_votes'] = df['agent_votes'].astype(str)
                 df.to_csv(path, index=False)
-                print(f"   ✅ Agentic Loop log saved: {path}")
             except Exception as e:
                 print(f"   ⚠️ Could not save decision log: {e}")
 
@@ -815,7 +949,6 @@ class AgenticLoop:
         try:
             with open(path, 'w') as f:
                 json.dump(state, f, indent=2)
-            print(f"   💾 Agentic Loop state saved: {path}")
         except Exception as e:
             print(f"   ⚠️ Could not save state: {e}")
 
@@ -834,10 +967,8 @@ def integrate_with_ppo(agentic_loop, trade_result):
         combined_accuracy = (avg_agent_accuracy + ensemble_accuracy) / 2
 
         if combined_accuracy > 0.6:
-            print(f"   🚀 Agent consensus strong! Boosting PPO reward")
             return 1.2, {'agent_accuracy': avg_agent_accuracy, 'ensemble_accuracy': ensemble_accuracy}
         elif combined_accuracy < 0.4:
-            print(f"   ⚠️ Agent consensus weak! Reducing PPO reward")
             return 0.8, {'agent_accuracy': avg_agent_accuracy, 'ensemble_accuracy': ensemble_accuracy}
 
     return 1.0, {}
@@ -849,7 +980,7 @@ def integrate_with_ppo(agentic_loop, trade_result):
 
 if __name__ == "__main__":
     print("\n" + "=" * 60)
-    print("🧪 TESTING AGENTIC LOOP")
+    print("🧪 TESTING AGENTIC LOOP (with Qwen3 + DeepSeek)")
     print("=" * 60)
 
     loop = AgenticLoop()
@@ -867,7 +998,10 @@ if __name__ == "__main__":
         'div_strength': [0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0],
         'dist_from_ema': [5, 4, 3, 2, 1, 0, -1, -2, -3, -4, -5],
         'above_ema': [1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0],
-        'sr_strength': [2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1]
+        'sr_strength': [2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1],
+        'macd': [-0.5, -0.3, -0.1, 0.1, 0.3, 0.5, 0.4, 0.3, 0.2, 0.1, 0.0],
+        'macd_signal': [-0.4, -0.2, 0.0, 0.2, 0.4, 0.3, 0.2, 0.1, 0.0, -0.1, -0.2],
+        'macd_hist': [-0.1, -0.1, -0.1, -0.1, -0.1, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2],
     })
 
     decision, score, confidence, details = loop.get_consensus(
@@ -875,7 +1009,6 @@ if __name__ == "__main__":
         symbol_data=sample_data,
         volatility=0.02,
         market_regime="BULL",
-        sector="Technology",
         atr=2.5,
         drawdown=0.03
     )
@@ -889,7 +1022,6 @@ if __name__ == "__main__":
         'pnl': 500.0,
         'pnl_pct': 5.0,
         'success': True,
-        'sector': 'Technology',
         'ppo_action': 1,
         'features': np.random.randn(15)
     })
