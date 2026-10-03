@@ -815,7 +815,7 @@ class AutoDeepSeekTrainer:
             train_texts,
             truncation=True,
             padding="max_length",
-            max_length=384,
+            max_length=128,
             return_tensors="pt"
         )
 
@@ -886,7 +886,7 @@ class AutoDeepSeekTrainer:
             warmup_steps=100,
             weight_decay=0.025,
             lr_scheduler_type="cosine_with_restarts",
-            save_steps=20,
+            save_steps=5,
             save_total_limit=5,
             logging_steps=10,
             save_strategy="steps",
