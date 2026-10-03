@@ -52,7 +52,7 @@ def run_pipeline():
                 [sys.executable, script_path],
                 check=True,
                 env=env,
-                timeout=22000,  # 2 hours per script
+                timeout=21000,  # 2 hours per script
             )
             print(f"✅ Finished: {script}")
 
