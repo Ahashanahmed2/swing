@@ -1,9 +1,9 @@
 # ================== scripts/deepseek_train.py ==================
-# DeepSeek-R1-Distill-Qwen-1.5B Trainer
+# DeepSeek-R1-Distill-Qwen-1.5B Trainer (Auto-handle optimizer mismatch)
 # ✅ Base: DeepSeek-R1-Distill-Qwen-1.5B
 # ✅ Checkpoints → HF: ahashanahmed/csv/deepseek_checkpoints/
 # ✅ Local resume: ./csv/deepseek_checkpoints/
-# ✅ Separate tracking from GPT-2 / Qwen
+# ✅ Auto-handle optimizer state mismatch (delete + retry)
 
 import os
 import torch
@@ -35,7 +35,6 @@ except ImportError:
     AGENTIC_LOOP_AVAILABLE = False
     print("⚠️ Agentic Loop not found")
 
-# LoRA
 try:
     from peft import LoraConfig, get_peft_model
     LORA_AVAILABLE = True
@@ -107,9 +106,9 @@ HIGH_PRIORITY_THRESHOLD = 0.35
 MAX_GRAD_NORM = 0.5
 VALIDATION_SPLIT_RATIO = 0.15
 
-# ✅ LoRA config for DeepSeek-R1-Distill-Qwen-1.5B (Qwen2 architecture)
+# ✅ LoRA config — MUST MATCH checkpoint-510 (r=16, alpha=32)
 LORA_CONFIG = {
-    'r': 16,                # DeepSeek 1.5B — smaller rank for CPU
+    'r': 16,
     'lora_alpha': 32,
     'target_modules': [
         'q_proj', 'k_proj', 'v_proj', 'o_proj',
@@ -452,7 +451,7 @@ class XGBoostPPOIntegrator:
 # =========================================================
 
 class WeightedTrainer(Trainer):
-    def compute_loss(self, model, inputs, return_outputs=False,num_items_in_batch=None):
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         weights = inputs.get("weight", None)
         labels = inputs.get("labels")
 
@@ -671,7 +670,6 @@ class AutoDeepSeekTrainer:
             self.old_training_texts.extend(new_texts)
             self.old_training_texts = self.old_training_texts[-MAX_OLD_EXAMPLES:]
             train_texts = self.old_training_texts.copy()
-            print(f"   Replay buffer: {len(self.old_training_texts)} total examples")
         else:
             train_texts = new_texts
             self.old_training_texts = train_texts.copy()
@@ -815,7 +813,7 @@ class AutoDeepSeekTrainer:
             train_texts,
             truncation=True,
             padding="max_length",
-            max_length=128,
+            max_length=384,
             return_tensors="pt"
         )
 
@@ -877,7 +875,6 @@ class AutoDeepSeekTrainer:
 
         training_args = TrainingArguments(
             output_dir=LLM_MODEL_DIR,
-            #overwrite_output_dir=False,
             num_train_epochs=num_epochs,
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size,
@@ -886,12 +883,10 @@ class AutoDeepSeekTrainer:
             warmup_steps=100,
             weight_decay=0.025,
             lr_scheduler_type="cosine_with_restarts",
-            save_steps=5,
+            save_steps=20,
             save_total_limit=5,
             logging_steps=10,
             save_strategy="steps",
-            #evaluation_strategy="no",
-            #load_best_model_at_end=False,
             fp16=False,
             dataloader_num_workers=0,
             dataloader_pin_memory=False,
@@ -917,7 +912,6 @@ class AutoDeepSeekTrainer:
         )
 
         # ✅ HF Callback
-        hf_uploader_ref = self.hf_uploader
         deepseek_local_dir = DEEPSEEK_LOCAL_CHECKPOINT_DIR
 
         class CustomHFCallback:
@@ -956,14 +950,52 @@ class AutoDeepSeekTrainer:
         print(f"   📂 Local checkpoints: {DEEPSEEK_LOCAL_CHECKPOINT_DIR}")
         print(f"   📤 HF checkpoints → {HF_DATASET_REPO}/{DEEPSEEK_HF_CHECKPOINT_PREFIX}*")
 
+        # ═══════════════════════════════════════════════════════════
+        # ✅ FIX: Auto-handle optimizer state mismatch
+        # ═══════════════════════════════════════════════════════════
         try:
             trainer.train(resume_from_checkpoint=last_checkpoint)
+        except ValueError as e:
+            err_str = str(e)
+            if "parameter group" in err_str or "optimizer" in err_str.lower():
+                print(f"\n   ⚠️ Optimizer state mismatch detected!")
+                print(f"   🔄 Deleting optimizer state from checkpoint...")
+
+                removed = []
+                for fname in ["optimizer.pt", "scheduler.pt"]:
+                    fpath = os.path.join(last_checkpoint, fname)
+                    if os.path.exists(fpath):
+                        os.remove(fpath)
+                        removed.append(fname)
+                        print(f"   🗑️ Removed {fname}")
+
+                if removed:
+                    print(f"   🔄 Retrying resume without optimizer state...")
+                    try:
+                        trainer.train(resume_from_checkpoint=last_checkpoint)
+                    except Exception as e2:
+                        error_msg = f"""
+⚠️ <b>DeepSeek Training Error (after cleanup)</b>
+📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
+❌ {str(e2)[:200]}
+"""
+                        send_telegram_message(error_msg, self.telegram_token, self.telegram_chat_id)
+                        raise
+                else:
+                    raise
+            else:
+                error_msg = f"""
+⚠️ <b>DeepSeek Training Error</b>
+📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
+❌ {str(e)[:200]}
+"""
+                send_telegram_message(error_msg, self.telegram_token, self.telegram_chat_id)
+                raise
         except Exception as e:
             error_msg = f"""
 ⚠️ <b>DeepSeek Training Error</b>
 📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
-🎯 Mode: {mode.upper()}
-❌ Error: {str(e)[:200]}
+❌ {str(e)[:200]}
 """
             send_telegram_message(error_msg, self.telegram_token, self.telegram_chat_id)
             raise
