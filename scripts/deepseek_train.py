@@ -135,7 +135,13 @@ LR_CONFIG = {
     "consolidate": 1e-4,
     "mistake_learning": 5e-5,
 }
-BATCH_SIZE_CONFIG = {k: 1 for k in EPOCHS_CONFIG}
+BATCH_SIZE_CONFIG = {
+    "first_train": 2,
+    "incremental": 1,
+    "weekly_finetune": 1,
+    "consolidate": 2,
+    "mistake_learning": 1,
+}
 GRAD_ACCUM_CONFIG = {
     "first_train": 16,
     "incremental": 24,
