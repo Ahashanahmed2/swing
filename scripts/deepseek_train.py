@@ -1,9 +1,10 @@
 # ================== scripts/deepseek_train.py ==================
-# DeepSeek-R1-Distill-Qwen-1.5B Trainer (Auto-handle optimizer mismatch)
-# ✅ Base: DeepSeek-R1-Distill-Qwen-1.5B
-# ✅ Checkpoints → HF: ahashanahmed/csv/deepseek_checkpoints/
-# ✅ Local resume: ./csv/deepseek_checkpoints/
-# ✅ Auto-handle optimizer state mismatch (delete + retry)
+# DeepSeek-R1-Distill-Qwen-1.5B Trainer (FULL PATCHED)
+# ✅ Fix 1: Load from BASE_MODEL each run (fresh LoRA)
+# ✅ Fix 2: Force requires_grad=True before training
+# ✅ Fix 3: Verify LoRA applied (trainable params > 0)
+# ✅ Fix 4: Auto-handle optimizer state mismatch
+# ✅ Fix 5: compute_loss signature (transformers 4.51+)
 
 import os
 import torch
@@ -106,7 +107,7 @@ HIGH_PRIORITY_THRESHOLD = 0.35
 MAX_GRAD_NORM = 0.5
 VALIDATION_SPLIT_RATIO = 0.15
 
-# ✅ LoRA config — MUST MATCH checkpoint-510 (r=16, alpha=32)
+# ✅ LoRA config (MUST match checkpoint)
 LORA_CONFIG = {
     'r': 16,
     'lora_alpha': 32,
@@ -704,50 +705,43 @@ class AutoDeepSeekTrainer:
         return train_texts, example_weights
 
     def load_model_with_lora(self):
-        """✅ Load DeepSeek model + apply LoRA"""
+        """✅ PATCHED: Always load from BASE_MODEL + fresh LoRA"""
         print("\n🏗️ Loading DeepSeek model...")
 
-        local_valid = (
-            os.path.exists(LLM_MODEL_DIR) and
-            os.path.exists(os.path.join(LLM_MODEL_DIR, "config.json"))
-        )
-
-        if local_valid:
-            try:
-                print(f"   Loading local DeepSeek from {LLM_MODEL_DIR}...")
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    LLM_MODEL_DIR,
-                    trust_remote_code=True,
-                    torch_dtype=torch.float32,
-                    low_cpu_mem_usage=True,
-                )
-                self.tokenizer = AutoTokenizer.from_pretrained(
-                    LLM_MODEL_DIR,
-                    trust_remote_code=True,
-                )
-                print("   ✅ DeepSeek loaded from local")
-            except Exception as e:
-                print(f"   ⚠️ Local load failed: {e}")
-                self.model = None
-
-        if self.model is None:
-            print(f"   📥 Downloading base DeepSeek: {BASE_MODEL}")
+        # ✅ ALWAYS load from BASE_MODEL (not merged model)
+        print(f"   📥 Loading base: {BASE_MODEL}")
+        try:
             self.model = AutoModelForCausalLM.from_pretrained(
                 BASE_MODEL,
                 trust_remote_code=True,
                 torch_dtype=torch.float32,
-                low_cpu_mem_usage=True
+                low_cpu_mem_usage=True,
             )
             self.tokenizer = AutoTokenizer.from_pretrained(
                 BASE_MODEL,
                 trust_remote_code=True,
             )
-            print("   ✅ Base DeepSeek loaded")
+            print(f"   ✅ Base DeepSeek loaded")
+        except Exception as e:
+            print(f"   ❌ Base load failed: {e}")
+            raise RuntimeError(f"Cannot load base model: {e}")
 
+        # ✅ Apply FRESH LoRA
         if LORA_AVAILABLE:
             lora_config = LoraConfig(**LORA_CONFIG)
             self.model = get_peft_model(self.model, lora_config)
             print(f"   ✅ LoRA applied (r={LORA_CONFIG['r']}, alpha={LORA_CONFIG['lora_alpha']})")
+
+            # ✅ VERIFY LoRA is working
+            lora_params = [n for n, p in self.model.named_parameters() if 'lora_' in n.lower()]
+            if len(lora_params) == 0:
+                print(f"   ❌ ERROR: LoRA has 0 params!")
+                raise RuntimeError("LoRA not applied — 0 LoRA params found")
+            
+            trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+            total = sum(p.numel() for p in self.model.parameters())
+            print(f"   📊 LoRA params: {len(lora_params)} layers")
+            print(f"   📊 Trainable: {trainable:,} / {total:,} ({trainable/total*100:.2f}%)")
 
         self._post_load_setup()
 
@@ -951,6 +945,33 @@ class AutoDeepSeekTrainer:
         print(f"   📤 HF checkpoints → {HF_DATASET_REPO}/{DEEPSEEK_HF_CHECKPOINT_PREFIX}*")
 
         # ═══════════════════════════════════════════════════════════
+        # ✅ FIX: Force requires_grad=True before training
+        # ═══════════════════════════════════════════════════════════
+        print("\n🔧 Enabling gradients for trainable params...")
+        trainable_count = 0
+        for name, param in self.model.named_parameters():
+            if 'lora_' in name.lower():
+                param.requires_grad = True
+                trainable_count += 1
+        
+        if trainable_count == 0:
+            print(f"   ⚠️ No LoRA params found! Enabling all params...")
+            for param in self.model.parameters():
+                param.requires_grad = True
+        else:
+            print(f"   ✅ Enabled gradients for {trainable_count} LoRA param tensors")
+        
+        # Verify
+        actual_trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        print(f"   Total trainable params: {actual_trainable:,}")
+        
+        if actual_trainable == 0:
+            raise RuntimeError("No trainable params! Cannot train.")
+        
+        # Ensure training mode
+        self.model.train()
+
+        # ═══════════════════════════════════════════════════════════
         # ✅ FIX: Auto-handle optimizer state mismatch
         # ═══════════════════════════════════════════════════════════
         try:
@@ -971,18 +992,41 @@ class AutoDeepSeekTrainer:
 
                 if removed:
                     print(f"   🔄 Retrying resume without optimizer state...")
-                    try:
-                        trainer.train(resume_from_checkpoint=last_checkpoint)
-                    except Exception as e2:
-                        error_msg = f"""
-⚠️ <b>DeepSeek Training Error (after cleanup)</b>
-📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
-❌ {str(e2)[:200]}
-"""
-                        send_telegram_message(error_msg, self.telegram_token, self.telegram_chat_id)
-                        raise
+                    
+                    # ✅ Re-enable gradients before retry
+                    for param in self.model.parameters():
+                        if 'lora_' in [n for n, _ in self.model.named_parameters()]:
+                            pass
+                    for name, param in self.model.named_parameters():
+                        if 'lora_' in name.lower():
+                            param.requires_grad = True
+                    self.model.train()
+                    
+                    trainer.train(resume_from_checkpoint=last_checkpoint)
                 else:
                     raise
+            else:
+                error_msg = f"""
+⚠️ <b>DeepSeek Training Error</b>
+📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
+❌ {str(e)[:200]}
+"""
+                send_telegram_message(error_msg, self.telegram_token, self.telegram_chat_id)
+                raise
+        except RuntimeError as e:
+            err_str = str(e)
+            if "does not require grad" in err_str or "grad_fn" in err_str:
+                print(f"\n   ⚠️ Gradient error detected!")
+                print(f"   🔄 Re-enabling gradients and retrying...")
+                
+                for name, param in self.model.named_parameters():
+                    if 'lora_' in name.lower():
+                        param.requires_grad = True
+                
+                self.model.train()
+                
+                # Retry
+                trainer.train(resume_from_checkpoint=last_checkpoint)
             else:
                 error_msg = f"""
 ⚠️ <b>DeepSeek Training Error</b>
@@ -1002,7 +1046,16 @@ class AutoDeepSeekTrainer:
 
         print("\n✅ DeepSeek training completed!")
 
-        # ✅ Merge LoRA + save
+        # ✅ Save LoRA adapter (before merge)
+        try:
+            lora_save_dir = os.path.join(LLM_MODEL_DIR, "lora_adapter_latest")
+            self.model.save_pretrained(lora_save_dir)
+            self.tokenizer.save_pretrained(lora_save_dir)
+            print(f"💾 LoRA adapter saved to {lora_save_dir}")
+        except Exception as e:
+            print(f"⚠️ LoRA adapter save failed: {e}")
+
+        # ✅ Merge LoRA + save full model
         try:
             if LORA_AVAILABLE and hasattr(self.model, 'merge_and_unload'):
                 print("🔄 Merging LoRA into DeepSeek base...")
@@ -1021,6 +1074,20 @@ class AutoDeepSeekTrainer:
 
         self.upload_final_model_to_hf(mode)
 
+        # ✅ Save tracking files AFTER training
+        if symbols_batch:
+            for sym in symbols_batch:
+                if sym not in self.trained_symbols:
+                    self.trained_symbols.append(sym)
+        self.save_trained_symbols()
+        
+        # ✅ Upload tracking to HF
+        try:
+            self.hf_uploader.upload_tracking_files()
+            print(f"   📤 Tracking files uploaded to HF")
+        except Exception as e:
+            print(f"   ⚠️ Tracking upload failed: {e}")
+
         complete_msg = f"""
 ✅ <b>DeepSeek Training Completed</b>
 📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
@@ -1038,7 +1105,6 @@ class AutoDeepSeekTrainer:
             return
         try:
             self.hf_uploader.upload_final_model(LLM_MODEL_DIR, mode)
-            self.hf_uploader.upload_tracking_files()
         except Exception as e:
             print(f"⚠️ Final model upload failed: {e}")
 
@@ -1088,6 +1154,15 @@ class AutoDeepSeekTrainer:
 
         self.load_model_with_lora()
 
+        # ✅ Better mode logic: checkpoint-based
+        import glob
+
+        existing_ckpts = glob.glob(
+            os.path.join(DEEPSEEK_LOCAL_CHECKPOINT_DIR, "deepseek_checkpoint-*")
+        ) + glob.glob(
+            os.path.join(DEEPSEEK_LOCAL_CHECKPOINT_DIR, "checkpoint-*")
+        )
+
         # STEP 1: Train new symbols
         if new_symbols:
             print(f"\n📚 Found {len(new_symbols)} new symbols to train")
@@ -1097,7 +1172,17 @@ class AutoDeepSeekTrainer:
                 print(f"\n📦 Batch {batch_num}: {len(batch)} symbols")
 
                 if self.generate_training_data_for_symbols(batch):
-                    mode = "first_train" if len(self.trained_symbols) == 0 else "incremental"
+                    # ✅ Mode logic based on checkpoint existence
+                    if existing_ckpts:
+                        mode = "incremental"
+                        print(f"   🔄 {len(existing_ckpts)} checkpoints → INCREMENTAL")
+                    elif len(self.trained_symbols) == 0:
+                        mode = "first_train"
+                        print(f"   🎯 No checkpoints, no tracking → FIRST_TRAIN")
+                    else:
+                        mode = "incremental"
+                        print(f"   ⚙️ {len(self.trained_symbols)} trained → INCREMENTAL")
+
                     if self.train(mode=mode, symbols_batch=batch):
                         self.trained_symbols.extend(batch)
                         self.save_trained_symbols()
