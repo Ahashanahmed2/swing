@@ -93,14 +93,14 @@ MISTAKE_LEARNING_INTERVAL = 7   # days (cooldown)
 
 MAX_OLD_EXAMPLES = 10000
 MAX_VAL_EXAMPLES = 200
-MAX_SEQ_LEN = 384
+MAX_SEQ_LEN = 192
 MAX_GRAD_NORM = 1.0
 VALIDATION_SPLIT_RATIO = 0.10
 MISTAKE_MIX_RATIO = 0.25
 MIN_TEXT_LEN = 100              # normal ডেটার ন্যূনতম দৈর্ঘ্য
 MIN_OVERRIDE_LEN = 30           # mistake উদাহরণ ছোট, তাই আলাদা সীমা
 SEED = 42
-SAVE_STEPS = 50
+SAVE_STEPS = 30
 
 # প্রতি মোডে replay buffer থেকে কতগুলো পুরনো উদাহরণ নমুনা হিসেবে নেওয়া হবে
 REPLAY_SAMPLE_SIZE = {
@@ -122,10 +122,10 @@ LORA_CONFIG = {
 }
 
 EPOCHS_CONFIG = {
-    "first_train": 3,
+    "first_train": 2,
     "incremental": 2,
     "weekly_finetune": 2,
-    "consolidate": 3,
+    "consolidate": 2,
     "mistake_learning": 2,
 }
 LR_CONFIG = {
@@ -137,10 +137,10 @@ LR_CONFIG = {
 }
 BATCH_SIZE_CONFIG = {k: 1 for k in EPOCHS_CONFIG}
 GRAD_ACCUM_CONFIG = {
-    "first_train": 32,
+    "first_train": 16,
     "incremental": 24,
     "weekly_finetune": 16,
-    "consolidate": 32,
+    "consolidate": 16,
     "mistake_learning": 16,
 }
 
