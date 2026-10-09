@@ -12,6 +12,7 @@
 #  8. merge ব্যর্থ হলে টেলিগ্রামে আলাদা সতর্কতা
 
 import os
+import re
 import gc
 import sys
 import json
@@ -36,7 +37,7 @@ from transformers import (
     TrainingArguments,
 )
 from transformers.trainer_utils import get_last_checkpoint
-from huggingface_hub import HfApi, create_repo, login
+from huggingface_hub import CommitOperationDelete, HfApi, create_repo, login
 
 warnings.filterwarnings("ignore")
 
@@ -244,6 +245,30 @@ class HFUploader:
             f"{DEEPSEEK_FINAL_MODEL_PREFIX}/{mode}_adapter",
             f"🧠 DeepSeek adapter ({mode}) - {datetime.now():%Y-%m-%d %H:%M}",
         )
+
+    def delete_mode_checkpoints(self, mode):
+        """সফল ট্রেনিংয়ের পর HF-এর ওই মোডের checkpoint মুছে ফেলা,
+        যাতে পরের রানে download script সেগুলোকে 'অসমাপ্ত রান' ভেবে resume না করে।"""
+        if self.api is None:
+            return
+        try:
+            files = self.api.list_repo_files(repo_id=self.repo_id, repo_type="dataset")
+            pat = re.compile(rf"deepseek_checkpoint-{re.escape(mode)}(_final)?-\d+$")
+            folders = sorted({f.split("/")[1] for f in files
+                              if f.startswith("deepseek_checkpoints/") and len(f.split("/")) >= 3
+                              and pat.match(f.split("/")[1])})
+            if not folders:
+                return
+            self.api.create_commit(
+                repo_id=self.repo_id,
+                repo_type="dataset",
+                operations=[CommitOperationDelete(path_in_repo=f"deepseek_checkpoints/{fo}/")
+                            for fo in folders],
+                commit_message=f"🗑️ {mode} finished - remove {len(folders)} checkpoint folder(s)",
+            )
+            print(f"   🗑️ HF: removed {len(folders)} '{mode}' checkpoint folder(s)")
+        except Exception as e:
+            print(f"   ⚠️ HF checkpoint cleanup failed: {e}")
 
     def upload_adapter_latest(self, adapter_path):
         """নির্দিষ্ট পাথ (মোড ছাড়া) — CI-তে পরের রানে সহজে ডাউনলোডের জন্য।"""
@@ -1026,6 +1051,7 @@ class AutoDeepSeekTrainer:
             merged_ok = self.merge_and_save(mode)
 
             shutil.rmtree(ckpt_dir, ignore_errors=True)
+            self.hf_uploader.delete_mode_checkpoints(mode)
             self.hf_uploader.upload_tracking_files()
 
             merge_line = (f"💾 Merged model: {esc(LLM_MODEL_DIR)}" if merged_ok
