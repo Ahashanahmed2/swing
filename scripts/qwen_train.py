@@ -1197,12 +1197,36 @@ class AutoQwen3Trainer:
     
         trainer.add_callback(CustomHFCallback(self.hf_uploader))
 
-        print("\n🏋️ Starting Qwen3 Training...")
+                print("\n🏋️ Starting Qwen3 Training...")
         print(f"   📂 Local checkpoints: {QWEN3_LOCAL_CHECKPOINT_DIR}")
         print(f"   📤 HF checkpoints → {HF_DATASET_REPO}/{QWEN3_HF_CHECKPOINT_PREFIX}*")
-        
+
+        # ═══════════════════════════════════════════════════════════
+        # ✅ FIX: Auto-handle optimizer state mismatch
+        # ═══════════════════════════════════════════════════════════
         try:
             trainer.train(resume_from_checkpoint=last_checkpoint)
+        except ValueError as e:
+            err_str = str(e)
+            if last_checkpoint and ("parameter group" in err_str or "optimizer" in err_str.lower()):
+                print("\n   ⚠️ Optimizer state mismatch detected!")
+                print("   🔄 Removing optimizer/scheduler state and retrying...")
+                for fname in ("optimizer.pt", "scheduler.pt"):
+                    p = os.path.join(last_checkpoint, fname)
+                    if os.path.exists(p):
+                        os.remove(p)
+                        print(f"   🗑️ Removed {fname}")
+                self.model.train()
+                trainer.train(resume_from_checkpoint=last_checkpoint)
+            else:
+                error_msg = f"""
+⚠️ <b>Qwen3 Training Error</b>
+📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}
+🎯 Mode: {mode.upper()}
+❌ Error: {err_str[:200]}
+"""
+                send_telegram_message(error_msg, self.telegram_token, self.telegram_chat_id)
+                raise
         except Exception as e:
             error_msg = f"""
 ⚠️ <b>Qwen3 Training Error</b>
