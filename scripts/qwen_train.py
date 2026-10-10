@@ -1197,7 +1197,7 @@ class AutoQwen3Trainer:
     
         trainer.add_callback(CustomHFCallback(self.hf_uploader))
 
-                print("\n🏋️ Starting Qwen3 Training...")
+        print("\n🏋️ Starting Qwen3 Training...")
         print(f"   📂 Local checkpoints: {QWEN3_LOCAL_CHECKPOINT_DIR}")
         print(f"   📤 HF checkpoints → {HF_DATASET_REPO}/{QWEN3_HF_CHECKPOINT_PREFIX}*")
 
