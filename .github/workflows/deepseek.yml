@@ -2,7 +2,7 @@ name: DeepSeek Train
 
 on:
   schedule:
-    - cron: "30 */6 * * *"
+    - cron: "10 */6 * * *"
   workflow_dispatch:
 
 permissions:
