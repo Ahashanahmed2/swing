@@ -1,17 +1,9 @@
 # ================== scripts/qwen_train.py ==================
-# Qwen3 Trainer with XGBoost + PPO Integration  (FIXED VERSION)
-#
-# HF layout (single fixed paths, no per-mode / per-step folders):
-#   final_model_qwen3/latest/        <- latest merged model (always overwritten)
-#   qwen3_checkpoints/current/       <- latest crash-recovery checkpoint (overwritten)
-#
-# Local layout:
-#   ./csv/llm_model_qwen3/           <- latest merged model (loaded at start of every train())
-#   ./csv/qwen3_checkpoints/         <- Trainer output_dir (crash recovery ONLY)
-#
-# Checkpoint rule: a checkpoint is resumed ONLY if its run_marker.json matches the
-# current run (same mode + same symbols + same dataset size). After a successful
-# training, all checkpoints (local + HF) are deleted.
+# Qwen3 Trainer v6 — TIME-SAFE + FULL PATCHED
+# ✅ ADDED: TimeLimitCallback (stop at 5.5h → save before 6h timeout)
+# ✅ ADDED: Eval step control (avoid 18-min eval overhead)
+# ✅ ADDED: Reduce epochs to fit time budget
+# ✅ PRESERVED: All Script 2 fixes (marker, weighted loss, random split)
 
 import os
 import re
@@ -75,7 +67,7 @@ LLM_MODEL_DIR = "./csv/llm_model_qwen3"
 QWEN3_HF_CHECKPOINT_PATH = "qwen3_checkpoints/current"
 QWEN3_HF_FINAL_PATH = "final_model_qwen3/latest"
 
-# Local checkpoint dir (Trainer output_dir, crash recovery only)
+# Local checkpoint dir
 QWEN3_LOCAL_CHECKPOINT_DIR = "./csv/qwen3_checkpoints"
 MARKER_NAME = "run_marker.json"
 
@@ -106,7 +98,14 @@ SPLIT_SEED = 42
 MAX_LENGTH = 192
 
 SAVE_STEPS = 20
-HF_CKPT_MIN_INTERVAL_SEC = 600   # at most one HF checkpoint upload per 10 minutes
+HF_CKPT_MIN_INTERVAL_SEC = 600
+
+# ✅ TIME LIMIT (GitHub 6h hard limit → stop at 5.5h)
+MAX_TRAINING_HOURS = 5.5        # Stop training at this point
+
+# ✅ EVAL control (avoid slow evaluation)
+MAX_EVAL_SAMPLES = 100          # Cap val dataset size (was 603 → 18 min)
+EVAL_STEPS = 100                # Eval every 100 optimizer steps (was save_steps)
 
 LORA_CONFIG = {
     "r": 32,
@@ -121,11 +120,15 @@ LORA_CONFIG = {
 CONFIDENCE_PATTERN = r"(?:Confidence|Signal Strength):?\s*(\d+(?:\.\d+)?)%"
 DELIM = "=" * 80
 
+# ✅ REDUCED EPOCHS (fit in 5.5h budget)
 EPOCHS_CONFIG = {
-    "first_train": 2, "incremental": 2, "weekly_finetune": 1,
-    "consolidate": 3, "mistake_learning": 1,
+    "first_train": 1,           # was 2
+    "incremental": 1,           # was 2
+    "weekly_finetune": 1,
+    "consolidate": 2,           # was 3
+    "mistake_learning": 1,
 }
-LR_CONFIG = {   # LoRA needs a much higher LR than full fine-tuning
+LR_CONFIG = {
     "first_train": 2e-4, "incremental": 1e-4, "weekly_finetune": 5e-5,
     "consolidate": 1e-4, "mistake_learning": 5e-5,
 }
@@ -140,9 +143,9 @@ GRAD_ACCUM_CONFIG = {
 
 MODE_EXPLANATION = {
     "first_train": "🎯 FIRST TIME TRAINING (Qwen3-0.6B - Base Model)",
-    "incremental": "⚙️ INCREMENTAL TRAINING (New symbols added - Regular batch training)",
-    "weekly_finetune": "🔄 WEEKLY FINE-TUNE (Every 7 days - Retraining on existing symbols)",
-    "consolidate": "📈 MONTHLY RE-TUNE (Every 30 days - Full consolidation training)",
+    "incremental": "⚙️ INCREMENTAL TRAINING (New symbols added)",
+    "weekly_finetune": "🔄 WEEKLY FINE-TUNE (Every 7 days)",
+    "consolidate": "📈 MONTHLY RE-TUNE (Every 30 days)",
     "mistake_learning": "🎯 MISTAKE LEARNING (Retraining from past errors)",
 }
 MODE_SHORT_EXPLANATION = {
@@ -160,7 +163,6 @@ def get_hf_token():
 
 
 def esc(x, limit=300):
-    """Escape text for Telegram HTML mode."""
     return html.escape(str(x)[:limit])
 
 
@@ -206,8 +208,6 @@ def read_marker(folder):
 
 
 def get_base_tag():
-    """Identifies the base weights a LoRA checkpoint was trained on.
-    After a merge the tag changes, so an old adapter is never applied twice."""
     try:
         with open(os.path.join(LLM_MODEL_DIR, "train_info.json"), "r") as f:
             return str(json.load(f).get("trained_at", "base"))
@@ -228,12 +228,50 @@ def clear_dir_contents(path):
 
 
 # =========================================================
+# ✅ NEW: TIME LIMIT CALLBACK (GitHub 6h protection)
+# =========================================================
+
+class TimeLimitCallback(TrainerCallback):
+    """
+    Stops training at MAX_TRAINING_HOURS to avoid GitHub 6-hour timeout.
+    Saves checkpoint before stopping so next run can resume.
+    """
+
+    def __init__(self, max_hours=5.5):
+        self.max_seconds = max_hours * 3600
+        self.start_time = None
+        self.stopped = False
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        self.start_time = time.time()
+        print(f"   ⏰ Time limit: {self.max_seconds / 3600:.1f}h (GitHub 6h safety)")
+        return control
+
+    def on_step_end(self, args, state, control, **kwargs):
+        if self.stopped:
+            return control
+        if self.start_time is None:
+            return control
+        elapsed = time.time() - self.start_time
+        if elapsed >= self.max_seconds:
+            elapsed_h = elapsed / 3600
+            print(f"\n   ⏰ TIME LIMIT REACHED ({elapsed_h:.2f}h) at step {state.global_step}")
+            print(f"   🛑 Stopping training + saving checkpoint")
+            control.should_training_stop = True
+            control.should_save = True
+            self.stopped = True
+        elif elapsed >= self.max_seconds - 300:  # warn 5 min before
+            if state.global_step % 10 == 0:
+                remaining = (self.max_seconds - elapsed) / 60
+                print(f"   ⚠️ ~{remaining:.0f} min left before time limit (step {state.global_step})")
+        return control
+
+
+# =========================================================
 # HF UPLOADER
 # =========================================================
 
 class HFUploader:
-    """Uploads to fixed HF paths (old content is replaced via delete_patterns)."""
-
     def __init__(self, repo_id=HF_DATASET_REPO):
         self.repo_id = repo_id
         self.api = None
@@ -260,7 +298,7 @@ class HFUploader:
             path_in_repo=repo_path,
             repo_id=self.repo_id,
             repo_type="dataset",
-            delete_patterns="*",      # replace old content in this folder
+            delete_patterns="*",
             commit_message=message,
         )
 
@@ -291,7 +329,6 @@ class HFUploader:
             return False
 
     def clear_hf_checkpoints(self):
-        """Remove crash-recovery checkpoint from HF after a successful run."""
         if self.api is None:
             return
         try:
@@ -301,7 +338,6 @@ class HFUploader:
                 commit_message="🗑️ Qwen3 training finished - clear checkpoints")
             print("   🗑️ HF checkpoints cleared")
         except Exception as e:
-            # normally "folder does not exist"
             print(f"   ℹ️ HF checkpoint clear skipped: {str(e)[:120]}")
 
     def upload_tracking_files(self):
@@ -367,13 +403,11 @@ class BatchManager:
             json.dump(self.batch_tracking, f, indent=2)
 
     def next_batch_number(self):
-        """FIX: batch numbers continue across runs (old code restarted at 1)."""
         return (max(self.completed_batches) + 1) if self.completed_batches else 1
 
     def mark_batch_completed(self, batch_num, symbols):
         if batch_num not in self.completed_batches:
             self.completed_batches.append(batch_num)
-        # FIX: symbols were never stored, so weekly fine-tune never found any
         self.batch_symbols[str(batch_num)] = list(symbols)
         self.current_batch_index = batch_num
         self.batch_tracking["current_batch"] = batch_num
@@ -385,7 +419,6 @@ class BatchManager:
         self.save_batch_tracking()
 
     def init_schedule_baselines(self):
-        """After first training, start the weekly/monthly clocks (avoid immediate re-train)."""
         now = datetime.now().isoformat()
         changed = False
         if not self.batch_tracking.get("last_weekly_finetune"):
@@ -521,7 +554,6 @@ class XGBoostPPOIntegrator:
         print(f"   ✅ Found {len(self.ppo_models)} PPO models")
 
     def get_xgb_prediction(self, symbol, features_dict=None):
-        """FIX: without real features there is no prediction (old code returned a fake 0.5)."""
         if symbol not in self.xgb_models or not features_dict:
             return None
         try:
@@ -550,13 +582,8 @@ class XGBoostPPOIntegrator:
 # =========================================================
 
 class WeightedTrainer(Trainer):
-    """Per-example weighted LM loss, normalised by the number of real tokens."""
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Our loss is already a per-micro-batch MEAN. If the Trainer thinks the model
-        # handles num_items_in_batch itself, it skips the division by
-        # gradient_accumulation_steps and the loss ends up ~grad_accum x too large.
         self.model_accepts_loss_kwargs = False
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
@@ -608,7 +635,6 @@ class StructuredDataset(torch.utils.data.Dataset):
 
 
 def lm_collate(features):
-    """Stack tensors; labels = input_ids with padding positions set to -100."""
     input_ids = torch.stack([f["input_ids"] for f in features])
     attention_mask = torch.stack([f["attention_mask"] for f in features])
     labels = input_ids.clone()
@@ -619,8 +645,6 @@ def lm_collate(features):
 
 
 class HFCheckpointCallback(TrainerCallback):
-    """Writes run marker into each checkpoint and uploads it to HF (throttled)."""
-
     def __init__(self, hf_uploader, marker):
         self.hf_uploader = hf_uploader
         self.marker = marker
@@ -640,8 +664,6 @@ class HFCheckpointCallback(TrainerCallback):
 
 
 class LossMonitorCallback(TrainerCallback):
-    """Warns on NaN or high loss (note: logged loss is the WEIGHTED loss)."""
-
     def __init__(self, warn_above=4.0):
         self.warn_above = warn_above
 
@@ -651,7 +673,7 @@ class LossMonitorCallback(TrainerCallback):
             if loss != loss:
                 print(f"   🚨 Loss is NaN at step {state.global_step}")
             elif state.global_step >= 10 and loss > self.warn_above:
-                print(f"   ⚠️ High loss {loss:.3f} at step {state.global_step} (> {self.warn_above})")
+                print(f"   ⚠️ High loss {loss:.3f} at step {state.global_step}")
         return control
 
 
@@ -752,7 +774,6 @@ class MistakeCollector:
         return examples[:limit]
 
     def get_confidence_stats(self):
-        """FIX: no more df[False] KeyError."""
         stats = {"avg_confidence": 0.0, "mistake_rate": 0.0,
                  "low_confidence_count": 0, "high_priority_count": 0}
         if self.confidence_history:
@@ -836,16 +857,10 @@ class AutoQwen3Trainer:
     def notify(self, msg):
         send_telegram_message(msg, self.telegram_token, self.telegram_chat_id)
 
-    # ---------------- Agentic loop ----------------
     def _init_agentic_loop(self):
         try:
             print("\n" + "=" * 60 + "\n🤖 INITIALIZING AGENTIC LOOP\n" + "=" * 60)
             self.agentic_loop = AgenticLoop(xgb_model_dir=XGBOOST_DIR)
-            xgb_agent = next((a for a in self.agentic_loop.agents if a.name == "XGBoost"), None)
-            if xgb_agent and xgb_agent.models:
-                print(f"   ✅ Agentic Loop ready with {len(xgb_agent.models)} XGBoost models")
-            else:
-                print("   ⚠️ Agentic Loop running without XGBoost models")
             print("=" * 60 + "\n")
         except Exception as e:
             print(f"   ❌ Agentic Loop init failed: {e}")
@@ -881,15 +896,7 @@ class AutoQwen3Trainer:
             summary = self.agentic_loop.get_summary()
             if len(summary) > 0:
                 for _, row in summary.iterrows():
-                    print(f"   {row['agent']}: {row['accuracy']} accuracy "
-                          f"({row['total_predictions']} predictions)")
-            best_agent, best_acc = None, 0
-            for agent in self.agentic_loop.agents:
-                acc = agent.get_accuracy()
-                if acc > best_acc:
-                    best_acc, best_agent = acc, agent.name
-            if best_agent:
-                print(f"\n   🥇 Best Agent: {best_agent} ({best_acc:.1%} accuracy)")
+                    print(f"   {row['agent']}: {row['accuracy']} accuracy")
             state = {"timestamp": str(datetime.now()), "agents": {}}
             for agent in self.agentic_loop.agents:
                 state["agents"][agent.name] = {
@@ -899,11 +906,9 @@ class AutoQwen3Trainer:
                 }
             with open(AGENTIC_LOOP_STATE_FILE, "w") as f:
                 json.dump(state, f, indent=2)
-            print(f"\n   💾 State saved to {AGENTIC_LOOP_STATE_FILE}\n" + "=" * 60)
         except Exception as e:
             print(f"   ⚠️ Final report failed: {e}")
 
-    # ---------------- Symbols ----------------
     def load_trained_symbols(self):
         if os.path.exists(TRACKING_FILE):
             try:
@@ -939,7 +944,6 @@ class AutoQwen3Trainer:
         print(f"   Already trained: {len(trained)} | New: {len(new_symbols)}")
         return new_symbols
 
-    # ---------------- Data ----------------
     @staticmethod
     def classify_example_difficulty(text):
         t = text.lower()
@@ -957,11 +961,6 @@ class AutoQwen3Trainer:
         return "easy"
 
     def load_training_data_with_curriculum(self, data_path=None, use_replay=True):
-        """
-        use_replay=True  : normal training (replay buffer + mistake mixing)
-        use_replay=False : train only on the given file (mistake_learning run);
-                           replay buffer is NOT polluted.
-        """
         data_path = data_path or TRAINING_DATA_PATH
         if not os.path.exists(data_path):
             print(f"❌ Training data not found: {data_path}")
@@ -978,7 +977,6 @@ class AutoQwen3Trainer:
             train_texts = list(self.old_training_texts)
             print(f"   Replay buffer: {len(train_texts)} examples")
 
-            # FIX: append mistakes (up to 25% extra) instead of cutting normal data
             mistake_texts = [t.strip() for t in self.mistake_collector.get_mistake_dataset(limit=300)]
             if mistake_texts:
                 mistake_count = min(len(mistake_texts), int(len(train_texts) * 0.25))
@@ -1010,9 +1008,7 @@ class AutoQwen3Trainer:
         print(f"   Difficulty: {counts['easy']} easy, {counts['medium']} medium, {counts['hard']} hard")
         return train_texts, weights
 
-    # ---------------- Model ----------------
     def load_model_with_lora(self):
-        """Fresh model for EVERY train() call: latest merged weights (or base) + new LoRA."""
         print("\n🏗️ Loading Qwen3 model...")
         self.model = None
         local_valid = os.path.exists(os.path.join(LLM_MODEL_DIR, "config.json"))
@@ -1047,8 +1043,7 @@ class AutoQwen3Trainer:
 
         total = sum(p.numel() for p in self.model.parameters())
         trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-        print(f"   Total parameters: {total:,} | Trainable: {trainable:,}")
-        print(f"   Device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
+        print(f"   Total: {total:,} | Trainable: {trainable:,}")
 
     def _release_model(self):
         self.model = None
@@ -1057,7 +1052,6 @@ class AutoQwen3Trainer:
             torch.cuda.empty_cache()
 
     def _save_merged_model(self):
-        """Merge LoRA, save to temp dir, then atomically swap into LLM_MODEL_DIR."""
         model = self.model
         if LORA_AVAILABLE and hasattr(model, "merge_and_unload"):
             print("🔄 Merging LoRA into Qwen3 base...")
@@ -1071,11 +1065,19 @@ class AutoQwen3Trainer:
         model.save_pretrained(tmp_dir)
         self.tokenizer.save_pretrained(tmp_dir)
 
+        # ✅ Verify
+        required = ["config.json", "tokenizer_config.json"]
+        missing = [r for r in required if not os.path.exists(os.path.join(tmp_dir, r))]
+        weight_files = ["model.safetensors", "pytorch_model.bin"]
+        if not any(os.path.exists(os.path.join(tmp_dir, w)) for w in weight_files):
+            missing.append("weights")
+        if missing:
+            raise RuntimeError(f"Merge save incomplete: missing {missing}")
+
         shutil.rmtree(LLM_MODEL_DIR, ignore_errors=True)
         os.replace(tmp_dir, LLM_MODEL_DIR)
         print(f"✅ Merged Qwen3 saved to {LLM_MODEL_DIR}")
 
-    # ---------------- Checkpoint resume ----------------
     @staticmethod
     def _ckpt_step(path):
         try:
@@ -1085,7 +1087,6 @@ class AutoQwen3Trainer:
             return None
 
     def find_matching_checkpoint(self, marker):
-        """Return newest checkpoint whose marker matches this run, else None."""
         candidates = (glob.glob(os.path.join(QWEN3_LOCAL_CHECKPOINT_DIR, "checkpoint-*")) +
                       [os.path.join(QWEN3_LOCAL_CHECKPOINT_DIR, "current")])
         best, best_step = None, -1
@@ -1101,7 +1102,6 @@ class AutoQwen3Trainer:
                 best, best_step = p, step
         return best
 
-    # ---------------- Status ----------------
     def save_training_status_file(self, mode, symbols_batch):
         try:
             with open(STATUS_FILE, "w") as f:
@@ -1111,8 +1111,8 @@ class AutoQwen3Trainer:
                     "mode_short": MODE_SHORT_EXPLANATION.get(mode, mode.upper()),
                     "start_time": datetime.now().isoformat(),
                     "symbols_count": len(symbols_batch) if symbols_batch else 0,
-                    "epochs": EPOCHS_CONFIG.get(mode, 10),
-                    "learning_rate": LR_CONFIG.get(mode, 1e-5),
+                    "epochs": EPOCHS_CONFIG.get(mode, 1),
+                    "learning_rate": LR_CONFIG.get(mode, 2e-4),
                 }, f, indent=2)
         except Exception as e:
             print(f"   ⚠️ Could not save status file: {e}")
@@ -1128,7 +1128,6 @@ class AutoQwen3Trainer:
         except Exception:
             pass
 
-    # ---------------- TRAIN ----------------
     def train(self, mode="incremental", symbols_batch=None, data_path=None, use_replay=True):
         """Returns (success: bool, eval_loss: float | None)."""
         self.save_training_status_file(mode, symbols_batch)
@@ -1139,7 +1138,7 @@ class AutoQwen3Trainer:
 📅 {datetime.now():%Y-%m-%d %H:%M}
 🎯 Mode: {esc(mode.upper())} - {esc(mode_explanation)}
 📚 Symbols: {len(symbols_batch) if symbols_batch else 'ALL'}
-⚙️ Epochs: {EPOCHS_CONFIG.get(mode, 10)}
+⚙️ Epochs: {EPOCHS_CONFIG.get(mode, 1)}
 """)
 
         print(f"\n{'=' * 60}\n🎯 QWEN3 TRAINING MODE: {mode.upper()}\n🔍 {mode_explanation}")
@@ -1153,7 +1152,6 @@ class AutoQwen3Trainer:
             print("❌ No training data found!")
             return False, None
 
-        # fresh model for this run
         self.load_model_with_lora()
 
         encodings = self.tokenizer(
@@ -1161,31 +1159,33 @@ class AutoQwen3Trainer:
             max_length=MAX_LENGTH, return_tensors="pt")
         full_dataset = StructuredDataset(encodings, example_weights)
 
-        # FIX: random split (seeded), not "last 15% of a sorted list"
+        # ✅ Random split + CAP val size
         n = len(full_dataset)
         val_size = max(1, int(n * VALIDATION_SPLIT_RATIO)) if n >= 10 else 0
+        val_size = min(val_size, MAX_EVAL_SAMPLES)   # ✅ cap at 100
         perm = np.random.RandomState(SPLIT_SEED).permutation(n).tolist()
         val_idx, train_idx = perm[:val_size], perm[val_size:]
         train_subset = torch.utils.data.Subset(full_dataset, train_idx)
         val_subset = torch.utils.data.Subset(full_dataset, val_idx) if val_size else None
         print(f"   Dataset split: {len(train_idx)} train, {val_size} validation")
 
-        num_epochs = EPOCHS_CONFIG.get(mode, 10)
-        learning_rate = LR_CONFIG.get(mode, 1e-5)
+        num_epochs = EPOCHS_CONFIG.get(mode, 1)
+        learning_rate = LR_CONFIG.get(mode, 2e-4)
         batch_size = BATCH_SIZE_CONFIG.get(mode, 1)
-        grad_accum = GRAD_ACCUM_CONFIG.get(mode, 16)
+        grad_accum = GRAD_ACCUM_CONFIG.get(mode, 24)
 
         steps_per_epoch = max(1, -(-len(train_idx) // (batch_size * grad_accum)))
         total_opt_steps = steps_per_epoch * num_epochs
         warmup_steps = max(1, min(100, int(total_opt_steps * 0.05)))
-        # FIX: with few steps a fixed save_steps=20 meant NO checkpoint was ever written
         save_steps = max(1, min(SAVE_STEPS, total_opt_steps // 3))
-        print(f"   Optimizer steps: ~{total_opt_steps} (warmup {warmup_steps}, save/eval every {save_steps})")
+
+        # ✅ Eval every EVAL_STEPS (not too frequent)
+        eval_steps = max(EVAL_STEPS, min(save_steps * 2, total_opt_steps // 2))
+        print(f"   Optimizer steps: ~{total_opt_steps} (warmup {warmup_steps}, save/eval every {save_steps}/{eval_steps})")
 
         print(f"\n⚙️ Config: epochs={num_epochs}, lr={learning_rate}, "
               f"batch={batch_size}x{grad_accum}, max_len={MAX_LENGTH}")
 
-        # ----- checkpoint resume (only if marker matches this exact run) -----
         marker = make_marker(mode, symbols_batch)
         last_checkpoint = self.find_matching_checkpoint(marker)
         if last_checkpoint:
@@ -1226,7 +1226,7 @@ class AutoQwen3Trainer:
         )
         if val_subset is not None:
             ta_kwargs[eval_key] = "steps"
-            ta_kwargs["eval_steps"] = save_steps
+            ta_kwargs["eval_steps"] = eval_steps
         training_args = TrainingArguments(**ta_kwargs)
 
         trainer = WeightedTrainer(
@@ -1238,20 +1238,26 @@ class AutoQwen3Trainer:
         )
         trainer.add_callback(HFCheckpointCallback(self.hf_uploader, marker))
         trainer.add_callback(LossMonitorCallback())
+        # ✅ CRITICAL: Stop at 5.5h to avoid GitHub 6h timeout
+        trainer.add_callback(TimeLimitCallback(max_hours=MAX_TRAINING_HOURS))
 
         print("\n🏋️ Starting Qwen3 Training...")
+        print(f"   ⏰ Auto-stop at {MAX_TRAINING_HOURS}h (GitHub 6h limit safety)")
+        train_success = False
         try:
             try:
                 trainer.train(resume_from_checkpoint=last_checkpoint)
+                train_success = True
             except ValueError as e:
                 err = str(e)
                 if last_checkpoint and ("parameter group" in err or "optimizer" in err.lower()):
-                    print("\n   ⚠️ Optimizer state mismatch - removing optimizer/scheduler and retrying")
+                    print("\n   ⚠️ Optimizer mismatch - removing optimizer/scheduler and retrying")
                     for fname in ("optimizer.pt", "scheduler.pt"):
                         p = os.path.join(last_checkpoint, fname)
                         if os.path.exists(p):
                             os.remove(p)
                     trainer.train(resume_from_checkpoint=last_checkpoint)
+                    train_success = True
                 else:
                     raise
         except Exception as e:
@@ -1264,8 +1270,26 @@ class AutoQwen3Trainer:
             self._release_model()
             raise
 
-        print("\n✅ Qwen3 training completed!")
+        print("\n✅ Qwen3 training loop ended!")
 
+        # ✅ Check if time-stopped (partial training)
+        final_step = trainer.state.global_step
+        max_steps = trainer.state.max_steps
+        partial = final_step < max_steps
+        if partial:
+            print(f"\n   ⏸️ PARTIAL training: step {final_step}/{max_steps}")
+            print(f"   💾 Checkpoint saved for next run (resume marker in checkpoint)")
+            self.notify(f"""
+⏸️ <b>Qwen3 Training Paused (Time Limit)</b>
+📅 {datetime.now():%Y-%m-%d %H:%M}
+🎯 Mode: {esc(mode.upper())}
+📊 Step: {final_step}/{max_steps}
+💾 Next run will resume automatically
+""")
+            self._release_model()
+            return True, None   # partial success (don't save merged model yet)
+
+        # Full training complete
         eval_loss = None
         if val_subset is not None:
             try:
@@ -1274,7 +1298,6 @@ class AutoQwen3Trainer:
             except Exception as e:
                 print(f"   ⚠️ Final evaluation failed: {e}")
 
-        # ----- merge + save -----
         try:
             self._save_merged_model()
         except Exception as e:
@@ -1291,7 +1314,6 @@ class AutoQwen3Trainer:
 
         self.upload_final_model_to_hf()
 
-        # successful run -> checkpoints are no longer needed anywhere
         clear_dir_contents(QWEN3_LOCAL_CHECKPOINT_DIR)
         self.hf_uploader.clear_hf_checkpoints()
 
@@ -1301,10 +1323,9 @@ class AutoQwen3Trainer:
 ✅ <b>Qwen3 Training Completed</b>
 📅 {datetime.now():%Y-%m-%d %H:%M}
 🎯 {esc(mode_explanation)}
-📚 Symbols trained: {len(symbols_batch) if symbols_batch else 'ALL'}
+📚 Symbols: {len(symbols_batch) if symbols_batch else 'ALL'}
 📉 Eval loss: {f'{eval_loss:.4f}' if eval_loss is not None else 'n/a'}
 💾 Model: {esc(LLM_MODEL_DIR)}
-📤 HF: {esc(HF_DATASET_REPO)}/{esc(QWEN3_HF_FINAL_PATH)}/
 """)
         self._mark_status_completed()
         return True, eval_loss
@@ -1316,9 +1337,7 @@ class AutoQwen3Trainer:
         print(f"\n📤 Uploading final model → {HF_DATASET_REPO}/{QWEN3_HF_FINAL_PATH}/")
         if self.hf_uploader.upload_final_model(LLM_MODEL_DIR):
             self.hf_uploader.upload_tracking_files()
-            print(f"✅ https://huggingface.co/datasets/{HF_DATASET_REPO}/tree/main/{QWEN3_HF_FINAL_PATH}")
 
-    # ---------------- Data generation ----------------
     def generate_training_data_for_symbols(self, symbols):
         print(f"\n📝 Generating training data for {len(symbols)} symbols...")
         result = subprocess.run(
@@ -1331,26 +1350,20 @@ class AutoQwen3Trainer:
         print("   ✅ Training data generated")
         return True
 
-    # ---------------- RUN ----------------
     def run(self):
-        print("=" * 60 + "\n🚀 AUTO QWEN3 TRAINER\n" + "=" * 60)
+        print("=" * 60 + "\n🚀 AUTO QWEN3 TRAINER (v6 — TIME SAFE)\n" + "=" * 60)
         print(f"📅 {datetime.now():%Y-%m-%d %H:%M:%S}")
         print(f"🧠 Model: {BASE_MODEL}")
-        print(f"📁 Local model: {LLM_MODEL_DIR}")
-        print(f"📁 Local checkpoints (crash recovery): {QWEN3_LOCAL_CHECKPOINT_DIR}")
-        print(f"📤 HF final: {QWEN3_HF_FINAL_PATH} | HF ckpt: {QWEN3_HF_CHECKPOINT_PATH}")
-        print(f"📊 XGBoost: {len(self.xgb_ppo.xgb_models)} | PPO: {len(self.xgb_ppo.ppo_models)}")
+        print(f"⏰ Auto-stop: {MAX_TRAINING_HOURS}h")
         print("=" * 60)
 
         stats = self.mistake_collector.get_confidence_stats()
         print(f"\n📊 Confidence: avg={stats['avg_confidence']:.2%}, "
-              f"mistake rate={stats['mistake_rate']:.2f}%, "
-              f"high priority={stats['high_priority_count']}")
+              f"mistake rate={stats['mistake_rate']:.2f}%")
 
         new_symbols = self.get_new_symbols()
         trained_new = False
 
-        # STEP 1: new symbols
         if new_symbols:
             print(f"\n📚 {len(new_symbols)} new symbols to train")
             for i in range(0, len(new_symbols), BATCH_SIZE):
@@ -1362,30 +1375,34 @@ class AutoQwen3Trainer:
                     continue
                 mode = "first_train" if len(self.trained_symbols) == 0 else "incremental"
                 ok, eval_loss = self.train(mode=mode, symbols_batch=batch)
-                if ok:
+                if ok and eval_loss is not None:
+                    # Full training completed
                     self.trained_symbols.extend(batch)
                     self.save_trained_symbols()
                     self.batch_manager.mark_batch_completed(batch_num, batch)
                     self._update_agentic_loop_after_batch(batch_num, batch, eval_loss)
                     trained_new = True
-                    print(f"✅ Batch {batch_num} complete! Total trained: {len(self.trained_symbols)}")
+                    print(f"✅ Batch {batch_num} complete! Total: {len(self.trained_symbols)}")
+                elif ok and eval_loss is None:
+                    # Time stopped - DO NOT mark batch complete
+                    print(f"⏸️ Batch {batch_num} partial - will resume next run")
+                    break   # Stop processing more batches this run
             if trained_new:
                 self.batch_manager.init_schedule_baselines()
         else:
             print("\n✅ No new symbols found!")
 
-        # STEP 2: weekly fine-tune (skipped in a run that just trained new symbols)
+        # Weekly fine-tune (skip if just trained new)
         if not trained_new:
             weekly_num, weekly_symbols = self.batch_manager.get_batch_for_weekly_finetune()
             if weekly_num and weekly_symbols:
-                print(f"\n🔄 Weekly fine-tune batch {weekly_num} ({len(weekly_symbols)} symbols)")
+                print(f"\n🔄 Weekly fine-tune batch {weekly_num}")
                 if self.generate_training_data_for_symbols(weekly_symbols):
                     ok, _ = self.train(mode="weekly_finetune", symbols_batch=weekly_symbols)
                     if ok:
                         self.batch_manager.mark_weekly_done(weekly_num)
-                        print("✅ Weekly fine-tune complete!")
 
-        # STEP 3: monthly consolidation
+        # Monthly consolidation
         if not trained_new and self.batch_manager.should_consolidate():
             all_syms = self.batch_manager.get_all_batch_symbols()
             if all_syms:
@@ -1394,9 +1411,8 @@ class AutoQwen3Trainer:
                     ok, _ = self.train(mode="consolidate", symbols_batch=all_syms)
                     if ok:
                         self.batch_manager.mark_consolidated()
-                        print("✅ Monthly consolidation complete!")
 
-        # STEP 4: hard-example retraining
+        # Mistake learning
         high_priority = self.mistake_collector.get_hard_examples(limit=200, priority_only=True)
         if high_priority and self.batch_manager.should_run_mistake_learning():
             print(f"\n🔥 {len(high_priority)} high priority mistakes")
@@ -1430,11 +1446,8 @@ Confidence: {conf}
                     os.remove(temp_file)
 
         print("\n" + "=" * 60 + "\n📊 FINAL STATUS\n" + "=" * 60)
-        print(f"   Total trained symbols: {len(self.trained_symbols)}")
+        print(f"   Total trained: {len(self.trained_symbols)}")
         print(f"   Completed batches: {len(self.batch_manager.completed_batches)}")
-        print(f"   Last weekly: {self.batch_manager.batch_tracking.get('last_weekly_finetune', 'Never')}")
-        print(f"   Last consolidation: {self.batch_manager.batch_tracking.get('last_consolidate', 'Never')}")
-        print(f"   Model dir: {LLM_MODEL_DIR}")
         print("=" * 60)
 
         self._finalize_agentic_loop()
