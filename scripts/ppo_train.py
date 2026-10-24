@@ -60,7 +60,7 @@ try:
 except ImportError:
     SECTOR_AVAILABLE = False
 
-try:
+try3:
     from patch_tst_predictor import PatchTSTIntegration
     PATCHTST_AVAILABLE = True
 except ImportError:
@@ -342,7 +342,7 @@ EARLY_STOPPING_PATIENCE = 999
 EVAL_FREQ = 10000
 ENABLE_EARLY_STOP = False
 
-ENSEMBLE_SIZE = 5
+ENSEMBLE_SIZE = 3
 
 AGENTIC_LOOP_CONFIG = {
     'enabled': True,
@@ -742,6 +742,12 @@ def train_max_quality(symbol, symbol_data, xgb_auc, is_retrain=False,
         config = PPO_PER_SYMBOL_CONFIG['fallback']; quality = 'FALLBACK'
 
     print(f"   🎚️ Quality: {quality} | Timesteps: {config['timesteps']:,}")
+    # ✅ ছোট ডেটায় 불필요한 학습 কমাও
+    config = config.copy()
+    if len(symbol_data) < 500:
+        config['timesteps'] = min(config['timesteps'], 30000)
+    elif len(symbol_data) < 1500:
+        config['timesteps'] = min(config['timesteps'], 50000)
 
     last_step = local_ckpt.get_last_step(symbol)
     last_ensemble = local_ckpt.get_last_ensemble(symbol)
