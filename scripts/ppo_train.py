@@ -60,7 +60,7 @@ try:
 except ImportError:
     SECTOR_AVAILABLE = False
 
-try3:
+try:
     from patch_tst_predictor import PatchTSTIntegration
     PATCHTST_AVAILABLE = True
 except ImportError:
