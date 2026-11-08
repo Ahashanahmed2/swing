@@ -1,15 +1,14 @@
 # ================== scripts/deepseek_train.py ==================
-# DeepSeek-R1-Distill-Qwen-1.5B LoRA Trainer (v4.1)
+# DeepSeek-R1-Distill-Qwen-1.5B LoRA Trainer (v4.2)
 #
-# v4 পরিবর্তন:
-#  1. Trainer/dataset স্পষ্টভাবে ছেড়ে GPU মেমরি খালি করা
-#  2. সত্যিকারের fp32 merge (আলাদা fp32 base লোড করে, ট্রেনিং মডেল ফ্রি করার পর)
-#  3. Hard/mistake example normal ডেটার মতো একই ফরম্যাট (শুধু সঠিক উত্তর, হার্ডকোড ফিল্ড নেই)
-#  4. Replay buffer থেকে শুধু নমুনা (ছোট ব্যাচ = দ্রুত weekly)
-#  5. mistake_learning-এ cooldown (সপ্তাহে একবার)
-#  6. অকেজো on_train_end কলব্যাক বাদ
-#  7. pad_token_id `is None` চেক, অব্যবহৃত import বাদ, dtype/torch_dtype ভার্সন-সেফ
-#  8. merge ব্যর্থ হলে টেলিগ্রামে আলাদা সতর্কতা
+# v4.2 পরিবর্তন:
+#  ✅ FIXED: Agentic Loop feedback — REAL walk-forward outcomes
+#  ✅ FIXED: agent_predictions passed per feedback (accuracy actually updates)
+#  ✅ FIXED: get_consensus() called on past data before feedback
+#  ✅ FIXED: Qwen3/DeepSeek agents skipped during training (None dirs)
+#  ✅ ADDED: _update_agentic_loop_after_batch() with real outcomes
+#  ✅ ADDED: save_state() at end (accuracy persists across runs)
+#  ✅ PRESERVED: All v4.1 features (LoRA, merge, HF, resume, replay)
 
 import os
 import re
@@ -45,11 +44,12 @@ warnings.filterwarnings("ignore")
 # OPTIONAL DEPENDENCIES
 # =========================================================
 try:
-    from agentic_loop import AgenticLoop
+    from agentic_loop import AgenticLoop, evaluate_prediction_outcome
     AGENTIC_LOOP_AVAILABLE = True
 except ImportError:
     AGENTIC_LOOP_AVAILABLE = False
-    print("⚠️ Agentic Loop not found")
+    evaluate_prediction_outcome = None
+    print("⚠️ Agentic Loop not found (or evaluate_prediction_outcome missing)")
 
 try:
     from peft import LoraConfig, PeftModel, get_peft_model
@@ -66,8 +66,8 @@ BATCH_SIZE = 40
 HF_DATASET_REPO = "ahashanahmed/csv"
 
 BASE_MODEL = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
-LLM_MODEL_DIR = "./csv/llm_model_deepseek"                 # merged full model
-LORA_ADAPTER_DIR = "./csv/llm_model_deepseek_lora"         # continuing adapter
+LLM_MODEL_DIR = "./csv/llm_model_deepseek"
+LORA_ADAPTER_DIR = "./csv/llm_model_deepseek_lora"
 DEEPSEEK_LOCAL_CHECKPOINT_DIR = "./csv/deepseek_checkpoints"
 
 DEEPSEEK_HF_CHECKPOINT_PREFIX = "deepseek_checkpoints/deepseek_checkpoint-"
@@ -87,9 +87,9 @@ PPO_PER_SYMBOL_DIR = "./csv/ppo_models/per_symbol"
 
 AGENTIC_LOOP_LOG_DIR = "./csv/agentic_loop_logs"
 
-CONSOLIDATE_INTERVAL = 30       # days
-WEEKLY_INTERVAL = 7             # days
-MISTAKE_LEARNING_INTERVAL = 7   # days (cooldown)
+CONSOLIDATE_INTERVAL = 30
+WEEKLY_INTERVAL = 7
+MISTAKE_LEARNING_INTERVAL = 7
 
 MAX_OLD_EXAMPLES = 10000
 MAX_VAL_EXAMPLES = 200
@@ -97,18 +97,22 @@ MAX_SEQ_LEN = 192
 MAX_GRAD_NORM = 1.0
 VALIDATION_SPLIT_RATIO = 0.10
 MISTAKE_MIX_RATIO = 0.25
-MIN_TEXT_LEN = 100              # normal ডেটার ন্যূনতম দৈর্ঘ্য
-MIN_OVERRIDE_LEN = 30           # mistake উদাহরণ ছোট, তাই আলাদা সীমা
+MIN_TEXT_LEN = 100
+MIN_OVERRIDE_LEN = 30
 SEED = 42
 SAVE_STEPS = 30
 
-# প্রতি মোডে replay buffer থেকে কতগুলো পুরনো উদাহরণ নমুনা হিসেবে নেওয়া হবে
+# ✅ NEW: Agentic feedback window control
+AGENTIC_LOOKAHEAD = 5
+AGENTIC_MIN_HISTORY = 50
+AGENTIC_MAX_WINDOWS = 3
+
 REPLAY_SAMPLE_SIZE = {
     "first_train": 0,
     "incremental": 1000,
     "weekly_finetune": 1000,
     "consolidate": 3000,
-    "mistake_learning": 0,   # texts_override ব্যবহার হয়, তবু স্পষ্টতার জন্য
+    "mistake_learning": 0,
 }
 
 LORA_CONFIG = {
@@ -160,7 +164,7 @@ MODE_EXPLANATION = {
 
 SIGNAL_MAP = {1: "BUY", 0: "SELL", 2: "HOLD"}
 
-# ✅ Version-safe argument names
+# Version-safe argument names
 _TF_VERSION = tuple(int(x) for x in transformers.__version__.split(".")[:2])
 _EVAL_ARG = "eval_strategy" if _TF_VERSION >= (4, 46) else "evaluation_strategy"
 _DTYPE_ARG = "dtype" if _TF_VERSION >= (4, 56) else "torch_dtype"
@@ -185,7 +189,6 @@ def send_telegram_message(message, token=None, chat_id=None):
 
 
 def esc(text, limit=200):
-    """Telegram HTML-safe text."""
     return html.escape(str(text)[:limit])
 
 
@@ -253,8 +256,6 @@ class HFUploader:
         )
 
     def delete_mode_checkpoints(self, mode):
-        """সফল ট্রেনিংয়ের পর HF-এর ওই মোডের checkpoint মুছে ফেলা,
-        যাতে পরের রানে download script সেগুলোকে 'অসমাপ্ত রান' ভেবে resume না করে।"""
         if self.api is None:
             return
         try:
@@ -277,7 +278,6 @@ class HFUploader:
             print(f"   ⚠️ HF checkpoint cleanup failed: {e}")
 
     def upload_adapter_latest(self, adapter_path):
-        """নির্দিষ্ট পাথ (মোড ছাড়া) — CI-তে পরের রানে সহজে ডাউনলোডের জন্য।"""
         return self._upload_folder(
             adapter_path,
             f"{DEEPSEEK_FINAL_MODEL_PREFIX}/adapter_latest",
@@ -379,19 +379,16 @@ class BatchManager:
     def get_batch_for_weekly_finetune(self):
         if not self.completed_batches:
             return None, []
-
         last = self.batch_tracking.get("last_weekly_finetune")
         days = self._days_since(last) if last else None
         if days is not None and days < WEEKLY_INTERVAL:
             return None, []
-
         trained = set(self.batch_tracking.get("weekly_trained_batches", []))
         available = [b for b in self.completed_batches if b not in trained]
         if not available:
             self.batch_tracking["weekly_trained_batches"] = []
             self.save_batch_tracking()
             available = list(self.completed_batches)
-
         batch_num = available[0]
         return batch_num, self.batch_symbols.get(str(batch_num), [])
 
@@ -501,8 +498,6 @@ class XGBoostPPOIntegrator:
 # DATASET / COLLATOR / TRAINER
 # =========================================================
 class TokenDataset(torch.utils.data.Dataset):
-    """Unpadded token ids + per-example weight."""
-
     def __init__(self, input_ids, weights):
         self.input_ids = input_ids
         self.weights = [float(w) for w in weights]
@@ -515,8 +510,6 @@ class TokenDataset(torch.utils.data.Dataset):
 
 
 class PadCollator:
-    """Dynamic padding; pad positions get label -100."""
-
     def __init__(self, pad_id):
         self.pad_id = pad_id
 
@@ -567,8 +560,6 @@ class WeightedTrainer(Trainer):
 
 
 class HFUploadCallback(TrainerCallback):
-    """প্রতি save_steps-এ checkpoint HF-এ ব্যাকআপ (optimizer ছাড়া)।"""
-
     def __init__(self, uploader, mode):
         self.uploader = uploader
         self.mode = mode
@@ -590,15 +581,12 @@ def _present(v):
 
 
 def _clean(v, default):
-    """None / NaN / 'nan' / খালি স্ট্রিং → default।"""
     if not _present(v) or str(v).strip().lower() in ("none", "nan"):
         return default
     return str(v).strip()
 
 
 def format_example(m):
-    """Normal ডেটার মতো একই ধরন: শুধু সঠিক উত্তর, কোনো 'WRONG' লেবেল বা হার্ডকোড ফিল্ড নেই।
-    risk_level/timeframe থাকলে তবেই যোগ হয়।"""
     try:
         actual = int(m.get("actual", 2))
     except (TypeError, ValueError):
@@ -703,13 +691,134 @@ class AutoDeepSeekTrainer:
         send_telegram_message(msg, self.telegram_token, self.telegram_chat_id)
 
     def _init_agentic_loop(self):
+        """✅ FIXED: Skip Qwen3/DeepSeek agent load during training."""
         try:
-            print("\n" + "=" * 60 + "\n🤖 INITIALIZING AGENTIC LOOP\n" + "=" * 60)
-            self.agentic_loop = AgenticLoop(xgb_model_dir=XGBOOST_DIR)
+            print("\n" + "=" * 60)
+            print("🤖 INITIALIZING AGENTIC LOOP (XGB+Tech+Risk+Memory)")
+            print("=" * 60)
+            self.agentic_loop = AgenticLoop(
+                xgb_model_dir=XGBOOST_DIR,
+                qwen3_model_dir=None,
+                deepseek_model_dir=None,
+            )
             print("=" * 60 + "\n")
         except Exception as e:
             print(f"   ❌ Agentic Loop init failed: {e}")
             self.agentic_loop = None
+
+    # ✅ NEW: REAL walk-forward feedback engine
+    def _update_agentic_loop_after_batch(self, batch_num, symbols, eval_loss=None):
+        """
+        Real feedback: প্রতিটা symbol-এর historical windows-এ consensus চালিয়ে
+        actual outcome দিয়ে agent accuracy update করে।
+        """
+        if self.agentic_loop is None or evaluate_prediction_outcome is None:
+            print("   ⚠️ Agentic Loop or outcome helper not available - skipping feedback")
+            return
+
+        try:
+            print(f"\n   📊 Agentic feedback: computing REAL outcomes for batch {batch_num}...")
+
+            if not os.path.exists(MARKET_DATA_PATH):
+                print(f"   ⚠️ Market data not found: {MARKET_DATA_PATH}")
+                return
+
+            try:
+                market = pd.read_csv(MARKET_DATA_PATH)
+                market['date'] = pd.to_datetime(
+                    market['date'], format='mixed', errors='coerce')
+                market = market.sort_values(['symbol', 'date']).reset_index(drop=True)
+            except Exception as e:
+                print(f"   ⚠️ Market load failed: {e}")
+                return
+
+            total_feedback = 0
+            for symbol in symbols:
+                try:
+                    sym_df = market[market['symbol'] == symbol].reset_index(drop=True)
+                    if len(sym_df) < AGENTIC_MIN_HISTORY + AGENTIC_LOOKAHEAD:
+                        continue
+
+                    end_idx = len(sym_df) - AGENTIC_LOOKAHEAD
+                    if end_idx < AGENTIC_MIN_HISTORY:
+                        continue
+
+                    step = max(1, (end_idx - AGENTIC_MIN_HISTORY) // AGENTIC_MAX_WINDOWS)
+                    windows = []
+                    for i in range(AGENTIC_MAX_WINDOWS):
+                        idx = end_idx - i * step
+                        if idx >= AGENTIC_MIN_HISTORY:
+                            windows.append(idx)
+                    windows.sort()
+
+                    for idx in windows:
+                        try:
+                            past = sym_df.iloc[:idx].copy()
+                            prediction_date = past.iloc[-1]['date']
+
+                            try:
+                                vol = float(past['close'].pct_change().std() * np.sqrt(252)) \
+                                      if len(past) > 20 else 0.02
+                            except Exception:
+                                vol = 0.02
+
+                            # Consensus on PAST data only
+                            try:
+                                decision, score, conf, details = self.agentic_loop.get_consensus(
+                                    symbol=symbol,
+                                    symbol_data=past.tail(50),
+                                    volatility=vol,
+                                    market_regime='NEUTRAL',
+                                )
+                            except Exception:
+                                continue
+
+                            # Actual future outcome
+                            outcome = evaluate_prediction_outcome(
+                                sym_df, prediction_date, lookahead=AGENTIC_LOOKAHEAD)
+                            if outcome is None:
+                                continue
+
+                            # ✅ REAL feedback — WITH agent_predictions!
+                            self.agentic_loop.after_trade_feedback({
+                                'symbol': symbol,
+                                'pnl': outcome['pnl'],
+                                'pnl_pct': outcome['pnl_pct'],
+                                'success': outcome['actual_win'],
+                                'agent_predictions': details,
+                            })
+                            total_feedback += 1
+                        except Exception as e:
+                            print(f"      ⚠️ window {idx} failed for {symbol}: {str(e)[:60]}")
+                except Exception as e:
+                    print(f"   ⚠️ {symbol}: {str(e)[:60]}")
+
+            print(f"   📊 Applied {total_feedback} REAL feedbacks")
+            if total_feedback == 0:
+                print(f"   ℹ️ No feedbacks — need ≥{AGENTIC_MIN_HISTORY + AGENTIC_LOOKAHEAD} rows/symbol")
+                return
+
+            # Print current accuracy
+            summary = self.agentic_loop.get_summary()
+            if len(summary) > 0:
+                print("   Per-agent accuracy:")
+                for _, row in summary.iterrows():
+                    print(f"      {row['agent']:10s}: "
+                          f"acc={row['accuracy']:>6s} "
+                          f"recent={row['recent_accuracy']:>6s} "
+                          f"n={row['total_predictions']}")
+
+            # Save decision log
+            try:
+                os.makedirs(AGENTIC_LOOP_LOG_DIR, exist_ok=True)
+                self.agentic_loop.save_decision_log(
+                    os.path.join(AGENTIC_LOOP_LOG_DIR, f"batch_{batch_num}_log.csv"))
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"   ⚠️ Agentic feedback failed: {e}")
+            import traceback
+            traceback.print_exc()
 
     def load_trained_symbols(self):
         if os.path.exists(TRACKING_FILE):
@@ -794,7 +903,6 @@ class AutoDeepSeekTrainer:
         return [ex.strip() for ex in raw.split("=" * 80) if len(ex.strip()) > MIN_TEXT_LEN]
 
     def build_texts(self, mode, data_path, texts_override=None):
-        """এই রানের ট্রেনিং টেক্সট: নতুন ডেটা + replay নমুনা + mistake মিক্স।"""
         if texts_override is not None:
             filtered = [t for t in texts_override if len(t) >= MIN_OVERRIDE_LEN]
             dropped = len(texts_override) - len(filtered)
@@ -807,12 +915,10 @@ class AutoDeepSeekTrainer:
         if not new_texts:
             return []
 
-        # Replay buffer আপডেট (dedup + cap)
         merged = list(dict.fromkeys(self.replay_buffer + new_texts))
         self.replay_buffer = merged[-MAX_OLD_EXAMPLES:]
         self.save_replay_buffer()
 
-        # নতুন ডেটা + পুরনো থেকে ছোট নমুনা (পুরো buffer নয়)
         new_set = set(new_texts)
         old_pool = [t for t in self.replay_buffer if t not in new_set]
         k_old = min(len(old_pool), REPLAY_SAMPLE_SIZE.get(mode, 1000))
@@ -820,7 +926,6 @@ class AutoDeepSeekTrainer:
         texts = new_texts + old_sample
         print(f"   Replay sample: {len(old_sample)} old + {len(new_texts)} new")
 
-        # Mistakes মেশানো
         mistakes = self.mistake_collector.get_mistake_dataset(limit=300)
         if mistakes:
             k = min(len(mistakes), int(len(texts) * MISTAKE_MIX_RATIO))
@@ -853,7 +958,6 @@ class AutoDeepSeekTrainer:
         return torch.float32
 
     def load_model_with_lora(self, mode):
-        """Base + LoRA লোড। first_train = fresh; বাকি = আগের adapter থেকে চালিয়ে যায়।"""
         if not LORA_AVAILABLE:
             raise RuntimeError("PEFT not installed")
 
@@ -894,7 +998,6 @@ class AutoDeepSeekTrainer:
             model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
             model.enable_input_require_grads()
 
-        # pad token (id 0 হলেও ঠিক থাকে)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         if self.tokenizer.pad_token_id is None:
@@ -935,7 +1038,6 @@ class AutoDeepSeekTrainer:
             pass
 
     def _prepare_ckpt_dir(self, mode):
-        """একই মোডের ক্র্যাশ-হওয়া রান থাকলে resume, নইলে পরিষ্কার শুরু।"""
         ckpt_dir = os.path.join(DEEPSEEK_LOCAL_CHECKPOINT_DIR, mode)
         marker = os.path.join(ckpt_dir, "IN_PROGRESS")
         resume = None
@@ -1046,14 +1148,11 @@ class AutoDeepSeekTrainer:
                 print(f"   📊 Final training loss: {final_loss:.4f}")
             print("\n✅ DeepSeek training completed!")
 
-            # 1) Adapter সেভ (ট্রেনিং মডেল থেকে) + আপলোড
             self.save_adapter(mode)
 
-            # 2) ট্রেনিং-এর সব কিছু ছেড়ে মেমরি খালি করা
             trainer = train_ds = val_ds = None
             self.free_model()
 
-            # 3) আলাদা fp32 base-এ সত্যিকারের merge
             merged_ok = self.merge_and_save(mode)
 
             shutil.rmtree(ckpt_dir, ignore_errors=True)
@@ -1081,7 +1180,7 @@ class AutoDeepSeekTrainer:
 """)
             return False
         finally:
-            trainer = train_ds = val_ds = None  # optimizer states ইত্যাদি ছাড়ো
+            trainer = train_ds = val_ds = None
             self.free_model()
 
     # ---------- saving ----------
@@ -1093,7 +1192,6 @@ class AutoDeepSeekTrainer:
         self.hf_uploader.upload_adapter_latest(LORA_ADAPTER_DIR)
 
     def merge_and_save(self, mode):
-        """সত্যিকারের fp32 merge: আলাদা fp32 base + সদ্য সেভ হওয়া adapter।"""
         merged = base = peft_model = None
         try:
             print("🔄 Merging adapter into fp32 base...")
@@ -1101,7 +1199,7 @@ class AutoDeepSeekTrainer:
                 BASE_MODEL,
                 trust_remote_code=True,
                 low_cpu_mem_usage=True,
-                device_map="cpu",   # merge সবসময় CPU-তে (GPU মেমরি ছোঁয়া হয় না)
+                device_map="cpu",
                 **{_DTYPE_ARG: torch.float32},
             )
             peft_model = PeftModel.from_pretrained(base, LORA_ADAPTER_DIR)
@@ -1137,7 +1235,7 @@ class AutoDeepSeekTrainer:
     # ---------- main flow ----------
     def run(self):
         print("=" * 60)
-        print("🚀 AUTO DEEPSEEK TRAINER (v4.1)")
+        print("🚀 AUTO DEEPSEEK TRAINER (v4.2 — AGENTIC FIXED)")
         print("=" * 60)
         print(f"📅 {datetime.now():%Y-%m-%d %H:%M:%S}")
         print(f"🧠 Model: {BASE_MODEL}")
@@ -1172,6 +1270,8 @@ class AutoDeepSeekTrainer:
                     self.trained_symbols.extend(batch)
                     self.save_trained_symbols()
                     self.batch_manager.mark_batch_completed(batch_num, batch)
+                    # ✅ REAL agentic feedback
+                    self._update_agentic_loop_after_batch(batch_num, batch)
                     print(f"✅ Batch {batch_num} complete!")
                 else:
                     print(f"❌ Batch {batch_num} failed - stopping new-symbol loop")
@@ -1196,7 +1296,7 @@ class AutoDeepSeekTrainer:
                     if self.train(mode="consolidate", symbols_batch=all_trained):
                         self.batch_manager.mark_consolidated()
 
-        # STEP 4: hard-example retraining (cooldown সহ)
+        # STEP 4: hard-example retraining
         hp = self.mistake_collector.get_hard_examples(limit=100, priority_only=True)
         if hp and self.batch_manager.should_run_mistake_learning():
             print(f"\n🔥 {len(hp)} high priority mistakes")
@@ -1208,6 +1308,22 @@ class AutoDeepSeekTrainer:
                     self.batch_manager.mark_mistake_learning_done()
         elif hp:
             print("\n⏳ Mistake learning on cooldown - skipping")
+
+        # ✅ FINAL: persist agentic state
+        if self.agentic_loop is not None:
+            try:
+                self.agentic_loop.save_state("./csv/agentic_loop_state.json")
+                print(f"\n🏆 AGENTIC LOOP FINAL REPORT:")
+                summary = self.agentic_loop.get_summary()
+                if len(summary) > 0:
+                    for _, row in summary.iterrows():
+                        print(f"   {row['agent']:10s}: "
+                              f"{row['accuracy']} "
+                              f"(recent: {row['recent_accuracy']}, "
+                              f"n={row['total_predictions']})")
+                print(f"   Ensemble: {self.agentic_loop.get_ensemble_accuracy():.1%}")
+            except Exception as e:
+                print(f"   ⚠️ Final state save failed: {e}")
 
         print("\n" + "=" * 60 + "\n📊 FINAL STATUS\n" + "=" * 60)
         print(f"   Total trained symbols: {len(self.trained_symbols)}")
