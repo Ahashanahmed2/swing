@@ -906,12 +906,14 @@ def evaluate_prediction_outcome(symbol_df, prediction_date, lookahead=5):
         return None
 
     pnl_pct = ((exit_ - entry) / entry) * 100
+    pnl_win = pnl_pct > 0   # ✅ Walrus বাদ — plain assignment
+
     return {
         'entry_price': entry,
         'exit_price': exit_,
         'pnl': exit_ - entry,
         'pnl_pct': pnl_pct,
-        'actual_win': pnl_win := pnl_pct > 0,
+        'actual_win': pnl_win,   # ✅ শুধু variable ব্যবহার
         'success': pnl_win
     }
 
