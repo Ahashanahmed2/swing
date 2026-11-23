@@ -1,4 +1,4 @@
-dotenv
+python-dotenv
 requests
 fpdf2>=2.7.0
 huggingface_hub>=0.20.0
@@ -23,5 +23,7 @@ requests>=2.31.0
 urllib3>=2.0.0
 certifi>=2023.0.0
 pytz>=2023.0
-curl_cffi           # ✅ CORRECT
+curl_cffi
 regex>=2023.0.0
+pymongo
+ta
