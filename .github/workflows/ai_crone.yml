@@ -2,7 +2,8 @@ name: swing_stock
 
 on:
   schedule:
-      - cron: "1 9 * * *"
+      - cron: "1 3 * * *"
+        timezone: "Asia/Dhaka"
   workflow_dispatch:  # ম্যানুয়ালি চালাতে পারবে
 
 permissions:
