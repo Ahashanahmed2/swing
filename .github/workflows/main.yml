@@ -1,0 +1,57 @@
+name: swing_stock
+
+on:
+  schedule:
+    - cron: "1 3 * * *"
+      timezone: "Asia/Dhaka"
+  workflow_dispatch:  # ম্যানুয়ালি চালাতে পারবে
+
+permissions:
+  contents: write  # কমিট ও পুশের অনুমতি
+
+# main ও monthly একসাথে চলবে না (একটা অন্যটার জন্য অপেক্ষা করবে)
+concurrency:
+  group: swing-hf
+  cancel-in-progress: false
+
+jobs:
+  analyze_stocks:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Create necessary directories
+      run: |
+        mkdir -p ./csv/llm_model
+        mkdir -p ./csv/xgboost
+        mkdir -p ./csv/ppo_models/per_symbol
+        mkdir -p ./csv/ppo_models/ensemble
+
+    - name: Install dependencies
+      run: |
+        pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cpu
+        pip install --force-reinstall transformers==4.40.0
+        pip install accelerate==0.33.0
+        pip install peft==0.10.0
+        pip install -r requirements.txt
+
+    - name: Run Python script
+      env:
+        MONGODBEMAIL_URI: ${{ secrets.MONGODBEMAIL_URI }}
+        MONGO_URL: ${{ secrets.MONGO_URL }}
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN_TRADE }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID_TRADE }}
+        EMAIL_USER: ${{ secrets.EMAIL_USER }}
+        EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+        EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        hf_token: ${{ secrets.HF_TOKEN }}
+      run: python main.py
