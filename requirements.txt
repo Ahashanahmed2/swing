@@ -1,10 +1,9 @@
 python-dotenv
-requests
 fpdf2>=2.7.0
 huggingface_hub>=0.20.0
 schedule>=1.2.0
-pandas>=2.0.0
-xgboost
+pandas>=2.0.0,<3
+xgboost>=1.6
 scikit-learn
 joblib>=1.3.0
 numba
