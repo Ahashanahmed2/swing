@@ -361,50 +361,6 @@ def verify_patchtst_data():
 
 
 # =========================================================
-# MAIN
-# =========================================================
-
-if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="PatchTST Data Downloader (Latest Only)")
-    parser.add_argument("--verify-only", action="store_true", help="Only verify data")
-    parser.add_argument("--clean-only", action="store_true", help="Only clean old checkpoints")
-    parser.add_argument("--pattern", type=str, help="Download single pattern")
-    parser.add_argument("--force-models", action="store_true", help="Force re-download patchtst_models")
-    args = parser.parse_args()
-    
-    if args.verify_only:
-        verify_patchtst_data()
-    
-    elif args.clean_only:
-        print("🧹 Cleaning old checkpoints...")
-        deleted = delete_old_checkpoints(keep_only_latest=True)
-        delete_empty_dirs()
-        print(f"✅ Deleted {deleted} old checkpoint files")
-        verify_patchtst_data()
-    
-    elif args.pattern:
-        print(f"📥 Downloading: {args.pattern}")
-        download_single_pattern(args.pattern)
-        delete_old_checkpoints(keep_only_latest=True)
-        verify_patchtst_data()
-    
-    elif args.force_models:
-        print("🔄 Force downloading patchtst_models/** ...")
-        download_single_pattern("patchtst_models/**")
-        verify_patchtst_data()
-    
-    else:
-        success = download_patchtst_data()
-        
-        if success:
-            verify_patchtst_data()
-        
-        print(f"\n✅ tst_download.py complete!")
-
-
-# =========================================================
 # UTILITY
 # =========================================================
 
@@ -468,3 +424,47 @@ def ensure_patchtst_data():
     else:
         print("✅ PatchTST data already exists")
         return True
+
+
+# =========================================================
+# MAIN
+# =========================================================
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="PatchTST Data Downloader (Latest Only)")
+    parser.add_argument("--verify-only", action="store_true", help="Only verify data")
+    parser.add_argument("--clean-only", action="store_true", help="Only clean old checkpoints")
+    parser.add_argument("--pattern", type=str, help="Download single pattern")
+    parser.add_argument("--force-models", action="store_true", help="Force re-download patchtst_models")
+    args = parser.parse_args()
+    
+    if args.verify_only:
+        verify_patchtst_data()
+    
+    elif args.clean_only:
+        print("🧹 Cleaning old checkpoints...")
+        deleted = delete_old_checkpoints(keep_only_latest=True)
+        delete_empty_dirs()
+        print(f"✅ Deleted {deleted} old checkpoint files")
+        verify_patchtst_data()
+    
+    elif args.pattern:
+        print(f"📥 Downloading: {args.pattern}")
+        download_single_pattern(args.pattern)
+        delete_old_checkpoints(keep_only_latest=True)
+        verify_patchtst_data()
+    
+    elif args.force_models:
+        print("🔄 Force downloading patchtst_models/** ...")
+        download_single_pattern("patchtst_models/**")
+        verify_patchtst_data()
+    
+    else:
+        success = download_patchtst_data()
+        
+        if success:
+            verify_patchtst_data()
+        
+        print(f"\n✅ tst_download.py complete!")

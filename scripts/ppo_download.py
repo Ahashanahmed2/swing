@@ -277,11 +277,9 @@ if __name__ == "__main__":
     print(f"STEP 1: HF PPO CHECKPOINT CLEANUP")
     print(f"{'='*60}")
     
-    cleanup_ppo_checkpoints_only(
-        keep_last=1,
-        max_files_per_commit=100,
-        sleep_between_commits=120
-    )
+    # HF cleanup disabled: it kept only one .zip per symbol and deleted
+    # *_best.zip and ensemble members.
+    print("HF cleanup disabled")
 
     # ============================
     # Step 2: ডাউনলোড (আনলিমিটেড রিট্রাই)

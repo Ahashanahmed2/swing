@@ -228,7 +228,8 @@ def apply_indicators(group):
     return group
 
 print("🔄 Calculating indicators by symbol...")
-df = df.groupby('symbol', group_keys=False).apply(apply_indicators)
+# explicit loop: pandas 3 drops the 'symbol' column inside groupby().apply()
+df = pd.concat([apply_indicators(g.copy()) for _, g in df.groupby('symbol', sort=False)])
 
 # =========================
 # STEP 5: ZIGZAG
@@ -308,7 +309,7 @@ def detect_patterns(group):
 
     return group
 
-df = df.groupby('symbol', group_keys=False).apply(detect_patterns)
+df = pd.concat([detect_patterns(g.copy()) for _, g in df.groupby('symbol', sort=False)])
 
 # =========================
 # STEP 7: SAVE FINAL CSV

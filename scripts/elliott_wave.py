@@ -346,7 +346,7 @@ def main():
     # সেভ করার আগে SUB_WAVE truncate
     max_len = 20  # সর্বোচ্চ ৮০ ক্যারেক্টার
 
-    for col in ['sub_wave', 'sub_sub_wave', 'wave_structure','confidence']:
+    for col in ['sub_wave', 'sub_sub_wave', 'wave_structure']:
         if col in output_df.columns:
             output_df[col] = output_df[col].astype(str).str.slice(0, max_len)
 

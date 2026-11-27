@@ -118,6 +118,14 @@ def generate_pdf_report(csv_path, output_path):
             print(f"⚠️ CSV has no data (all columns empty): {csv_path}")
             return False
         
+        # AI signal file only: Helvetica cannot draw the Bangla explanation,
+        # and long headers do not fit. CSV and MongoDB keep the full data.
+        if os.path.basename(csv_path) == "FINAL_AI_SIGNALS.csv":
+            df = df.drop(columns=["explanation"], errors="ignore").rename(columns={
+                "current_price": "price", "final_signal": "signal",
+                "final_combined_score": "score", "max_entry_price": "max_entry",
+                "exit_after_days": "hold_days"})
+
         # Convert all data to string for PDF
         df = df.fillna("")
         
